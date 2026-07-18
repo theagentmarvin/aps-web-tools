@@ -135,22 +135,28 @@ export function ForgeViewer({
     };
   }, []);
 
-  // Initialize viewer and load models when scripts + URNs are ready
+  // ── Viewer lifecycle: create once, reload models when URNs change ──
+
+  const viewerCreated = useRef(false);
+  const tokenRef = useRef(getToken);
+  tokenRef.current = getToken;
+  const expiresRef = useRef(expiresIn);
+  expiresRef.current = expiresIn;
+
   useEffect(() => {
-    if (!scriptsLoaded || !containerRef.current || modelUrns.length === 0)
-      return;
+    if (!scriptsLoaded || !containerRef.current) return;
 
     let cancelled = false;
 
     async function init() {
-      const token = await getToken();
+      const token = await tokenRef.current();
       if (cancelled || !token) return;
 
       const options = {
         env: "AutodeskProduction",
         getAccessToken: (cb: (t: string, e: number) => void) => {
-          getToken().then((tok) => {
-            if (tok) cb(tok, expiresIn);
+          tokenRef.current().then((tok) => {
+            if (tok) cb(tok, expiresRef.current);
           });
         },
         logLevel: 0,
@@ -159,7 +165,6 @@ export function ForgeViewer({
       window.Autodesk.Viewing.Initializer(options, async () => {
         if (cancelled) return;
 
-        // Create viewer instance
         const viewer = new (
           window.Autodesk.Viewing as unknown as {
             Private: { GuiViewer3D: new (c: HTMLElement) => GuiViewer3D };
@@ -174,44 +179,82 @@ export function ForgeViewer({
 
         viewer.setLightPreset(0);
         viewerRef.current = viewer;
-
-        // Encode URNs (same pattern as reference repo)
-        const encodedUrns = modelUrns.map((u) => `urn:${urnify(u)}`);
-        console.log("[ForgeViewer] Loading", encodedUrns.length, "model(s)");
-
-        // Load models sequentially via Document.load() → loadDocumentNode()
-        let loaded = 0;
-        for (const urn of encodedUrns) {
-          if (cancelled) break;
-          try {
-            const model = await loadDocumentAsync(viewer, urn);
-            modelsRef.current.push(model);
-            loaded++;
-            console.log(
-              "[ForgeViewer] Model loaded",
-              `(${loaded}/${modelUrns.length})`
-            );
-          } catch (err) {
-            console.error("[ForgeViewer] Failed to load:", urn, err);
-          }
-        }
-
-        console.log(
-          "[ForgeViewer] All models processed:",
-          loaded,
-          "loaded of",
-          modelUrns.length
-        );
-
-        if (!cancelled) onViewerReady?.();
+        viewerCreated.current = true;
+        onViewerReady?.();
       });
     }
 
     init();
+
+    return () => {
+      cancelled = true;
+      // Dispose viewer on unmount
+      if (viewerRef.current) {
+        try {
+          // GuiViewer3D teardown: finish() releases WebGL context
+          const v = viewerRef.current as GuiViewer3D & { finish?: () => void };
+          if (v.finish) v.finish();
+          // Remove the canvas from DOM to free GPU resources
+          const canvas = containerRef.current?.querySelector("canvas");
+          if (canvas) canvas.remove();
+        } catch {
+          // Best-effort cleanup
+        }
+        viewerRef.current = null;
+        viewerCreated.current = false;
+      }
+    };
+  }, [scriptsLoaded]);
+
+  // ── Model loading effect (separate from viewer creation) ──
+
+  useEffect(() => {
+    if (!viewerCreated.current || modelUrns.length === 0) return;
+
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    const v = viewer; // narrowed for closure
+
+    let cancelled = false;
+
+    async function loadModels() {
+      // Clear previously loaded models
+      modelsRef.current = [];
+
+      // Encode URNs
+      const encodedUrns = modelUrns.map((u) => `urn:${urnify(u)}`);
+      console.log("[ForgeViewer] Loading", encodedUrns.length, "model(s)");
+
+      let loaded = 0;
+      for (const urn of encodedUrns) {
+        if (cancelled) break;
+        try {
+          const model = await loadDocumentAsync(v, urn);
+          modelsRef.current.push(model);
+          loaded++;
+          console.log(
+            "[ForgeViewer] Model loaded",
+            `(${loaded}/${modelUrns.length})`
+          );
+        } catch (err) {
+          console.error("[ForgeViewer] Failed to load:", urn, err);
+        }
+      }
+
+      console.log(
+        "[ForgeViewer] All models processed:",
+        loaded,
+        "loaded of",
+        modelUrns.length
+      );
+    }
+
+    loadModels();
+
     return () => {
       cancelled = true;
     };
-  }, [scriptsLoaded, getToken, expiresIn, modelUrns.join(","), onViewerReady]);
+  }, [modelUrns.join(",")]);
 
   // ── Public API exposed via window ──────────────────────────────────
 
