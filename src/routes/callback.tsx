@@ -48,7 +48,7 @@ export function Callback() {
     <div className="flex items-center justify-center min-h-[60vh]">
       <div className="text-center">
         <div className="animate-spin text-3xl mb-4">⏳</div>
-        <p className="text-gray-400">Signing in to Autodesk…</p>
+        <p className="text-gray-600">Signing in to Autodesk…</p>
       </div>
     </div>
   );

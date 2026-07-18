@@ -252,18 +252,18 @@ export function ForgeViewer({
   return (
     <div className="relative w-full h-full">
       {initError && (
-        <div className="absolute inset-0 flex items-center justify-center bg-gray-950 z-10">
+        <div className="absolute inset-0 flex items-center justify-center bg-brand-bg z-10">
           <div className="text-center max-w-md p-4">
-            <p className="text-red-400 text-sm mb-2">Viewer initialization failed</p>
+            <p className="text-red-500 text-sm mb-2">Viewer initialization failed</p>
             <p className="text-gray-500 text-xs font-mono break-all">{initError}</p>
           </div>
         </div>
       )}
       {!ready && !initError && (
-        <div className="absolute inset-0 flex items-center justify-center bg-gray-950 z-10">
+        <div className="absolute inset-0 flex items-center justify-center bg-brand-bg z-10">
           <div className="text-center">
             <div className="animate-spin text-3xl mb-2">⏳</div>
-            <p className="text-gray-400 text-sm">Initializing viewer…</p>
+            <p className="text-gray-600 text-sm">Initializing viewer…</p>
           </div>
         </div>
       )}

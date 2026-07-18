@@ -24,8 +24,8 @@ export function ClashViewer() {
         <p className="text-gray-500 mb-6">
           3D model coordination clash detection and inspection.
         </p>
-        <div className="p-8 rounded-lg border border-gray-800 bg-gray-900 text-center">
-          <p className="text-lg mb-4 text-gray-400">🔒 Authentication required</p>
+        <div className="p-8 rounded-lg border border-brand-muted/20 bg-white text-center">
+          <p className="text-lg mb-4 text-gray-600">🔒 Authentication required</p>
           <button
             onClick={login}
             className="px-6 py-2 rounded-lg bg-brand hover:bg-brand-light text-white font-medium transition-colors"
@@ -253,14 +253,14 @@ function ClashBrowser() {
   // ── Status helpers ───────────────────────────────────────────────
 
   const statusColors: Record<string, string> = {
-    Active: "text-yellow-400 bg-yellow-950/50 border-yellow-900/50",
-    Reviewed: "text-brand-lighter bg-brand/10 border-brand-light/30",
-    Resolved: "text-green-400 bg-green-950/50 border-green-900/50",
-    Closed: "text-gray-400 bg-gray-900 border-gray-800",
+    Active: "text-yellow-700 bg-yellow-50 border-yellow-200",
+    Reviewed: "text-brand bg-brand/10 border-brand-light/30",
+    Resolved: "text-green-700 bg-green-50 border-green-200",
+    Closed: "text-gray-500 bg-gray-100 border-gray-200",
   };
 
   const getStatusStyle = (status: unknown) =>
-    statusColors[String(status ?? "")] || "text-gray-400 bg-gray-900 border-gray-800";
+    statusColors[String(status ?? "")] || "text-gray-500 bg-gray-100 border-gray-200";
 
   const { getAccessToken: getToken } = useAuth();
 
@@ -269,7 +269,7 @@ function ClashBrowser() {
   return (
     <div className="h-full flex flex-col">
       {/* Controls */}
-      <div className="flex-shrink-0 p-4 border-b border-gray-800 bg-gray-900/50 relative z-10">
+      <div className="flex-shrink-0 p-4 border-b border-brand-muted/20 bg-white/90 backdrop-blur shadow-sm relative z-10">
         <div className="flex flex-wrap gap-3 items-end">
           {/* Hub dropdown */}
           <div className="min-w-[180px]">
@@ -282,7 +282,7 @@ function ClashBrowser() {
                 setProjectId("");
                 setModelSets([]);
               }}
-              className="w-full px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-200"
+              className="w-full px-3 py-1.5 rounded bg-white border border-brand-muted/30 text-sm text-gray-800"
             >
               <option value="">Select hub…</option>
               {hubs.map((h) => (
@@ -298,7 +298,7 @@ function ClashBrowser() {
               value={projectId}
               onChange={(e) => setProjectId(e.target.value)}
               disabled={!selectedHub || projectSelectLoading}
-              className="w-full px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-200 disabled:opacity-40"
+              className="w-full px-3 py-1.5 rounded bg-white border border-brand-muted/30 text-sm text-gray-800 disabled:opacity-40"
             >
               <option value="">
                 {projectSelectLoading ? "Loading…" : projects.length === 0 && selectedHub
@@ -317,7 +317,7 @@ function ClashBrowser() {
               <select
                 value={selectedSet}
                 onChange={(e) => setSelectedSet(e.target.value)}
-                className="w-full px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-200"
+                className="w-full px-3 py-1.5 rounded bg-white border border-brand-muted/30 text-sm text-gray-800"
               >
                 <option value="">Select model set…</option>
                 {modelSets.map((s) => (
@@ -344,7 +344,7 @@ function ClashBrowser() {
               <select
                 value={selectedTest}
                 onChange={(e) => setSelectedTest(e.target.value)}
-                className="w-full px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-200"
+                className="w-full px-3 py-1.5 rounded bg-white border border-brand-muted/30 text-sm text-gray-800"
               >
                 {clashTests.map((t) => (
                   <option key={t.id} value={t.id}>
@@ -362,7 +362,7 @@ function ClashBrowser() {
               <select
                 value={selectedView}
                 onChange={(e) => setSelectedView(e.target.value)}
-                className="w-full px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-200"
+                className="w-full px-3 py-1.5 rounded bg-white border border-brand-muted/30 text-sm text-gray-800"
               >
                 {clashViews.map((v) => (
                   <option key={v.id || v.name} value={v.name}>{v.name}</option>
@@ -393,17 +393,17 @@ function ClashBrowser() {
       {/* Main area: sidebar + viewer */}
       <div className="flex-1 flex min-h-0">
         {/* Clash Sidebar */}
-        <div className="w-72 flex-shrink-0 border-r border-gray-800 overflow-y-auto bg-gray-950 relative z-10">
+        <div className="w-72 flex-shrink-0 border-r border-brand-muted/20 overflow-y-auto bg-brand-surface relative z-10">
           {loading && clashes.length === 0 && (
             <div className="p-4 text-sm text-gray-500">Loading clash data…</div>
           )}
           {error && (
-            <div className="p-3 m-2 rounded border border-red-900/50 bg-red-950/30 text-red-400 text-xs">
+            <div className="p-3 m-2 rounded border border-red-200 bg-red-50 text-red-700 text-xs">
               {error}
             </div>
           )}
           {!loading && !error && clashes.length === 0 && modelUrns.length === 0 && (
-            <div className="p-4 text-sm text-gray-600">
+            <div className="p-4 text-sm text-gray-500">
               Select a hub and project above. Model sets will load automatically.
             </div>
           )}
@@ -416,16 +416,16 @@ function ClashBrowser() {
                   className={`w-full text-left p-2 rounded text-xs transition-colors ${
                     selectedClash?.id === c.id
                       ? "bg-brand/20 border border-brand-light/50"
-                      : "border border-transparent hover:bg-gray-800/50 hover:border-gray-700"
+                      : "border border-transparent hover:bg-white/60 hover:border-brand-muted/30"
                   }`}
                 >
                   <div className="flex items-center justify-between mb-1">
-                    <span className="font-mono text-gray-400 truncate">{String(c.id).slice(0, 8)}</span>
+                    <span className="font-mono text-gray-500 truncate">{String(c.id).slice(0, 8)}</span>
                     <span className={`px-1.5 py-0.5 rounded text-[10px] border ${getStatusStyle(c.status)}`}>
                       {c.status}
                     </span>
                   </div>
-                  <p className="text-gray-300 truncate">{entityLabel(c.entity1, c.leftDbId)} ↔ {entityLabel(c.entity2, c.rightDbId)}</p>
+                  <p className="text-gray-700 truncate">{entityLabel(c.entity1, c.leftDbId)} ↔ {entityLabel(c.entity2, c.rightDbId)}</p>
                   <p className="text-gray-500 mt-0.5">
                     {c.distance > 0
                       ? `Clearance: ${c.distance.toFixed(1)}mm`
@@ -450,7 +450,7 @@ function ClashBrowser() {
 
       {/* Status bar */}
       {modelUrns.length > 0 && (
-        <div className="flex-shrink-0 px-4 py-1 border-t border-gray-800 bg-gray-900/50 text-xs text-gray-600">
+        <div className="flex-shrink-0 px-4 py-1 border-t border-brand-muted/20 bg-white/80 text-xs text-gray-400">
           {clashes.length} clashes · {modelUrns.length} models ·{" "}
           {viewerReady ? "viewer ready" : "viewer loading…"}
         </div>

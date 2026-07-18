@@ -34,8 +34,8 @@ export function DataManagement() {
         <p className="text-gray-500 mb-6">
           Browse your APS hubs, projects, and ACC Docs folder hierarchy.
         </p>
-        <div className="p-8 rounded-lg border border-gray-800 bg-gray-900 text-center">
-          <p className="text-lg mb-4 text-gray-400">🔒 Authentication required</p>
+        <div className="p-8 rounded-lg border border-brand-muted/20 bg-white text-center">
+          <p className="text-lg mb-4 text-gray-600">🔒 Authentication required</p>
           <button
             onClick={login}
             className="px-6 py-2 rounded-lg bg-brand hover:bg-brand-light text-white font-medium transition-colors"
@@ -179,10 +179,10 @@ function Browser() {
       <h1 className="text-2xl font-bold mb-2">Data Management</h1>
 
       {/* Breadcrumbs */}
-      <nav className="flex items-center gap-1 text-sm text-gray-400 mb-4 overflow-x-auto">
+      <nav className="flex items-center gap-1 text-sm text-gray-500 mb-4 overflow-x-auto">
         {breadcrumbs.map((crumb, i) => (
           <span key={i} className="flex items-center gap-1 whitespace-nowrap">
-            {i > 0 && <span className="text-gray-600">/</span>}
+            {i > 0 && <span className="text-gray-400">/</span>}
             <button
               onClick={crumb.onClick}
               className="hover:text-white transition-colors truncate max-w-[200px]"
@@ -199,7 +199,7 @@ function Browser() {
           {[...Array(4)].map((_, i) => (
             <div
               key={i}
-              className="h-14 rounded-lg bg-gray-900 animate-pulse"
+              className="h-14 rounded-lg bg-brand-surface animate-pulse"
             />
           ))}
         </div>
@@ -207,12 +207,12 @@ function Browser() {
 
       {/* Error */}
       {error && !loading && (
-        <div className="p-4 rounded-lg border border-red-900/50 bg-red-950/30 mb-4">
-          <p className="text-red-400 text-sm font-medium mb-1">Error</p>
-          <p className="text-red-300 text-sm font-mono">{error}</p>
+        <div className="p-4 rounded-lg border border-red-200 bg-red-50 mb-4">
+          <p className="text-red-700 text-sm font-medium mb-1">Error</p>
+          <p className="text-red-600 text-sm font-mono">{error}</p>
           <button
             onClick={fetch}
-            className="mt-2 text-xs text-red-400 hover:text-red-300 underline"
+            className="mt-2 text-xs text-red-600 hover:text-red-500 underline"
           >
             Retry
           </button>
@@ -221,7 +221,7 @@ function Browser() {
 
       {/* Empty */}
       {!loading && !error && items.length === 0 && (
-        <div className="p-8 rounded-lg border border-gray-800 bg-gray-900 text-center text-gray-500">
+        <div className="p-8 rounded-lg border border-brand-muted/20 bg-white text-center text-gray-500">
           <p>Nothing here.</p>
         </div>
       )}
@@ -233,7 +233,7 @@ function Browser() {
             <button
               key={item.id}
               onClick={() => handleClick(item)}
-              className="w-full flex items-center gap-3 p-3 rounded-lg border border-gray-800 bg-gray-900 hover:border-gray-700 hover:bg-gray-800/50 transition-colors text-left"
+              className="w-full flex items-center gap-3 p-3 rounded-lg border border-brand-muted/20 bg-white hover:border-brand-muted/40 hover:bg-brand-surface/50 transition-all text-left"
             >
               <span className="text-xl flex-shrink-0">{getItemIcon(item)}</span>
               <div className="min-w-0 flex-1">
@@ -241,11 +241,11 @@ function Browser() {
                 <p className="text-xs text-gray-500">{getItemType(item)}</p>
               </div>
               {getItemSub(item) && (
-                <span className="text-xs text-gray-600 flex-shrink-0">
+                <span className="text-xs text-gray-400 flex-shrink-0">
                   {getItemSub(item)}
                 </span>
               )}
-              <span className="text-gray-600 flex-shrink-0">→</span>
+              <span className="text-gray-400 flex-shrink-0">→</span>
             </button>
           ))}
         </div>

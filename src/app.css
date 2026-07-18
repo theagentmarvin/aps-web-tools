@@ -1,11 +1,12 @@
 @import "tailwindcss";
 
-/* APS Web Tools — SalfaCorp brand theme
+/* APS Web Tools — SalfaCorp brand theme (light)
    Primary:      #A32428 (burgundy red)
    Light:        #B44E51
    Lighter:      #BE6568
    Muted:        #8D9299 (gray accent)
-   Surface:      #F6E9E9 (light pink bg)
+   Surface:      #F6E9E9 (light pink — cards/sidebar)
+   Bg:           #FEFEFE (near white — page background)
    Text heading: #A32428
 */
 @theme {
@@ -14,4 +15,5 @@
   --color-brand-lighter: #BE6568;
   --color-brand-muted: #8D9299;
   --color-brand-surface: #F6E9E9;
+  --color-brand-bg: #FEFEFE;
 }
