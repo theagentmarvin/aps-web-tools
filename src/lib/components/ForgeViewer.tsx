@@ -135,16 +135,28 @@ export function ForgeViewer({
     };
   }, []);
 
-  // ── Viewer lifecycle: create once, reload models when URNs change ──
+  // ── Viewer lifecycle ───────────────────────────────────────────────
+  //
+  // Two effects instead of one:
+  //   A) Create viewer (once) — guarded by canvas-presence check so
+  //      React StrictMode double-mount doesn't create a second instance.
+  //      StrictMode cleanup just sets cancelled; it does NOT destroy
+  //      the viewer or remove the canvas.
+  //   B) Dispose viewer on REAL unmount — empty dep array runs only on
+  //      final unmount, not StrictMode's simulate-remount cycle.
 
-  const viewerCreated = useRef(false);
   const tokenRef = useRef(getToken);
   tokenRef.current = getToken;
   const expiresRef = useRef(expiresIn);
   expiresRef.current = expiresIn;
 
+  // (A) Create viewer — once per component lifetime
   useEffect(() => {
     if (!scriptsLoaded || !containerRef.current) return;
+
+    // If a canvas already sits in the container, a viewer was already
+    // created (StrictMode remount or genuine re-render). Don't double.
+    if (containerRef.current.querySelector("canvas")) return;
 
     let cancelled = false;
 
@@ -179,7 +191,6 @@ export function ForgeViewer({
 
         viewer.setLightPreset(0);
         viewerRef.current = viewer;
-        viewerCreated.current = true;
         onViewerReady?.();
       });
     }
@@ -188,33 +199,33 @@ export function ForgeViewer({
 
     return () => {
       cancelled = true;
-      // Dispose viewer on unmount
+      // Intentional: do NOT destroy the viewer or remove the canvas here.
+      // StrictMode fires cleanup then re-runs the effect synchronously;
+      // the canvas guard above is what prevents double-creation.
+    };
+  }, [scriptsLoaded]);
+
+  // (B) Dispose viewer on real component unmount
+  useEffect(() => {
+    return () => {
       if (viewerRef.current) {
         try {
-          // GuiViewer3D teardown: finish() releases WebGL context
           const v = viewerRef.current as GuiViewer3D & { finish?: () => void };
           if (v.finish) v.finish();
-          // Remove the canvas from DOM to free GPU resources
-          const canvas = containerRef.current?.querySelector("canvas");
-          if (canvas) canvas.remove();
         } catch {
           // Best-effort cleanup
         }
         viewerRef.current = null;
-        viewerCreated.current = false;
       }
     };
-  }, [scriptsLoaded]);
+  }, []);
 
-  // ── Model loading effect (separate from viewer creation) ──
+  // ── Model loading — runs whenever URNs change ─────────────────────
 
   useEffect(() => {
-    if (!viewerCreated.current || modelUrns.length === 0) return;
+    if (!viewerRef.current || modelUrns.length === 0) return;
 
-    const viewer = viewerRef.current;
-    if (!viewer) return;
-    const v = viewer; // narrowed for closure
-
+    const v = viewerRef.current;
     let cancelled = false;
 
     async function loadModels() {
