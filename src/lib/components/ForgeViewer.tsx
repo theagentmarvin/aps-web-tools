@@ -106,6 +106,7 @@ export function ForgeViewer({
   const viewerRef = useRef<GuiViewer3D | null>(null);
   const modelsRef = useRef<ModelHandle[]>([]);
   const [scriptsLoaded, setScriptsLoaded] = useState(false);
+  const [viewerReady, setViewerReady] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   // Load Forge Viewer scripts
@@ -191,6 +192,7 @@ export function ForgeViewer({
 
         viewer.setLightPreset(0);
         viewerRef.current = viewer;
+        setViewerReady(true);
         onViewerReady?.();
       });
     }
@@ -223,9 +225,9 @@ export function ForgeViewer({
   // ── Model loading — runs whenever URNs change ─────────────────────
 
   useEffect(() => {
-    if (!viewerRef.current || modelUrns.length === 0) return;
+    if (!viewerReady || modelUrns.length === 0) return;
 
-    const v = viewerRef.current;
+    const v = viewerRef.current!;
     let cancelled = false;
 
     async function loadModels() {
@@ -265,7 +267,7 @@ export function ForgeViewer({
     return () => {
       cancelled = true;
     };
-  }, [modelUrns.join(",")]);
+  }, [modelUrns.join(","), viewerReady]);
 
   // ── Public API exposed via window ──────────────────────────────────
 
