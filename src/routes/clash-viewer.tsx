@@ -28,7 +28,7 @@ export function ClashViewer() {
           <p className="text-lg mb-4 text-gray-400">🔒 Authentication required</p>
           <button
             onClick={login}
-            className="px-6 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium transition-colors"
+            className="px-6 py-2 rounded-lg bg-brand hover:bg-brand-light text-white font-medium transition-colors"
           >
             Sign in with Autodesk
           </button>
@@ -254,7 +254,7 @@ function ClashBrowser() {
 
   const statusColors: Record<string, string> = {
     Active: "text-yellow-400 bg-yellow-950/50 border-yellow-900/50",
-    Reviewed: "text-blue-400 bg-blue-950/50 border-blue-900/50",
+    Reviewed: "text-brand-lighter bg-brand/10 border-brand-light/30",
     Resolved: "text-green-400 bg-green-950/50 border-green-900/50",
     Closed: "text-gray-400 bg-gray-900 border-gray-800",
   };
@@ -331,7 +331,7 @@ function ClashBrowser() {
             <button
               onClick={loadClashData}
               disabled={loading}
-              className="px-4 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-white text-sm disabled:opacity-50"
+              className="px-4 py-1.5 rounded bg-brand hover:bg-brand-light text-white text-sm disabled:opacity-50"
             >
               Load Tests
             </button>
@@ -375,7 +375,7 @@ function ClashBrowser() {
             <button
               onClick={loadClashResults}
               disabled={loading}
-              className="px-4 py-1.5 rounded bg-green-600 hover:bg-green-500 text-white text-sm disabled:opacity-50"
+              className="px-4 py-1.5 rounded bg-brand-light hover:bg-brand-lighter text-white text-sm disabled:opacity-50"
             >
               Fetch Clashes
             </button>
@@ -415,7 +415,7 @@ function ClashBrowser() {
                   onClick={() => selectClash(c)}
                   className={`w-full text-left p-2 rounded text-xs transition-colors ${
                     selectedClash?.id === c.id
-                      ? "bg-blue-900/50 border border-blue-700/50"
+                      ? "bg-brand/20 border border-brand-light/50"
                       : "border border-transparent hover:bg-gray-800/50 hover:border-gray-700"
                   }`}
                 >

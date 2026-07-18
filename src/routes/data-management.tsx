@@ -38,7 +38,7 @@ export function DataManagement() {
           <p className="text-lg mb-4 text-gray-400">🔒 Authentication required</p>
           <button
             onClick={login}
-            className="px-6 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium transition-colors"
+            className="px-6 py-2 rounded-lg bg-brand hover:bg-brand-light text-white font-medium transition-colors"
           >
             Sign in with Autodesk
           </button>
