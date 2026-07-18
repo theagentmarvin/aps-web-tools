@@ -3,9 +3,9 @@ import { Nav } from "~/lib/components/nav";
 
 export function Layout() {
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="h-screen flex flex-col overflow-hidden">
       <Nav />
-      <main className="flex-1 p-6">
+      <main className="flex-1 min-h-0">
         <Outlet />
       </main>
     </div>

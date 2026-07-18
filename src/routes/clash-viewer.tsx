@@ -267,9 +267,9 @@ function ClashBrowser() {
   // ── Render ───────────────────────────────────────────────────────
 
   return (
-    <div className="h-[calc(100vh-4rem)] flex flex-col">
+    <div className="h-full flex flex-col">
       {/* Controls */}
-      <div className="flex-shrink-0 p-4 border-b border-gray-800 bg-gray-900/50">
+      <div className="flex-shrink-0 p-4 border-b border-gray-800 bg-gray-900/50 relative z-10">
         <div className="flex flex-wrap gap-3 items-end">
           {/* Hub dropdown */}
           <div className="min-w-[180px]">
@@ -393,7 +393,7 @@ function ClashBrowser() {
       {/* Main area: sidebar + viewer */}
       <div className="flex-1 flex min-h-0">
         {/* Clash Sidebar */}
-        <div className="w-72 flex-shrink-0 border-r border-gray-800 overflow-y-auto bg-gray-950">
+        <div className="w-72 flex-shrink-0 border-r border-gray-800 overflow-y-auto bg-gray-950 relative z-10">
           {loading && clashes.length === 0 && (
             <div className="p-4 text-sm text-gray-500">Loading clash data…</div>
           )}
@@ -437,31 +437,14 @@ function ClashBrowser() {
           )}
         </div>
 
-        {/* Viewer */}
+        {/* Viewer — always mounted; models load when available */}
         <div className="flex-1 min-w-0">
-          {modelUrns.length > 0 && (
-            <ForgeViewer
-              getToken={getToken}
-              expiresIn={3600}
-              modelUrns={modelUrns}
-              onViewerReady={() => setViewerReady(true)}
-            />
-          )}
-          {modelUrns.length === 0 && !loading && (
-            <div className="flex items-center justify-center h-full text-gray-600">
-              <p className="text-sm">
-                Select a hub and project to browse model sets.
-              </p>
-            </div>
-          )}
-          {loading && modelUrns.length === 0 && (
-            <div className="flex items-center justify-center h-full">
-              <div className="text-center">
-                <div className="animate-spin text-2xl mb-2">⏳</div>
-                <p className="text-gray-500 text-sm">Fetching clash data…</p>
-              </div>
-            </div>
-          )}
+          <ForgeViewer
+            getToken={getToken}
+            expiresIn={3600}
+            modelUrns={modelUrns}
+            onViewerReady={() => setViewerReady(true)}
+          />
         </div>
       </div>
 

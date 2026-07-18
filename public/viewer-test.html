@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Viewer Test</title>
+  <link rel="stylesheet" href="https://developer.api.autodesk.com/modelderivative/v2/viewers/7.*/style.min.css" />
+  <script src="https://developer.api.autodesk.com/modelderivative/v2/viewers/7.*/viewer3D.min.js"></script>
+  <style>
+    body { margin: 0; }
+    #viewer { width: 100vw; height: 100vh; }
+  </style>
+</head>
+<body>
+  <div id="viewer"></div>
+  <script>
+    console.log('Autodesk?', !!window.Autodesk);
+    console.log('Autodesk.Viewing?', !!window.Autodesk?.Viewing);
+
+    var options = {
+      env: 'AutodeskProduction',
+      accessToken: ''
+    };
+
+    Autodesk.Viewing.Initializer(options, function() {
+      var viewer = new Autodesk.Viewing.GuiViewer3D(document.getElementById('viewer'));
+      var code = viewer.start();
+      console.log('viewer.start() returned:', code);
+      if (code === 0) {
+        document.body.style.background = 'green';
+        console.log('✅ Viewer started!');
+      } else {
+        document.body.style.background = 'red';
+        console.error('❌ Viewer start failed:', code);
+      }
+    });
+  </script>
+</body>
+</html>
