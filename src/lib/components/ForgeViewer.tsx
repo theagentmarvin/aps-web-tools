@@ -303,6 +303,7 @@ export function ForgeViewer({
     (leftDbId: number, rightDbId: number) => {
       const viewer = viewerRef.current;
       const models = modelsRef.current;
+      console.log("[ForgeViewer] highlightClash called:", { leftDbId, rightDbId, hasViewer: !!viewer, modelCount: models.length });
       if (!viewer || models.length === 0) return;
 
       const red = new window.THREE.Vector4(1, 0, 0, 1);

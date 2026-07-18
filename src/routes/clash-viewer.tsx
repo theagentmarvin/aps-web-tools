@@ -220,6 +220,7 @@ function ClashBrowser() {
   // ── Clash selection → viewer highlight ───────────────────────────
 
   const selectClash = useCallback(async (clash: ProcessedClash) => {
+    console.log("[ClashViewer] selectClash:", { id: clash.id, leftDbId: clash.leftDbId, rightDbId: clash.rightDbId });
     setSelectedClash(clash);
     const api = (window as unknown as Record<string, unknown>).__forgeViewer as
       | {
