@@ -32,6 +32,7 @@ declare global {
 
 interface GuiViewer3D {
   start: (svgUrl?: string, options?: Record<string, unknown>) => number;
+  setUp: (config: Record<string, unknown>) => void;
   setLightPreset: (preset: number) => void;
   loadDocumentNode: (
     doc: DocumentNode,
@@ -191,6 +192,7 @@ export function ForgeViewer({
         }
 
         viewer.setLightPreset(0);
+        viewer.setUp({});
         viewerRef.current = viewer;
         setViewerReady(true);
         onViewerReady?.();

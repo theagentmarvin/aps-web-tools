@@ -440,7 +440,6 @@ function ClashBrowser() {
         <div className="flex-1 min-w-0">
           {modelUrns.length > 0 && (
             <ForgeViewer
-              key={modelUrns.join(",")}
               getToken={getToken}
               expiresIn={3600}
               modelUrns={modelUrns}
