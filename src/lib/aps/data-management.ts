@@ -47,21 +47,6 @@ export interface FolderContent {
   };
 }
 
-export interface ItemTip {
-  id: string; // urn
-  type: string;
-  attributes: {
-    name: string;
-    displayName: string;
-    extension: { type: string; version: string };
-  };
-  relationships: {
-    derivatives: { data: { id: string; type: string } };
-    tip: { data: { id: string; type: string } };
-    versions: { data: { id: string; type: string }[] };
-  };
-}
-
 async function apsFetch(path: string, token: string): Promise<unknown> {
   const res = await fetch(`/api/aps${path}`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -127,10 +112,40 @@ export async function getItemTip(
   token: string,
   projectId: string,
   itemId: string
-): Promise<ItemTip> {
-  const data = await apsFetch(
-    `/data/v1/projects/${projectId}/items/${itemId}/tip`,
-    token
-  ) as { data: ItemTip };
-  return data.data;
+): Promise<string> {
+  const log: string[] = [];
+
+  // Try /versions endpoint first — more reliable than /tip for ACC Docs
+  try {
+    const versionsRaw = await apsFetch(
+      `/data/v1/projects/${projectId}/items/${encodeURIComponent(itemId)}/versions`,
+      token
+    ) as { data: { id: string }[] };
+    log.push(`versions: ${JSON.stringify(versionsRaw).slice(0, 200)}`);
+    if (versionsRaw.data?.length > 0) {
+      const latestUrn = versionsRaw.data[versionsRaw.data.length - 1].id;
+      log.push(`picked: ${latestUrn}`);
+      console.log("[getItemTip]", ...log);
+      return latestUrn;
+    }
+  } catch (e) {
+    log.push(`versions err: ${String(e).slice(0, 100)}`);
+  }
+
+  // Fallback: try tip endpoint
+  try {
+    const tipRaw = await apsFetch(
+      `/data/v1/projects/${projectId}/items/${encodeURIComponent(itemId)}/tip`,
+      token
+    ) as { data: { id: string } };
+    log.push(`tip: ${JSON.stringify(tipRaw).slice(0, 200)}`);
+    const urn = tipRaw.data?.id || "";
+    console.log("[getItemTip]", ...log);
+    return urn;
+  } catch (e) {
+    log.push(`tip err: ${String(e).slice(0, 100)}`);
+  }
+
+  console.log("[getItemTip] ALL FAILED", ...log);
+  throw new Error(`getItemTip failed:\n${log.join("\n")}`);
 }

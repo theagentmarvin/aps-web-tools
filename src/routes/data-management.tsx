@@ -1,10 +1,14 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "~/lib/auth-context";
+import { ForgeViewer } from "~/lib/components/ForgeViewer";
+import { PropertyPanel } from "~/lib/viewer-tools/panels/PropertyPanel";
+import { ColorLegend } from "~/lib/viewer-tools/panels/ColorLegend";
 import {
   getHubs,
   getProjects,
   getTopFolders,
   getFolderContents,
+  getItemTip,
 } from "~/lib/aps";
 import type { Hub, Project, FolderContent } from "~/lib/aps";
 
@@ -21,12 +25,16 @@ type BrowserLevel =
   | { kind: "topFolders"; hub: Hub; project: Project }
   | { kind: "folder"; hub: Hub; project: Project; path: FolderContent[]; folder: FolderContent };
 
+interface LoadedModel {
+  urn: string;
+  name: string;
+}
+
 // ── Component ───────────────────────────────────────────────────────
 
 export function DataManagement() {
   const { login, isAuthenticated } = useAuth();
 
-  // Auth gate
   if (!isAuthenticated) {
     return (
       <div className="max-w-4xl mx-auto">
@@ -52,12 +60,28 @@ export function DataManagement() {
 
 // ── Browser ─────────────────────────────────────────────────────────
 
+const STORAGE_KEY = "aps-viewer-models";
+
+function loadSavedModels(): LoadedModel[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function saveModels(models: LoadedModel[]) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(models));
+}
+
 function Browser() {
   const { getAccessToken } = useAuth();
   const [level, setLevel] = useState<BrowserLevel>({ kind: "hubs" });
   const [items, setItems] = useState<(Hub | Project | FolderContent)[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [loadedModels, setLoadedModels] = useState<LoadedModel[]>(loadSavedModels);
+  const [loadingModel, setLoadingModel] = useState<string | null>(null);
+  const restoredRef = useRef(false);
 
   const fetch = useCallback(async () => {
     setLoading(true);
@@ -105,6 +129,14 @@ function Browser() {
   }, [level, getAccessToken]);
 
   useEffect(() => {
+    if (!restoredRef.current && loadedModels.length > 0) {
+      restoredRef.current = true;
+      setLoading(false);
+      return;
+    }
+    if (!restoredRef.current) {
+      restoredRef.current = true;
+    }
     fetch();
   }, [fetch]);
 
@@ -123,20 +155,60 @@ function Browser() {
     setLevel({ kind: "folder", hub: lvl.hub, project: lvl.project, path, folder });
   };
 
-  const isFolder = (item: Hub | Project | FolderContent): item is FolderContent =>
-    (item as FolderContent).attributes?.extension?.type === "folders:autodesk.core:Folder" ||
-    (item as FolderContent).type === "folders";
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const isFolder = (item: any): boolean =>
+    item.attributes?.extension?.type === "folders:autodesk.core:Folder" ||
+    item.type === "folders";
 
-  const isItem = (item: Hub | Project | FolderContent): boolean =>
-    (item as FolderContent).attributes?.extension?.type === "items:autodesk.bim360:File" ||
-    (item as FolderContent).type === "items";
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const isLoadableItem = (item: any): boolean =>
+    item.attributes?.extension?.type === "items:autodesk.bim360:File" ||
+    item.type === "items";
 
-  const handleClick = (item: Hub | Project | FolderContent) => {
+  // ── Open a model in the viewer ────────────────────────────────
+
+  const openModel = useCallback(async (item: FolderContent) => {
+    const token = await getAccessToken();
+    if (!token) return;
+
+    const lvl = level as Extract<BrowserLevel, { kind: "topFolders" | "folder" }>;
+    const projectId = lvl.project.id;
+    const itemId = item.id;
+    const key = `${projectId}:${itemId}`;
+
+    // Don't reload same model
+    if (loadedModels.some((m) => m.urn === key)) return;
+    setLoadingModel(key);
+
+    try {
+      const urn = await getItemTip(token, projectId, itemId);
+      if (!urn) throw new Error("No model URN found — is this file published?");
+      const updated = [...loadedModels, { urn, name: item.attributes.name }];
+      setLoadedModels(updated);
+      saveModels(updated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load model");
+    } finally {
+      setLoadingModel(null);
+    }
+  }, [getAccessToken, level, loadedModels]);
+
+  const removeModel = useCallback((urn: string) => {
+    setLoadedModels((prev) => {
+      const updated = prev.filter((m) => m.urn !== urn);
+      saveModels(updated);
+      return updated;
+    });
+  }, []);
+
+  const handleClick = async (item: Hub | Project | FolderContent) => {
     if (level.kind === "hubs" && item.type === "hubs") selectHub(item as Hub);
     else if (level.kind === "projects" && item.type === "projects") selectProject(item as Project);
     else if (isFolder(item)) selectFolder(item as FolderContent);
-    // items are leaves for now
+    else if (isLoadableItem(item)) await openModel(item as FolderContent);
   };
+
+  // ── Helpers ───────────────────────────────────────────────────
 
   const getItemLabel = (item: Hub | Project | FolderContent): string => {
     const attrs = item.attributes as Record<string, unknown> | undefined;
@@ -147,7 +219,7 @@ function Browser() {
     if (item.type === "hubs") return "Hub";
     if (item.type === "projects") return "Project";
     if (isFolder(item)) return "Folder";
-    if (isItem(item)) return "File";
+    if (isLoadableItem(item)) return "File";
     return item.type;
   };
 
@@ -155,7 +227,7 @@ function Browser() {
     if (item.type === "hubs") return "🏢";
     if (item.type === "projects") return "📁";
     if (isFolder(item)) return "📂";
-    if (isItem(item)) return "📄";
+    if (isLoadableItem(item)) return "📄";
     return "❓";
   };
 
@@ -174,6 +246,102 @@ function Browser() {
 
   // ── Render ────────────────────────────────────────────────────
 
+  const modelUrns = loadedModels.map((m) => m.urn);
+
+  // If we have loaded models, show split view
+  if (loadedModels.length > 0) {
+    return (
+      <div className="h-full flex flex-col">
+        {/* Top bar: breadcrumbs + loaded models */}
+        <div className="flex-shrink-0 px-4 py-2 border-b border-brand-muted/20 bg-white/90 flex items-center gap-3 flex-wrap">
+          <nav className="flex items-center gap-1 text-sm text-gray-500">
+            {breadcrumbs.map((crumb, i) => (
+              <span key={i} className="flex items-center gap-1 whitespace-nowrap">
+                {i > 0 && <span className="text-gray-400">/</span>}
+                <button onClick={crumb.onClick} className="hover:text-gray-700 transition-colors">
+                  {crumb.label}
+                </button>
+              </span>
+            ))}
+          </nav>
+          <span className="text-gray-400">|</span>
+          {loadedModels.map((m) => (
+            <span key={m.urn} className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-brand/10 text-xs text-brand">
+              🧊 {m.name}
+              <button onClick={() => removeModel(m.urn)} className="ml-1 text-gray-400 hover:text-red-500">×</button>
+            </span>
+          ))}
+        </div>
+
+        {/* Main area: browser sidebar + viewer */}
+        <div className="flex-1 flex min-h-0">
+          {/* Browser sidebar */}
+          <div className="w-72 flex-shrink-0 border-r border-brand-muted/20 flex flex-col">
+            <div className="flex-1 overflow-y-auto bg-white">
+            {loading && (
+              <div className="space-y-2 p-2">
+                {[...Array(4)].map((_, i) => (
+                  <div key={i} className="h-14 rounded-lg bg-brand-surface animate-pulse" />
+                ))}
+              </div>
+            )}
+            {error && !loading && (
+              <div className="p-3 m-2 rounded border border-red-200 bg-red-50">
+                <p className="text-red-700 text-xs font-medium">Error</p>
+                <p className="text-red-600 text-xs font-mono">{error}</p>
+                <button onClick={fetch} className="mt-1 text-xs text-red-600 underline">Retry</button>
+              </div>
+            )}
+            {!loading && !error && (
+              <div className="space-y-0.5 p-1">
+                {items.map((item) => (
+                  <button
+                    key={item.id}
+                    onClick={() => handleClick(item)}
+                    className="w-full flex items-center gap-2 p-2 rounded text-left hover:bg-brand-surface/60 transition-colors text-sm"
+                  >
+                    <span className="text-base flex-shrink-0">{getItemIcon(item)}</span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-medium">{getItemLabel(item)}</p>
+                      <p className="text-xs text-gray-400">{getItemType(item)}</p>
+                    </div>
+                    {getItemSub(item) && (
+                      <span className="text-xs text-gray-400 flex-shrink-0">{getItemSub(item)}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+            </div>
+
+            {/* Property discovery panel (appears when model is loaded) */}
+            <div className="flex-shrink-0 h-64 border-t border-brand-muted/20">
+              <PropertyPanel hasModel={loadedModels.length > 0} />
+            </div>
+            <ColorLegend />
+          </div>
+
+          {/* Viewer */}
+          <div className="flex-1 min-w-0">
+            <ForgeViewer
+              getToken={getAccessToken}
+              expiresIn={3600}
+              modelUrns={modelUrns}
+            />
+          </div>
+        </div>
+
+        {/* Status bar */}
+        <div className="flex-shrink-0 px-4 py-1 border-t border-brand-muted/20 bg-white/80 text-xs text-gray-400 flex gap-4">
+          <span>{loadedModels.length} model{loadedModels.length !== 1 ? "s" : ""} loaded</span>
+          {loadingModel && <span>Loading {loadingModel.split(":")[1].slice(0, 12)}…</span>}
+        </div>
+      </div>
+    );
+  }
+
+  // ── Browser-only view (no models loaded yet) ─────────────────
+
   return (
     <div className="max-w-4xl mx-auto">
       <h1 className="text-2xl font-bold mb-2">Data Management</h1>
@@ -185,7 +353,7 @@ function Browser() {
             {i > 0 && <span className="text-gray-400">/</span>}
             <button
               onClick={crumb.onClick}
-              className="hover:text-white transition-colors truncate max-w-[200px]"
+              className="hover:text-gray-700 transition-colors truncate max-w-[200px]"
             >
               {crumb.label}
             </button>
@@ -197,10 +365,7 @@ function Browser() {
       {loading && (
         <div className="space-y-2">
           {[...Array(4)].map((_, i) => (
-            <div
-              key={i}
-              className="h-14 rounded-lg bg-brand-surface animate-pulse"
-            />
+            <div key={i} className="h-14 rounded-lg bg-brand-surface animate-pulse" />
           ))}
         </div>
       )}

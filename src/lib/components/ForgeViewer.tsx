@@ -12,7 +12,7 @@
  *   2. env: 'AutodeskProduction' (not AutodeskProduction2)
  *   3. viewer.start() then viewer.setUp({ extensions })
  */
-import { useEffect, useRef, useCallback, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -183,69 +183,17 @@ export function ForgeViewer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, modelUrns.join(",")]);
 
-  // ── Public API ───────────────────────────────────────────────────
-
-  const highlightClash = useCallback((leftDbId: number, rightDbId: number) => {
-    const v = viewerRef.current;
-    const models = modelsRef.current;
-    if (!v || models.length === 0) return;
-
-    const red = new window.THREE.Vector4(1, 0, 0, 1);
-    const blue = new window.THREE.Vector4(0, 0.4, 1, 1);
-
-    for (const m of models) {
-      v.clearThemingColors(m);
-      v.impl.visibilityManager.isolate(-1, m);
-    }
-    for (const model of models) {
-      v.impl.visibilityManager.show(leftDbId, model);
-      v.impl.visibilityManager.show(rightDbId, model);
-      v.setThemingColor(leftDbId, red, model);
-      v.setThemingColor(rightDbId, blue, model);
-    }
-    v.fitToView([leftDbId, rightDbId], models[models.length - 1]);
-  }, []);
-
-  const clearHighlight = useCallback(() => {
-    const v = viewerRef.current;
-    if (!v) return;
-    for (const m of modelsRef.current) {
-      v.clearThemingColors(m);
-      v.impl.visibilityManager.aggregateIsolate([]);
-    }
-  }, []);
-
-  const getElementName = useCallback((dbId: number): Promise<string> => {
-    const v = viewerRef.current;
-    const models = modelsRef.current;
-    if (!v || models.length === 0) return Promise.resolve(`dbId:${dbId}`);
-
-    const attempts = models.map(
-      (model) =>
-        new Promise<string>((resolve) => {
-          const t = setTimeout(() => resolve(""), 5000);
-          v.getProperties(dbId, model, (props: unknown) => {
-            clearTimeout(t);
-            const p = props as Record<string, unknown>;
-            resolve((p.name || (p.properties as Record<string, unknown>)?.name || "") as string);
-          });
-        }),
-    );
-
-    return Promise.race([...attempts, new Promise<string>((r) => setTimeout(() => r(""), 5000))])
-      .then((name) => name || `dbId:${dbId}`);
-  }, []);
-
-  // ── Expose public API on window for clash-viewer ─────────────────
+  // ── Public API (exposed for viewer-tools consumer) ──────────────
 
   useEffect(() => {
-    (window as unknown as Record<string, unknown>).__forgeViewer = {
-      highlightClash, clearHighlight, getElementName,
+    (window as unknown as Record<string, unknown>).__apsViewer = {
+      getViewer: () => viewerRef.current,
+      getModels: () => modelsRef.current,
     };
     return () => {
-      delete (window as unknown as Record<string, unknown>).__forgeViewer;
+      delete (window as unknown as Record<string, unknown>).__apsViewer;
     };
-  }, [highlightClash, clearHighlight, getElementName]);
+  }, [ready]);
 
   // ── Render ───────────────────────────────────────────────────────
 

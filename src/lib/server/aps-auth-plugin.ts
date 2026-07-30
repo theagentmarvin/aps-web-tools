@@ -126,26 +126,7 @@ export function apsAuthPlugin(): Plugin {
         }
       });
 
-      // ── S3 proxy (avoids CORS on presigned S3 URLs) ──────────────
-      server.middlewares.use("/api/s3-proxy", async (req, res) => {
-        if (req.method !== "POST") return json(res, 405, { error: "method_not_allowed" });
-
-        const params = await readBody(req);
-        const url = params.get("url");
-        if (!url) return json(res, 400, { error: "missing_url" });
-
-        try {
-          const s3Res = await fetch(url);
-          if (!s3Res.ok) {
-            return json(res, s3Res.status, { error: `S3 fetch failed: ${s3Res.status}` });
-          }
-          // Stream the response back as JSON (clash data is always JSON)
-          const data = await s3Res.json();
-          json(res, 200, data);
-        } catch (err) {
-          json(res, 502, { error: "s3_proxy_failed", detail: String(err) });
-        }
-      });
+      // ── S3 proxy removed (clash-only, not needed for viewer toolkit) ──
     },
   };
 }
