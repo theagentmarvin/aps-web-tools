@@ -110,7 +110,10 @@ export function ForgeViewer({
             const viewer = new Klass(container);
             viewer.start();
             viewer.setUp({
-              extensions: ["Autodesk.DocumentBrowser"],
+              extensions: [
+                "Autodesk.DocumentBrowser",
+                "Autodesk.DataVisualization",
+              ],
             });
 
             viewerRef.current = viewer;

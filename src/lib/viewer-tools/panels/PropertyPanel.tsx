@@ -6,7 +6,9 @@
  */
 import { useState, useEffect, useCallback } from "react";
 import { discoverProperties } from "../property-service";
+import { isNumericProperty } from "../color-scales";
 import { applyColorByProperty, getActiveColoring } from "../theming-service";
+import { renderCategoryHeatmap, clearHeatmap, getCurrentHeatmap } from "../category-heatmap";
 import type { PropertyDef, ApsViewerAPI } from "../types";
 
 interface Props {
@@ -22,12 +24,15 @@ export function PropertyPanel({ hasModel }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
   const [coloringProperty, setColoringProperty] = useState<string | null>(null);
+  const [heatmapProperty, setHeatmapProperty] = useState<string | null>(null);
 
   // Poll active coloring state
   useEffect(() => {
     const id = setInterval(() => {
       const active = getActiveColoring();
+      const heatmap = getCurrentHeatmap();
       setColoringProperty(active?.propertyName || null);
+      setHeatmapProperty(heatmap?.registration?.category || null);
     }, 500);
     return () => clearInterval(id);
   }, []);
@@ -36,8 +41,18 @@ export function PropertyPanel({ hasModel }: Props) {
     applyColorByProperty(
       propName,
       "categorical",
-      () => {}, // progress not displayed in Stage 2
       () => {},
+      () => {},
+    );
+  }, []);
+
+  const handleHeatmapByProperty = useCallback((propName: string) => {
+    clearHeatmap();
+    renderCategoryHeatmap(
+      propName,
+      "sequential",
+      (msg) => setProgress(msg),
+      () => setProgress(""),
     );
   }, []);
 
@@ -202,6 +217,22 @@ export function PropertyPanel({ hasModel }: Props) {
                         >
                           {coloringProperty === prop.name ? "Colored" : "Color"}
                         </button>
+                        {isNumericProperty(prop.values.map((v) => v.value)) && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleHeatmapByProperty(prop.name);
+                            }}
+                            className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
+                              heatmapProperty === prop.name
+                                ? "bg-brand text-white border-brand"
+                                : "border-brand-muted/30 text-gray-400 hover:text-orange-500 hover:border-orange-400/50"
+                            }`}
+                            title="Heatmap — gradient coloring by numeric value"
+                          >
+                            {heatmapProperty === prop.name ? "🔥 Active" : "🔥 Heatmap"}
+                          </button>
+                        )}
                       </button>
 
                       {/* Expanded: value list */}
