@@ -6,7 +6,7 @@ import { PropertyPanel } from "~/lib/viewer-tools/panels/PropertyPanel";
 import { ColorLegend } from "~/lib/viewer-tools/panels/ColorLegend";
 import { MarkerPanel } from "~/lib/viewer-tools/panels/MarkerPanel";
 import { DashboardPanel } from "~/lib/viewer-tools/panels/DashboardPanel";
-import { ShaderToolbar } from "~/lib/viewer-tools/panels/ShaderToolbar";
+
 import { GanttPanel } from "~/lib/viewer-tools/panels/GanttPanel";
 import {
   getHubs,
@@ -344,7 +344,6 @@ function Browser() {
               modelUrns={modelUrns}
             />
             <ElementTooltip />
-            <ShaderToolbar hasModel={loadedModels.length > 0} />
             <GanttPanel hasModel={loadedModels.length > 0} />
           </div>
         </div>

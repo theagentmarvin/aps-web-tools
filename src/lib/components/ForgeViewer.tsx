@@ -13,6 +13,8 @@
  *   3. viewer.start() then viewer.setUp({ extensions })
  */
 import { useEffect, useRef, useState } from "react";
+import { registerShaderExtension } from "~/lib/viewer-tools/extensions/shader-extension";
+import { registerMarkerExtension } from "~/lib/viewer-tools/extensions/marker-extension";
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -109,10 +111,17 @@ export function ForgeViewer({
 
             const viewer = new Klass(container);
             viewer.start();
+
+            // Register custom toolbar extensions BEFORE setUp
+            registerShaderExtension();
+            registerMarkerExtension();
+
             viewer.setUp({
               extensions: [
                 "Autodesk.DocumentBrowser",
                 "Autodesk.DataVisualization",
+                "ApsViewerToolkit.Shader",
+                "ApsViewerToolkit.Marker",
               ],
             });
 

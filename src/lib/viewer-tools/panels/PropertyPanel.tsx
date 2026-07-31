@@ -188,9 +188,12 @@ export function PropertyPanel({ hasModel }: Props) {
                   {catProps.map((prop) => (
                     <div key={prop.name}>
                       {/* Property row */}
-                      <button
+                      <div
                         onClick={() => toggleExpanded(prop.name)}
-                        className={`w-full flex items-center gap-2 px-4 py-1.5 hover:bg-brand-surface/40 text-left ${
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpanded(prop.name); } }}
+                        className={`w-full flex items-center gap-2 px-4 py-1.5 hover:bg-brand-surface/40 text-left cursor-pointer ${
                           coloringProperty === prop.name ? "bg-brand/10" : ""
                         }`}
                       >
@@ -233,7 +236,7 @@ export function PropertyPanel({ hasModel }: Props) {
                             {heatmapProperty === prop.name ? "🔥 Active" : "🔥 Heatmap"}
                           </button>
                         )}
-                      </button>
+                      </div>
 
                       {/* Expanded: value list */}
                       {expanded.has(prop.name) && (

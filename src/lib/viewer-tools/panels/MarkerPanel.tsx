@@ -108,10 +108,13 @@ export function MarkerPanel({ hasModel }: Props) {
                 {/* Items */}
                 <div>
                   {group.items.map((marker) => (
-                    <button
+                    <div
                       key={marker.id}
                       onClick={() => handleClick(marker)}
-                      className="w-full flex items-center gap-2 px-4 py-1.5 hover:bg-brand-surface/40 text-left group"
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleClick(marker); } }}
+                      className="w-full flex items-center gap-2 px-4 py-1.5 hover:bg-brand-surface/40 text-left group cursor-pointer"
                     >
                       {/* Status dot for issues */}
                       {marker.type === "issue" && (
@@ -142,7 +145,7 @@ export function MarkerPanel({ hasModel }: Props) {
                       >
                         ×
                       </button>
-                    </button>
+                    </div>
                   ))}
                 </div>
               </div>
