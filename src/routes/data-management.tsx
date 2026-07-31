@@ -3,6 +3,7 @@ import { useAuth } from "~/lib/auth-context";
 import { ForgeViewer } from "~/lib/components/ForgeViewer";
 import { PropertyPanel } from "~/lib/viewer-tools/panels/PropertyPanel";
 import { ColorLegend } from "~/lib/viewer-tools/panels/ColorLegend";
+import { MarkerPanel } from "~/lib/viewer-tools/panels/MarkerPanel";
 import {
   getHubs,
   getProjects,
@@ -319,6 +320,11 @@ function Browser() {
               <PropertyPanel hasModel={loadedModels.length > 0} />
             </div>
             <ColorLegend />
+
+            {/* Marker panel (appears when model is loaded) */}
+            <div className="flex-shrink-0 h-48 border-t border-brand-muted/20">
+              <MarkerPanel hasModel={loadedModels.length > 0} />
+            </div>
           </div>
 
           {/* Viewer */}
