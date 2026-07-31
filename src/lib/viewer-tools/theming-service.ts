@@ -2,8 +2,9 @@
  * Theming Service — applies color to model elements by property value.
  *
  * Stage 2: color-by-property, clear, and the active coloring state.
+ * Stage 3: auto-detects numeric properties → continuous gradient coloring.
  */
-import { assignColors, hexToVector4 } from "./color-scales";
+import { assignColors, isNumericProperty, toNumeric, hexToVector4 } from "./color-scales";
 import { getPropertyForElements, getLeafNodes } from "./property-service";
 import type { ApsViewerAPI } from "./types";
 
@@ -12,9 +13,14 @@ type GuiViewer3D = any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type ModelHandle = any;
 
+export type ScaleType = "categorical" | "sequential" | "diverging";
+
 export interface ActiveColoring {
   propertyName: string;
   colorMap: Map<string, string>;  // value → hex color
+  scaleType: ScaleType;
+  /** For gradient scales: [min, max] of the numeric values. */
+  numericRange?: [number, number];
 }
 
 let currentColoring: ActiveColoring | null = null;
@@ -26,10 +32,12 @@ export function getActiveColoring(): ActiveColoring | null {
 
 /**
  * Color all elements in the viewer by a specific property's values.
+ * Stage 3: auto-detects numeric values and chooses gradient vs categorical.
  * Clears any previous coloring first.
  */
 export function applyColorByProperty(
   propertyName: string,
+  scaleHint: ScaleType = "categorical",
   onProgress: (msg: string) => void,
   onComplete: () => void,
 ): void {
@@ -51,18 +59,38 @@ export function applyColorByProperty(
   onProgress(`Reading "${propertyName}" for ${leafDbIds.length} elements…`);
 
   getPropertyForElements(viewer, leafDbIds, propertyName, (dbIdValueMap) => {
-    // Group dbIds by value
+    // Collect all unique values
+    const allValues: string[] = [];
     const valueGroups = new Map<string, number[]>();
     for (const [dbId, value] of dbIdValueMap) {
       const key = value || "(empty)";
       if (!valueGroups.has(key)) valueGroups.set(key, []);
       valueGroups.get(key)!.push(dbId);
+      allValues.push(key);
     }
 
-    // Assign colors based on frequency (most common first)
-    const sortedValues = Array.from(valueGroups.entries())
-      .sort((a, b) => b[1].length - a[1].length);
-    const colorMap = assignColors(sortedValues.map(([v]) => v));
+    // The unique set for scale detection
+    const uniqueValues = Array.from(valueGroups.keys());
+
+    // Auto-detect: numeric properties → sequential, else categorical
+    const autoScale: ScaleType =
+      scaleHint !== "categorical"
+        ? scaleHint
+        : isNumericProperty(uniqueValues.filter((v) => v !== "(empty)"))
+          ? "sequential"
+          : "categorical";
+
+    // Assign colors
+    const colorMap = assignColors(uniqueValues, autoScale);
+
+    // Compute numeric range for gradient legends
+    let numericRange: [number, number] | undefined;
+    if (autoScale === "sequential" || autoScale === "diverging") {
+      const nums = uniqueValues.map(toNumeric).filter((n) => !isNaN(n));
+      if (nums.length > 0) {
+        numericRange = [Math.min(...nums), Math.max(...nums)];
+      }
+    }
 
     // Clear previous coloring
     clearColoring();
@@ -72,7 +100,7 @@ export function applyColorByProperty(
       Vector4: new (r: number, g: number, b: number, a: number) => unknown;
     };
 
-    for (const [value, dbIds] of sortedValues) {
+    for (const [value, dbIds] of valueGroups) {
       const hex = colorMap.get(value) || "#7f7f7f";
       const color = hexToVector4(hex);
       const vec4 = new THREE.Vector4(color.x, color.y, color.z, color.w);
@@ -89,7 +117,7 @@ export function applyColorByProperty(
     // Force re-render
     try { viewer.impl.invalidate(false, false, true); } catch { /* ignore */ }
 
-    currentColoring = { propertyName, colorMap };
+    currentColoring = { propertyName, colorMap, scaleType: autoScale, numericRange };
     onComplete();
   });
 }

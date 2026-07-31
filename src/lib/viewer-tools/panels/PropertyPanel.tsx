@@ -35,6 +35,7 @@ export function PropertyPanel({ hasModel }: Props) {
   const handleColorByProperty = useCallback((propName: string) => {
     applyColorByProperty(
       propName,
+      "categorical",
       () => {}, // progress not displayed in Stage 2
       () => {},
     );
