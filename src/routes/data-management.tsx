@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "~/lib/auth-context";
 import { ForgeViewer } from "~/lib/components/ForgeViewer";
+import { ElementTooltip } from "~/lib/viewer-tools/panels/ElementTooltip";
 import { PropertyPanel } from "~/lib/viewer-tools/panels/PropertyPanel";
 import { ColorLegend } from "~/lib/viewer-tools/panels/ColorLegend";
 import { MarkerPanel } from "~/lib/viewer-tools/panels/MarkerPanel";
@@ -334,6 +335,7 @@ function Browser() {
               expiresIn={3600}
               modelUrns={modelUrns}
             />
+            <ElementTooltip />
           </div>
         </div>
 
