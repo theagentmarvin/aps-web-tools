@@ -5,6 +5,7 @@ import { ElementTooltip } from "~/lib/viewer-tools/panels/ElementTooltip";
 import { PropertyPanel } from "~/lib/viewer-tools/panels/PropertyPanel";
 import { ColorLegend } from "~/lib/viewer-tools/panels/ColorLegend";
 import { MarkerPanel } from "~/lib/viewer-tools/panels/MarkerPanel";
+import { DashboardPanel } from "~/lib/viewer-tools/panels/DashboardPanel";
 import {
   getHubs,
   getProjects,
@@ -325,6 +326,11 @@ function Browser() {
             {/* Marker panel (appears when model is loaded) */}
             <div className="flex-shrink-0 h-48 border-t border-brand-muted/20">
               <MarkerPanel hasModel={loadedModels.length > 0} />
+            </div>
+
+            {/* Dashboard panel */}
+            <div className="flex-shrink-0 h-80 border-t border-brand-muted/20">
+              <DashboardPanel hasModel={loadedModels.length > 0} />
             </div>
           </div>
 
