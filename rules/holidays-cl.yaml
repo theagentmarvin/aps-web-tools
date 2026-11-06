@@ -1,0 +1,65 @@
+# =============================================================================
+# holidays-cl.yaml — Chilean national holidays (feriados legales), used by the
+# issue due-date algorithm (docs/domain/issue-writing-guide.md §4).
+# Only weekdays matter for business-day arithmetic; weekend holidays are kept
+# for completeness. Dates MUST be quoted "YYYY-MM-DD".
+# Project closures go in .coordinator/project.yaml (merged by the caller).
+# VERIFY each year against the official calendar (feriados.cl / Ley 19.973,
+# 20.148, 20.299, 20.983, 21.357): moved holidays and election days change.
+# =============================================================================
+version: 1
+country: CL
+holidays:
+  # 2025
+  - { date: "2025-01-01", name: Año Nuevo }
+  - { date: "2025-04-18", name: Viernes Santo }
+  - { date: "2025-04-19", name: Sábado Santo }
+  - { date: "2025-05-01", name: Día Nacional del Trabajo }
+  - { date: "2025-05-21", name: Día de las Glorias Navales }
+  - { date: "2025-06-20", name: Día Nacional de los Pueblos Indígenas }
+  - { date: "2025-06-29", name: San Pedro y San Pablo }
+  - { date: "2025-07-16", name: Día de la Virgen del Carmen }
+  - { date: "2025-08-15", name: Asunción de la Virgen }
+  - { date: "2025-09-18", name: Independencia Nacional }
+  - { date: "2025-09-19", name: Día de las Glorias del Ejército }
+  - { date: "2025-10-12", name: Encuentro de Dos Mundos }
+  - { date: "2025-10-31", name: Día de las Iglesias Evangélicas y Protestantes }
+  - { date: "2025-11-01", name: Día de Todos los Santos }
+  - { date: "2025-11-16", name: Elecciones presidenciales y parlamentarias }
+  - { date: "2025-12-08", name: Inmaculada Concepción }
+  - { date: "2025-12-14", name: Segunda vuelta presidencial }
+  - { date: "2025-12-25", name: Navidad }
+  # 2026
+  - { date: "2026-01-01", name: Año Nuevo }
+  - { date: "2026-04-03", name: Viernes Santo }
+  - { date: "2026-04-04", name: Sábado Santo }
+  - { date: "2026-05-01", name: Día Nacional del Trabajo }
+  - { date: "2026-05-21", name: Día de las Glorias Navales }
+  - { date: "2026-06-21", name: Día Nacional de los Pueblos Indígenas }
+  - { date: "2026-06-29", name: San Pedro y San Pablo }
+  - { date: "2026-07-16", name: Día de la Virgen del Carmen }
+  - { date: "2026-08-15", name: Asunción de la Virgen }
+  - { date: "2026-09-18", name: Independencia Nacional }
+  - { date: "2026-09-19", name: Día de las Glorias del Ejército }
+  - { date: "2026-10-12", name: Encuentro de Dos Mundos }
+  - { date: "2026-10-31", name: Día de las Iglesias Evangélicas y Protestantes }
+  - { date: "2026-11-01", name: Día de Todos los Santos }
+  - { date: "2026-12-08", name: Inmaculada Concepción }
+  - { date: "2026-12-25", name: Navidad }
+  # 2027
+  - { date: "2027-01-01", name: Año Nuevo }
+  - { date: "2027-03-26", name: Viernes Santo }
+  - { date: "2027-03-27", name: Sábado Santo }
+  - { date: "2027-05-01", name: Día Nacional del Trabajo }
+  - { date: "2027-05-21", name: Día de las Glorias Navales }
+  - { date: "2027-06-21", name: Día Nacional de los Pueblos Indígenas }
+  - { date: "2027-06-28", name: San Pedro y San Pablo }
+  - { date: "2027-07-16", name: Día de la Virgen del Carmen }
+  - { date: "2027-08-15", name: Asunción de la Virgen }
+  - { date: "2027-09-18", name: Independencia Nacional }
+  - { date: "2027-09-19", name: Día de las Glorias del Ejército }
+  - { date: "2027-10-11", name: Encuentro de Dos Mundos }
+  - { date: "2027-10-31", name: Día de las Iglesias Evangélicas y Protestantes }
+  - { date: "2027-11-01", name: Día de Todos los Santos }
+  - { date: "2027-12-08", name: Inmaculada Concepción }
+  - { date: "2027-12-25", name: Navidad }

@@ -41,7 +41,7 @@ disciplines:
   - { code: ALL,   group: MEP,  criticality: 0.85, es: Aguas lluvias,                         en: Storm drainage,          aliases: [all, aall, aguas lluvias, ll, storm, pluvial] }
   - { code: ELE,   group: MEP,  criticality: 0.60, es: Electricidad (fuerza y alumbrado),     en: Electrical,              aliases: [ele, elec, electricidad, electrical, el, ilu, iluminacion, fuerza] }
   - { code: CORR,  group: MEP,  criticality: 0.40, es: Corrientes debiles,                    en: Low voltage / ICT,       aliases: [corr, cd, cdeb, corrientes debiles, com, tel, ict, dat, datos, lv, cctv, seg] }
-  - { code: INC,   group: MEP,  criticality: 0.90, es: Proteccion contra incendio (red humeda, red seca, rociadores), en: Fire protection, aliases: [inc, pci, incendio, fp, fire, rh, rs, red humeda, red seca, spk, rociadores, sprinkler] }
+  - { code: INC,   group: MEP,  criticality: 0.90, es: "Proteccion contra incendio (red humeda, red seca, rociadores)", en: Fire protection, aliases: [inc, pci, incendio, fp, fire, rh, rs, red humeda, red seca, spk, rociadores, sprinkler] }
   - { code: GAS,   group: MEP,  criticality: 0.85, es: Gas,                                   en: Gas,                     aliases: [gas, gn, glp] }
   - { code: ASC,   group: ASC,  criticality: 0.85, es: Ascensores y montacargas,              en: Elevators,               aliases: [asc, ascensor, ascensores, elev, elevator, lift] }
   - { code: CIV,   group: CIV,  criticality: 0.50, es: Urbanizacion / obras civiles / pavimentacion, en: Civil / site,      aliases: [civ, urb, urbanizacion, pav, pavimentacion, civil, site, top, topografia] }
