@@ -1,20 +1,30 @@
 {
-  "name": "aps-web-tools",
+  "name": "bim-coordinator-agent",
   "private": true,
   "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.server.json --noEmit && vite build",
     "preview": "vite preview",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.server.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "mcp": "tsx server/mcp/index.ts",
+    "api": "tsx server/api/standalone.ts",
+    "coordinator": "tsx server/cli.ts",
+    "eval": "tsx scripts/eval.ts"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "chart.js": "^4.5.1",
     "react": "^19.1.0",
     "react-chartjs-2": "^5.3.1",
     "react-dom": "^19.1.0",
-    "react-router": "^8.2.0"
+    "react-router": "^8.2.0",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.0",
@@ -23,7 +33,9 @@
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^4.6.0",
     "tailwindcss": "^4.1.0",
+    "tsx": "^4.23.15",
     "typescript": "~5.8.0",
-    "vite": "^6.3.0"
+    "vite": "^6.3.0",
+    "vitest": "^5.1.0"
   }
 }

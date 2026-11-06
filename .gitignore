@@ -5,3 +5,8 @@ dist
 *.log
 .last-task.md
 tsconfig.tsbuildinfo
+
+# Coordinator local state (tokens, caches, proposals, audit)
+.coordinator/
+!.coordinator/.gitkeep
+coordinator.config.local.json
