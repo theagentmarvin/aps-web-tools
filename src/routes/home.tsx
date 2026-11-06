@@ -1,65 +1,119 @@
+/**
+ * Home dashboard "/" (spec §6.1): queue, batches to approve, weekly KPIs,
+ * agent activity. Shows the sign-in card when not authenticated (http mode).
+ */
+import { Link } from "react-router";
+import { useI18n, useT } from "~/i18n";
+import { useApi, useAsync } from "~/lib/api";
 import { useAuth } from "~/lib/auth-context";
+import { SignInCard } from "~/lib/components/AuthGate";
+import { IconChevronRight } from "~/lib/components/icons";
+import { EmptyState, ErrorState, Skeleton, cardCls } from "~/lib/components/ui";
+import { ReportKpis } from "~/features/reports/ReportKpis";
 
-export function Home() {
-  const { login, logout, isAuthenticated } = useAuth();
+export function HomePage() {
+  const api = useApi();
+  const { isAuthenticated } = useAuth();
+  const t = useT();
+  if (api.mode !== "mock" && !isAuthenticated) return <SignInCard title={t("home.signInTitle")} body={t("home.signInBody")} />;
+  return <Dashboard />;
+}
+
+function Dashboard() {
+  const t = useT();
+  const { fmt } = useI18n();
+  const api = useApi();
+  const { data, error, loading, reload } = useAsync(() => api.getHomeSummary(), [api]);
+  if (error) return <ErrorState error={error} onRetry={reload} />;
+  const firstName = data?.user.name.split(" ")[0] ?? "";
 
   return (
-    <div className="max-w-3xl mx-auto mt-12">
-      <h1 className="text-3xl font-bold mb-2">APS Viewer Toolkit</h1>
-      <p className="text-gray-500 mb-2">
-        Autodesk Platform Services viewer with custom visual tools.
-      </p>
-      <p className="text-xs text-gray-400 mb-8">
-        Built on the APS Viewer SDK. Stage 0 — Clean Viewer.
-      </p>
+    <div className="space-y-6">
+      <header>
+        {loading ? <Skeleton className="h-8 w-56" /> : <h1 className="text-2xl font-bold text-brand">{t("home.greeting", { name: firstName })}</h1>}
+        <p className="mt-1 text-sm text-gray-500">{t("home.subtitle")}</p>
+      </header>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <a
-          href="/data-management"
-          className="block p-6 rounded-lg border border-brand-muted/20 bg-white hover:border-brand-muted/40 hover:shadow-md transition-all"
-        >
-          <h2 className="text-lg font-semibold mb-2">📁 Data Management</h2>
-          <p className="text-sm text-gray-500">
-            Browse hubs, projects, folders, and models. Open any model in the
-            3D viewer.
-          </p>
-        </a>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <section className={`${cardCls} p-4`} aria-labelledby="h-queue">
+          <h2 id="h-queue" className="mb-3 text-sm font-semibold text-gray-800">
+            {t("home.myQueue")}
+          </h2>
+          {loading ? (
+            <div className="space-y-2">
+              <Skeleton className="h-10" />
+              <Skeleton className="h-10" />
+            </div>
+          ) : !data?.queue.length ? (
+            <EmptyState title={t("home.queueEmpty")} />
+          ) : (
+            <ul className="divide-y divide-brand-muted/10">
+              {data.queue.map((q) => (
+                <li key={q.modelSetId}>
+                  <Link to={`/coordinacion/${q.projectId}/${q.modelSetId}?decision=pendiente`} className="flex items-center justify-between gap-2 py-2 text-sm hover:text-brand">
+                    <span className="truncate">
+                      {q.projectName} / {q.modelSetName}
+                    </span>
+                    <span className="flex items-center gap-1 whitespace-nowrap text-gray-500">
+                      {t("home.pending", { count: q.pending })}
+                      <IconChevronRight size={14} />
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
 
-        <div className="block p-6 rounded-lg border border-brand-muted/20 bg-brand-surface/30 opacity-60">
-          <h2 className="text-lg font-semibold mb-2">🎨 Visual Tools</h2>
-          <p className="text-sm text-gray-500">
-            Coming soon — color by property, filter &amp; isolate, saved views.
-          </p>
-        </div>
+        <section className={`${cardCls} p-4`} aria-labelledby="h-batches">
+          <h2 id="h-batches" className="mb-3 text-sm font-semibold text-gray-800">
+            {t("home.batchesToApprove")}
+          </h2>
+          {loading ? (
+            <Skeleton className="h-10" />
+          ) : !data?.batches.length ? (
+            <EmptyState title={t("home.noBatches")} />
+          ) : (
+            <ul className="divide-y divide-brand-muted/10">
+              {data.batches.map((b) => (
+                <li key={b.id} className="flex items-center justify-between gap-2 py-2 text-sm">
+                  <span className="truncate">
+                    <span className="font-mono text-xs text-gray-500">{b.id}</span> {b.projectName.split(" — ")[0]} · {b.counts.issuesCreate + b.counts.statusChanges} {t("approvals.columns.changes").toLowerCase()}
+                  </span>
+                  <Link to={`/aprobaciones/${b.id}`} className="rounded border border-brand-muted/30 px-2 py-0.5 text-xs text-gray-700 hover:text-brand">
+                    {t("approvals.review")}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
       </div>
 
-      <div className="mt-8 flex justify-center">
-        {isAuthenticated ? (
-          <button
-            onClick={logout}
-            className="px-6 py-2 rounded-lg border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 transition-colors text-sm"
-          >
-            Sign out
-          </button>
+      <section aria-labelledby="h-kpis">
+        <h2 id="h-kpis" className="mb-2 text-sm font-semibold text-gray-800">
+          {t("home.weekKpis")}
+        </h2>
+        {data ? <ReportKpis kpis={data.kpis} /> : <Skeleton className="h-24" />}
+      </section>
+
+      <section className={`${cardCls} p-4`} aria-labelledby="h-activity">
+        <h2 id="h-activity" className="mb-3 text-sm font-semibold text-gray-800">
+          {t("home.agentActivity")}
+        </h2>
+        {!data?.activity.length ? (
+          loading ? <Skeleton className="h-16" /> : <EmptyState title={t("home.noActivity")} />
         ) : (
-          <button
-            onClick={login}
-            className="px-6 py-3 rounded-lg bg-brand hover:bg-brand-light text-white font-medium transition-colors"
-          >
-            Sign in with Autodesk
-          </button>
+          <ul className="space-y-1.5 text-sm">
+            {data.activity.map((a, i) => (
+              <li key={i} className="flex gap-3">
+                <span className="w-28 shrink-0 text-xs text-gray-400">{fmt.relative(a.at)}</span>
+                <span lang="es">{a.text}</span>
+              </li>
+            ))}
+          </ul>
         )}
-      </div>
-
-      <div className="mt-4 text-center">
-        {isAuthenticated ? (
-          <p className="text-xs text-green-600">✅ Authenticated</p>
-        ) : (
-          <p className="text-xs text-gray-400">
-            Connect your Autodesk account to browse hubs and projects.
-          </p>
-        )}
-      </div>
+      </section>
     </div>
   );
 }

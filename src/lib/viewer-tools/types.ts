@@ -21,4 +21,6 @@ export interface PropertyValue {
 export interface ApsViewerAPI {
   getViewer(): unknown; // GuiViewer3D
   getModels(): unknown[]; // ModelHandle[]
+  /** Model loaded from this raw version URN, or null (failed / not loaded). */
+  getModelByUrn?(urn: string): unknown | null;
 }

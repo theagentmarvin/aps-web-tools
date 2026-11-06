@@ -16,4 +16,67 @@
   --color-brand-muted: #8D9299;
   --color-brand-surface: #F6E9E9;
   --color-brand-bg: #FEFEFE;
+
+  /* Clash sides (docs/ux/coordinator-ux-spec.md §7.3, §9.1).
+     Okabe-Ito pair: distinguishable under protan/deutan/tritan vision and
+     distinct from ghosted gray and brand red (reserved for errors/markers). */
+  --color-clash-a: #0072B2;      /* Okabe-Ito blue  — side A (left)  */
+  --color-clash-a-ink: #005A8C;  /* A text on white (AA 7.1:1) */
+  --color-clash-b: #E69F00;      /* Okabe-Ito orange — side B (right) */
+  --color-clash-b-ink: #8A5A00;  /* B text on white (AA 5.9:1); never put text in clash-b */
+
+  /* ACC status colours used by charts (match BRAND.md badges). */
+  --color-status-active: #A16207;
+  --color-status-reviewed: #A32428;
+  --color-status-resolved: #15803D;
+  --color-status-closed: #9CA3AF;
+}
+
+/* Global focus ring (§7.3). */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
+
+kbd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* Subtle grid behind the viewer placeholder (mock mode / no models). */
+.clash-placeholder-grid {
+  background-image:
+    linear-gradient(to right, rgb(141 146 153 / 0.08) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(141 146 153 / 0.08) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Reports print stylesheet: hide chrome, charts full width (§6.2). */
+@media print {
+  nav,
+  footer,
+  .no-print {
+    display: none !important;
+  }
+  .print-full {
+    width: 100% !important;
+    max-width: none !important;
+  }
+  .h-screen {
+    height: auto !important;
+    overflow: visible !important;
+  }
+  main,
+  .overflow-y-auto {
+    overflow: visible !important;
+  }
 }

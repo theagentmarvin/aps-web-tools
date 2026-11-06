@@ -1,0 +1,273 @@
+/**
+ * Batch review parts (spec §5.3–5.5): summary, issue previews, conflicts,
+ * pre-flight status, irreversible-action confirmation, apply progress.
+ */
+import { useState, type ReactNode } from "react";
+import { useI18n, useT } from "~/i18n";
+import type { ApplyStatus, Batch, BatchItem, IssueDraft } from "~/lib/api/types";
+import { Modal } from "~/lib/components/Modal";
+import { IconAlert, IconCheck, Spinner } from "~/lib/components/icons";
+import { Button, ProgressBar, cardCls, inputCls } from "~/lib/components/ui";
+import { STATUS_KEY } from "~/lib/labels";
+
+const PREFLIGHT_MAX_AGE = 10 * 60000;
+
+export function preflightFresh(b: Batch): boolean {
+  return !!b.lastPreflightAt && Date.now() - new Date(b.lastPreflightAt).getTime() < PREFLIGHT_MAX_AGE;
+}
+
+const irreversibleTag = "rounded border border-red-200 px-1 text-[10px] uppercase text-red-700";
+
+export function BatchSummaryView({ batch, preflight }: { batch: Batch; preflight: ReactNode }) {
+  const t = useT();
+  const { fmt } = useI18n();
+  const byDisc = Object.entries(batch.issuesByDiscipline)
+    .map(([d, n]) => `${d} ${n}`)
+    .join(", ");
+  const conflicts = batch.items.filter((i) => i.conflict).length;
+  return (
+    <div className={`${cardCls} space-y-3 p-4 text-sm`}>
+      <h2 className="font-semibold text-gray-800">{t("batch.willWrite")}</h2>
+      <ul className="space-y-1.5">
+        <li className="flex flex-wrap items-center gap-2">
+          <span className="font-mono text-green-700">+</span>
+          {t("batch.issuesCreate", { count: batch.counts.issuesCreate })}
+          {byDisc && <span className="text-gray-500">({byDisc})</span>}
+          {batch.counts.issuesCreate > 0 && <span className={irreversibleTag}>{t("batch.irreversible")}</span>}
+        </li>
+        <li className="flex flex-wrap items-center gap-2">
+          <span className="font-mono text-amber-700">~</span>
+          {t("batch.statusChanges", { count: batch.counts.statusChanges })}
+          {batch.statusTransitions.length > 0 && (
+            <span className="text-gray-500">
+              {batch.statusTransitions.map((s) => t("batch.statusTransition", { from: t(STATUS_KEY[s.from]), to: t(STATUS_KEY[s.to]), count: s.count })).join(" · ")}
+            </span>
+          )}
+        </li>
+        <li className="flex items-center gap-2">
+          <span className="font-mono text-gray-500">=</span>
+          {t("batch.assignments", { count: batch.counts.assignments })}
+        </li>
+      </ul>
+      <p className="text-gray-600">{t("batch.origin", batch.origin)}</p>
+      <p className="text-gray-600">{t("batch.reviewCoverage", { pct: fmt.pct(batch.review.humanReviewedPct), low: batch.review.lowConfidence })}</p>
+      <div className="text-gray-600">{preflight}</div>
+      {conflicts > 0 && <p className="text-amber-800">{t("batch.preflightConflicts", { count: conflicts })}</p>}
+    </div>
+  );
+}
+
+export function PreflightStatus({ batch, running }: { batch: Batch; running: boolean }) {
+  const t = useT();
+  const { fmt } = useI18n();
+  if (running)
+    return (
+      <span className="inline-flex items-center gap-2">
+        <Spinner /> {t("batch.preflightRunning")}
+      </span>
+    );
+  if (!batch.lastPreflightAt) return <span className="text-amber-800">{t("batch.preflightNever")}</span>;
+  if (!preflightFresh(batch)) return <span className="text-amber-800">{t("batch.preflightRequired")}</span>;
+  return (
+    <span className="inline-flex items-center gap-1 text-green-700">
+      <IconCheck size={13} />
+      {t("batch.preflightOk", { time: fmt.relative(batch.lastPreflightAt) })}
+    </span>
+  );
+}
+
+export function IssuePreviewCard({ item, readOnly, onSave, onToggle }: { item: BatchItem; readOnly: boolean; onSave: (patch: Partial<IssueDraft>) => void; onToggle: (excluded: boolean) => void }) {
+  const t = useT();
+  const { fmt } = useI18n();
+  const [editing, setEditing] = useState(false);
+  const issue = item.issue!;
+  const [title, setTitle] = useState(issue.title);
+  const [description, setDescription] = useState(issue.description);
+  return (
+    <article className={`${cardCls} p-4 text-sm ${item.excluded ? "opacity-60" : ""}`}>
+      <header className="mb-2 flex items-start justify-between gap-3">
+        {editing ? (
+          <input className={`${inputCls} flex-1`} value={title} onChange={(e) => setTitle(e.target.value)} aria-label={t("issue.title")} />
+        ) : (
+          <h3 className="font-medium text-gray-900" lang="es">
+            {issue.title}
+          </h3>
+        )}
+        <label className="flex shrink-0 items-center gap-1 text-xs text-gray-600">
+          <input type="checkbox" className="accent-brand" checked={!item.excluded} disabled={readOnly} onChange={(e) => onToggle(!e.target.checked)} />
+          {item.excluded ? t("batch.excluded") : t("common.yes")}
+        </label>
+      </header>
+      {editing ? (
+        <textarea className={`${inputCls} h-40 w-full font-mono text-xs`} value={description} onChange={(e) => setDescription(e.target.value)} aria-label={t("issue.description")} />
+      ) : (
+        <pre className="whitespace-pre-wrap rounded bg-gray-50 p-2 font-sans text-xs text-gray-700" lang="es">
+          {issue.description}
+        </pre>
+      )}
+      <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs md:grid-cols-3">
+        <div>
+          <dt className="text-gray-500">{t("issue.type")}</dt>
+          <dd>
+            {issue.issueType ?? "—"}
+            {issue.issueSubtype && ` / ${issue.issueSubtype}`}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-gray-500">{t("issue.assignee")}</dt>
+          <dd>{issue.assigneeRole ?? issue.ownerDiscipline}</dd>
+        </div>
+        <div>
+          <dt className="text-gray-500">{t("issue.dueDate")}</dt>
+          <dd>{fmt.date(issue.dueDate)}</dd>
+        </div>
+        <div>
+          <dt className="text-gray-500">{t("issue.location")}</dt>
+          <dd>{issue.location ?? "—"}</dd>
+        </div>
+        <div>
+          <dt className="text-gray-500">{t("detail.field.priority")}</dt>
+          <dd>{issue.priorityLabel ?? "—"}</dd>
+        </div>
+        <div>
+          <dt className="text-gray-500">{t("batch.snapshot")}</dt>
+          <dd>{issue.includeView ? t("issue.snapshotAtApply") : "—"}</dd>
+        </div>
+      </dl>
+      <p className="mt-2 text-xs text-gray-500">{t("issue.linkedClashes", { count: issue.linkClashIds.length })}</p>
+      {!readOnly && (
+        <footer className="mt-3 flex justify-end gap-2">
+          {editing ? (
+            <>
+              <Button onClick={() => setEditing(false)}>{t("common.cancel")}</Button>
+              <Button
+                variant="primary"
+                onClick={() => {
+                  onSave({ title, description });
+                  setEditing(false);
+                }}
+              >
+                {t("common.save")}
+              </Button>
+            </>
+          ) : (
+            <Button onClick={() => setEditing(true)}>{t("common.edit")}</Button>
+          )}
+        </footer>
+      )}
+    </article>
+  );
+}
+
+export function ConflictsList({ items, readOnly, onInclude, onReturn }: { items: BatchItem[]; readOnly: boolean; onInclude: (id: string, include: boolean) => void; onReturn: (id: string) => void }) {
+  const t = useT();
+  if (!items.length) return <p className="p-6 text-center text-sm text-gray-500">{t("batch.noConflicts")}</p>;
+  return (
+    <ul className="space-y-2">
+      {items.map((i) => (
+        <li key={i.id} className={`${cardCls} flex flex-wrap items-center gap-3 p-3 text-sm`}>
+          <IconAlert className="text-amber-700" />
+          <div className="min-w-0 flex-1">
+            <div className="truncate font-medium">{i.label}</div>
+            <div className="text-xs text-gray-600">{t("batch.conflictReason", { reason: i.conflict?.reason ?? "" })}</div>
+          </div>
+          <span className="text-xs text-gray-500">{i.excluded ? t("batch.excluded") : t("batch.includeAnyway")}</span>
+          {!readOnly && (
+            <>
+              <Button onClick={() => onInclude(i.id, !!i.excluded)}>{i.excluded ? t("batch.includeAnyway") : t("batch.excluded")}</Button>
+              <Button onClick={() => onReturn(i.id)}>{t("batch.returnToReview")}</Button>
+            </>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+export function ApplyConfirmDialog({ batch, onCancel, onConfirm, busy }: { batch: Batch; onCancel: () => void; onConfirm: () => void; busy: boolean }) {
+  const t = useT();
+  const [checked, setChecked] = useState(false);
+  const [typed, setTyped] = useState("");
+  const total = batch.counts.issuesCreate + batch.counts.statusChanges + batch.counts.assignments + batch.counts.comments;
+  const needWord = batch.counts.issuesCreate > 0 || total >= 50;
+  const word = t("apply.confirmWord");
+  const ok = checked && (!needWord || typed.trim().toLowerCase() === word.toLowerCase());
+  return (
+    <Modal
+      title={t("apply.title")}
+      width="w-[520px]"
+      onClose={onCancel}
+      footer={
+        <>
+          <Button onClick={onCancel}>{t("common.cancel")}</Button>
+          <Button variant="primary" disabled={!ok || busy} onClick={onConfirm}>
+            {t("apply.button", { count: total })}
+          </Button>
+        </>
+      }
+    >
+      <p>{t("apply.intro", { project: batch.projectName })}</p>
+      <ul className="mt-2 list-disc space-y-1 pl-5">
+        {batch.counts.issuesCreate > 0 && <li className="text-red-700">{t("apply.issuesWarning", { count: batch.counts.issuesCreate })}</li>}
+        {batch.counts.statusChanges > 0 && <li>{t("apply.statusWarning", { count: batch.counts.statusChanges })}</li>}
+      </ul>
+      <p className="mt-2 text-gray-600">{t("apply.notifications")}</p>
+      <label className="mt-4 flex items-center gap-2">
+        <input type="checkbox" className="accent-brand" checked={checked} onChange={(e) => setChecked(e.target.checked)} />
+        {t("apply.checkbox")}
+      </label>
+      {needWord && (
+        <label className="mt-3 block">
+          <span className="text-xs text-gray-600">{t("apply.typeToConfirm", { word })}</span>
+          <input className={`${inputCls} mt-1 w-full font-mono`} value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" spellCheck={false} />
+        </label>
+      )}
+    </Modal>
+  );
+}
+
+export function ApplyProgress({ status }: { status: ApplyStatus }) {
+  const t = useT();
+  const done = status.state === "applied" || status.state === "partial";
+  return (
+    <div className={`${cardCls} space-y-3 p-4 text-sm`} aria-live="polite">
+      <p className="font-medium">
+        {done ? (status.state === "applied" ? t("apply.done", { count: status.issues.total + status.statuses.total }) : t("apply.partial", { count: status.failures.length })) : t("apply.progress")}
+      </p>
+      {status.issues.total > 0 && (
+        <div>
+          <p className="text-xs text-gray-600">{t("apply.progressIssues", { done: status.issues.done, total: status.issues.total })}</p>
+          <ProgressBar done={status.issues.done} total={status.issues.total} />
+        </div>
+      )}
+      {status.statuses.total > 0 && (
+        <div>
+          <p className="text-xs text-gray-600">{t("apply.progressStatuses", { done: status.statuses.done, total: status.statuses.total })}</p>
+          <ProgressBar done={status.statuses.done} total={status.statuses.total} />
+        </div>
+      )}
+      {!done && <p className="text-xs text-gray-500">{t("apply.canLeave")}</p>}
+      {status.log.length > 0 && (
+        <ul className="max-h-32 overflow-y-auto font-mono text-[11px] text-gray-600">
+          {status.log.map((l, i) => (
+            <li key={i} className={l.ok ? "" : "text-red-700"}>
+              {l.text}
+            </li>
+          ))}
+        </ul>
+      )}
+      {status.failures.length > 0 && (
+        <table className="w-full text-xs">
+          <tbody>
+            {status.failures.map((f) => (
+              <tr key={f.itemId} className="border-t border-red-100 text-red-700">
+                <td className="py-1 font-mono">{f.label}</td>
+                <td>{f.message}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}

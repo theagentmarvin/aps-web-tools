@@ -11,8 +11,13 @@
  *   1. Pre-fetch token BEFORE Initializer (getAccessToken must be synchronous)
  *   2. env: 'AutodeskProduction' (not AutodeskProduction2)
  *   3. viewer.start() then viewer.setUp({ extensions })
+ *
+ * Multi-model: models load in parallel (max 3 concurrent). The component
+ * keeps a map raw URN → model and reports failures instead of skipping them
+ * silently (onModelsLoaded / onProgress, window.__apsViewer.getModelByUrn).
  */
 import { useEffect, useRef, useState } from "react";
+import { useT } from "~/i18n";
 import { registerShaderExtension } from "~/lib/viewer-tools/extensions/shader-extension";
 import { registerMarkerExtension } from "~/lib/viewer-tools/extensions/marker-extension";
 
@@ -27,33 +32,56 @@ declare global {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type GuiViewer3D = any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type ModelHandle = any;
+export type ModelHandle = any;
+
+export const TOOLKIT_EXTENSIONS = ["ApsViewerToolkit.Shader", "ApsViewerToolkit.Marker"];
+export const DEFAULT_EXTENSIONS = ["Autodesk.DocumentBrowser", "Autodesk.DataVisualization", ...TOOLKIT_EXTENSIONS];
 
 interface ForgeViewerProps {
   getToken: () => Promise<string | null>;
   expiresIn: number;
+  /** Raw version URNs (not base64). */
   modelUrns: string[];
+  /** Extensions passed to viewer.setUp. Default: DEFAULT_EXTENSIONS. */
+  extensions?: string[];
   onViewerReady?: () => void;
+  /** Called once all requested models settled. Keys are the raw URNs passed in. */
+  onModelsLoaded?: (models: Map<string, ModelHandle>, failed: string[]) => void;
+  onProgress?: (loaded: number, total: number) => void;
+  /** Hide the built-in "model failed" banner (when the parent renders its own). */
+  hideLoadErrors?: boolean;
 }
+
+const MAX_PARALLEL = 3;
 
 export function ForgeViewer({
   getToken,
   expiresIn,
   modelUrns,
+  extensions = DEFAULT_EXTENSIONS,
   onViewerReady,
+  onModelsLoaded,
+  onProgress,
+  hideLoadErrors,
 }: ForgeViewerProps) {
+  const t = useT();
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<GuiViewer3D | null>(null);
   const modelsRef = useRef<ModelHandle[]>([]);
+  const modelMapRef = useRef<Map<string, ModelHandle>>(new Map());
   const startedRef = useRef(false);
   const [ready, setReady] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
+  const [failed, setFailed] = useState<string[]>([]);
 
-  // ── Token refs (stable across renders) ────────────────────────────
+  // ── Stable refs ───────────────────────────────────────────────────
   const tokenRef = useRef(getToken);
   tokenRef.current = getToken;
   const expiresRef = useRef(expiresIn);
   expiresRef.current = expiresIn;
+  const cbRef = useRef({ onViewerReady, onModelsLoaded, onProgress });
+  cbRef.current = { onViewerReady, onModelsLoaded, onProgress };
+  const extensionsRef = useRef(extensions);
 
   // ── Viewer init (runs once) ──────────────────────────────────────
 
@@ -63,7 +91,7 @@ export function ForgeViewer({
 
     const Viewing = window.Autodesk?.Viewing;
     if (!Viewing) {
-      console.error("[ForgeViewer] Autodesk.Viewing not available — script missing?");
+      setInitError("Autodesk.Viewing not available");
       return;
     }
 
@@ -72,135 +100,124 @@ export function ForgeViewer({
 
     async function init() {
       // Pre-fetch token: getAccessToken MUST be synchronous.
-      // The Forge Viewer calls it internally during init and hangs
-      // if the callback is async (won't fire until the event loop yields).
-      console.log("[ForgeViewer] fetching token…");
       const token = await tokenRef.current();
       if (cancelled) return;
-
       if (!token) {
-        const msg = "getToken() returned null — not authenticated";
-        console.error("[ForgeViewer]", msg);
-        setInitError(msg);
+        setInitError("getToken() returned null — not authenticated");
         return;
       }
-      console.log("[ForgeViewer] token obtained, calling Initializer…");
 
       Viewing.Initializer(
         {
           env: "AutodeskProduction",
-          getAccessToken: (cb: (t: string, e: number) => void) => {
-            // Synchronous — matches working reference implementation
-            cb(token, expiresRef.current);
-          },
+          getAccessToken: (cb: (t: string, e: number) => void) => cb(token, expiresRef.current),
           logLevel: 0,
         },
         () => {
           if (cancelled) return;
-          console.log("[ForgeViewer] Initializer callback fired");
-
           try {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const Klass = (Viewing as any).Private?.GuiViewer3D;
             if (!Klass) {
-              const msg = "Private.GuiViewer3D not found on Autodesk.Viewing";
-              console.error("[ForgeViewer]", msg);
-              setInitError(msg);
+              setInitError("Private.GuiViewer3D not found on Autodesk.Viewing");
               return;
             }
-
             const viewer = new Klass(container);
             viewer.start();
 
-            // Register custom toolbar extensions BEFORE setUp
-            registerShaderExtension();
-            registerMarkerExtension();
-
-            viewer.setUp({
-              extensions: [
-                "Autodesk.DocumentBrowser",
-                "Autodesk.DataVisualization",
-                "ApsViewerToolkit.Shader",
-                "ApsViewerToolkit.Marker",
-              ],
-            });
+            // Register custom toolbar extensions BEFORE setUp, only if requested.
+            const exts = extensionsRef.current;
+            if (exts.includes("ApsViewerToolkit.Shader")) registerShaderExtension();
+            if (exts.includes("ApsViewerToolkit.Marker")) registerMarkerExtension();
+            viewer.setUp({ extensions: exts });
 
             viewerRef.current = viewer;
-            console.log("[ForgeViewer] ready — viewer created, started, and set up");
             setReady(true);
-            onViewerReady?.();
+            cbRef.current.onViewerReady?.();
           } catch (err) {
-            const msg = `viewer init error: ${String(err)}`;
-            console.error("[ForgeViewer]", msg);
-            setInitError(msg);
+            setInitError(`viewer init error: ${String(err)}`);
           }
         },
       );
     }
 
-    init();
-
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    void init();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // ── Dispose on unmount ───────────────────────────────────────────
 
   useEffect(() => {
     return () => {
-      console.log("[ForgeViewer] unmount — disposing viewer");
       if (viewerRef.current) {
-        try { viewerRef.current.finish?.(); } catch { /* best-effort */ }
+        try {
+          viewerRef.current.finish?.();
+        } catch {
+          /* best-effort */
+        }
         viewerRef.current = null;
       }
       startedRef.current = false;
       setReady(false);
       setInitError(null);
-      // Clean up global API
       delete (window as unknown as Record<string, unknown>).__forgeViewer;
     };
   }, []);
 
-  // ── Model loading (triggers when viewer is ready AND urns available) ─
+  // ── Model loading (parallel, max 3) ──────────────────────────────
 
+  const urnKey = modelUrns.join(",");
   useEffect(() => {
     if (!ready || modelUrns.length === 0) return;
-
     const v = viewerRef.current!;
     let cancelled = false;
+    const urns = [...modelUrns];
+    modelsRef.current = [];
+    modelMapRef.current = new Map();
+    const failures: string[] = [];
+    let settled = 0;
+    setFailed([]);
+    cbRef.current.onProgress?.(0, urns.length);
 
-    async function loadModels() {
-      console.log("[ForgeViewer] loading", modelUrns.length, "model(s)…");
-      modelsRef.current = [];
-
-      for (const rawUrn of modelUrns) {
-        if (cancelled) break;
-        // URNs from APS API are raw (e.g. "urn:adsk.objects:…").
-        // Document.load needs base64-encoded URN without padding.
-        const urn = `urn:${urnify(rawUrn)}`;
+    async function worker(queue: string[]) {
+      while (queue.length && !cancelled) {
+        const rawUrn = queue.shift()!;
         try {
-          console.log("[ForgeViewer] loading:", urn, "(from", rawUrn.slice(0, 40) + "…)");
-          const model = await loadDoc(v, urn);
+          const model = await loadDoc(v, `urn:${urnify(rawUrn)}`);
+          if (cancelled) return;
           modelsRef.current.push(model);
-          console.log("[ForgeViewer] model loaded:", urn);
+          modelMapRef.current.set(rawUrn, model);
         } catch (err) {
-          console.error("[ForgeViewer] load failed:", urn, err);
+          console.warn("[ForgeViewer] load failed:", rawUrn, err);
+          failures.push(rawUrn);
         }
+        settled++;
+        if (!cancelled) cbRef.current.onProgress?.(settled - failures.length, urns.length);
       }
-      console.log("[ForgeViewer] done —", modelsRef.current.length, "model(s) loaded");
     }
 
-    loadModels();
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, modelUrns.join(",")]);
+    const queue = [...urns];
+    void Promise.all(Array.from({ length: Math.min(MAX_PARALLEL, urns.length) }, () => worker(queue))).then(() => {
+      if (cancelled) return;
+      setFailed(failures);
+      cbRef.current.onModelsLoaded?.(new Map(modelMapRef.current), failures);
+    });
 
-  // ── Public API (exposed for viewer-tools consumer) ──────────────
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, urnKey]);
+
+  // ── Public API (exposed for viewer-tools consumers) ──────────────
 
   useEffect(() => {
     (window as unknown as Record<string, unknown>).__apsViewer = {
       getViewer: () => viewerRef.current,
       getModels: () => modelsRef.current,
+      getModelByUrn: (urn: string) => modelMapRef.current.get(urn) ?? null,
     };
     return () => {
       delete (window as unknown as Record<string, unknown>).__apsViewer;
@@ -210,24 +227,31 @@ export function ForgeViewer({
   // ── Render ───────────────────────────────────────────────────────
 
   return (
-    <div className="relative w-full h-full">
+    <div className="relative h-full w-full">
       {initError && (
-        <div className="absolute inset-0 flex items-center justify-center bg-brand-bg z-10">
-          <div className="text-center max-w-md p-4">
-            <p className="text-red-500 text-sm mb-2">Viewer initialization failed</p>
-            <p className="text-gray-500 text-xs font-mono break-all">{initError}</p>
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-brand-bg">
+          <div className="max-w-md p-4 text-center">
+            <p className="mb-2 text-sm text-red-700">{t("viewer.initFailed")}</p>
+            <p className="break-all font-mono text-xs text-gray-500">{initError}</p>
           </div>
         </div>
       )}
       {!ready && !initError && (
-        <div className="absolute inset-0 flex items-center justify-center bg-brand-bg z-10">
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-brand-bg">
           <div className="text-center">
-            <div className="animate-spin text-3xl mb-2">⏳</div>
-            <p className="text-gray-600 text-sm">Initializing viewer…</p>
+            <span aria-hidden className="mb-2 inline-block h-6 w-6 animate-spin rounded-full border-2 border-brand/20 border-t-brand motion-reduce:animate-none" />
+            <p className="text-sm text-gray-600">{t("viewer.initializing")}</p>
           </div>
         </div>
       )}
-      <div ref={containerRef} className="w-full h-full" />
+      {!hideLoadErrors && failed.length > 0 && (
+        <div role="alert" className="absolute left-2 right-2 top-2 z-10 rounded border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-800">
+          {failed.map((u) => (
+            <div key={u}>{t("viewer.modelFailed", { name: u.split(":").pop() ?? u })}</div>
+          ))}
+        </div>
+      )}
+      <div ref={containerRef} className="h-full w-full" />
     </div>
   );
 }
@@ -245,7 +269,10 @@ function loadDoc(viewer: GuiViewer3D, urn: string): Promise<ModelHandle> {
       urn,
       (doc: { getRoot: () => { getDefaultGeometry: () => unknown }; getViewablePath: (v: unknown) => string }) => {
         const viewables = doc.getRoot().getDefaultGeometry();
-        if (!viewables) { reject(new Error("No viewables")); return; }
+        if (!viewables) {
+          reject(new Error("No viewables"));
+          return;
+        }
         viewer.loadModel(
           doc.getViewablePath(viewables),
           { keepCurrentModels: true, globalOffset: { x: 0, y: 0, z: 0 } },

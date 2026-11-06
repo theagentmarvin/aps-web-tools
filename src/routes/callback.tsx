@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router";
 import { useAuth } from "~/lib/auth-context";
+import { readString, writeString } from "~/lib/storage";
 
 /**
  * OAuth2 callback handler.
@@ -36,7 +37,10 @@ export function Callback() {
 
     exchangeCode(code)
       .then(() => {
-        navigate("/data-management", { replace: true });
+        // Return to the page that triggered login (AuthGate), else Data Management.
+        const returnTo = readString("coord.returnTo", "session");
+        writeString("coord.returnTo", null, "session");
+        navigate(returnTo && returnTo.startsWith("/") ? returnTo : "/data-management", { replace: true });
       })
       .catch((err) => {
         console.error("Token exchange failed:", err);
