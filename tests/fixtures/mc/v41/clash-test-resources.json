@@ -1,0 +1,39 @@
+{
+  "page": {},
+  "resources": [
+    {
+      "type": "scope-version-clash.2.0.0",
+      "extension": "json.gz",
+      "url": "https://bim360-mc-clash-prod-us-east-1.s3.us-east-1.amazonaws.com/3f8a2c1e-5b7d-4e90-a1c2-6d8e9f0a1b2c/14820aef-b213-4fa2-a313-9135ac138630/scope-version-clash.2.0.0.json.gz?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=SYNTHETIC&X-Amz-Expires=3600&X-Amz-Signature=cf89b7bb",
+      "headers": {
+        "x-amz-server-side-encryption-customer-algorithm": "AES256"
+      },
+      "validUntil": "2026-10-28T14:05:11.000Z"
+    },
+    {
+      "type": "scope-version-clash-instance.2.0.0",
+      "extension": "json.gz",
+      "url": "https://bim360-mc-clash-prod-us-east-1.s3.us-east-1.amazonaws.com/3f8a2c1e-5b7d-4e90-a1c2-6d8e9f0a1b2c/14820aef-b213-4fa2-a313-9135ac138630/scope-version-clash-instance.2.0.0.json.gz?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=SYNTHETIC&X-Amz-Expires=3600&X-Amz-Signature=86bec933",
+      "headers": {
+        "x-amz-server-side-encryption-customer-algorithm": "AES256"
+      },
+      "validUntil": "2026-10-28T14:05:11.000Z"
+    },
+    {
+      "type": "scope-version-document.2.0.0",
+      "extension": "json.gz",
+      "url": "https://bim360-mc-clash-prod-us-east-1.s3.us-east-1.amazonaws.com/3f8a2c1e-5b7d-4e90-a1c2-6d8e9f0a1b2c/14820aef-b213-4fa2-a313-9135ac138630/scope-version-document.2.0.0.json.gz?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=SYNTHETIC&X-Amz-Expires=3600&X-Amz-Signature=2e120c5d",
+      "headers": {
+        "x-amz-server-side-encryption-customer-algorithm": "AES256"
+      },
+      "validUntil": "2026-10-28T14:05:11.000Z"
+    },
+    {
+      "type": "scope-version-clash.2.0.0",
+      "extension": "sqlite",
+      "url": "https://bim360-mc-clash-prod-us-east-1.s3.us-east-1.amazonaws.com/3f8a2c1e-5b7d-4e90-a1c2-6d8e9f0a1b2c/14820aef-b213-4fa2-a313-9135ac138630/clash-sqlite.json.gz?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=SYNTHETIC&X-Amz-Expires=3600&X-Amz-Signature=bc1d9488",
+      "headers": {},
+      "validUntil": "2026-11-04T13:41:37.000Z"
+    }
+  ]
+}
