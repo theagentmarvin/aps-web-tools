@@ -130,6 +130,17 @@ function dominant<T extends string>(values: readonly T[]): T | undefined {
   return best;
 }
 
+/**
+ * Deterministic representative clash of a group: highest clash priority score,
+ * then deepest penetration, then key. Same order as core/issues worstMember(),
+ * so the rationale and the engine issue draft describe the same clash.
+ */
+export function representativeOf(members: readonly ClassifiedClash[]): ClassifiedClash | undefined {
+  return [...members].sort(
+    (x, y) => y.priority.score - x.priority.score || y.facts.penetrationMm - x.facts.penetrationMm || (x.key < y.key ? -1 : x.key > y.key ? 1 : 0),
+  )[0];
+}
+
 /** Run the deterministic engine and project its output to server records. */
 export function runEngine(input: EngineInput): EngineOutput {
   const rs = input.rules ?? loadRules();
@@ -221,8 +232,12 @@ export function runEngine(input: EngineInput): EngineOutput {
   const clashById = new Map(clashes.map((c) => [c.id, c]));
 
   const issueDrafts: EngineOutput["issueDrafts"] = {};
+  const byKey = new Map(res.classified.map((c) => [c.key, c]));
   const groups: GroupRecord[] = res.groups.map((g) => {
     const members = g.mcClashIds.map((id) => clashById.get(id)).filter((c): c is ClashRecord => !!c);
+    // ONE deterministic representative per group, shared by the rationale, the issue
+    // draft (core/issues uses the same "worst member" order) and the pushpin.
+    const rep = representativeOf(g.memberKeys.map((k) => byKey.get(k)).filter((c): c is ClassifiedClash => !!c));
     const pens = members.map((m) => m.penetrationMm);
     const validity = g.validity;
     const [p0, p1] = g.disciplinePair.split("×");
@@ -239,7 +254,7 @@ export function runEngine(input: EngineInput): EngineOutput {
           description: d.description,
           responsibleDiscipline: d.responsibleDiscipline,
           dueDate: d.dueDate,
-          viewpointClashId: vp ? vp.id : undefined,
+          viewpointClashId: vp ? vp.id : rep?.id,
         };
       } catch {
         // Skeleton is optional; the agent drafts issues via draft_issue.
@@ -262,7 +277,8 @@ export function runEngine(input: EngineInput): EngineOutput {
       tags: g.tags,
       ...(g.secondaryDiscipline ? { secondaryDiscipline: g.secondaryDiscipline } : {}),
       triageState: dominant(members.map((m) => m.triageState)) ?? "open",
-      rationale: members[0]?.rationale,
+      rationale: rep ? sanitizeModelText(rep.classification.rationale, 400) : members[0]?.rationale,
+      ...(rep ? { representativeClashId: rep.id } : {}),
       confidence: Math.round(g.confidence * 1000) / 1000,
       confidenceBand: conf,
       reviewState: g.reviewState,

@@ -18,6 +18,7 @@ import { loadOrCreateSecret, readSecret, secureDir } from "./secure/keystore";
 import { ClashCache, type CacheKey } from "./cache/clash-cache";
 import { loadConfig, MAX_SUPPORTED_LEVEL, type AutonomyLevel, type CoordinatorConfig, type LoadedConfig } from "./config";
 import { CLOSABLE, ENGINE_NAME, ENGINE_VERSION, runEngine } from "./engine";
+import { DEFAULT_LEDGER_UPDATER, FileLedgerStore, type LedgerStore, type LedgerUpdater } from "./ledger";
 import { checkAgentText, referencedIds, untrusted, type Untrusted } from "./sanitize";
 import { FixtureSource } from "./source/fixtures";
 import { LiveSource } from "./source/live";
@@ -43,7 +44,7 @@ import type {
   TestRecord,
   Validity,
 } from "./store/types";
-import { bareProjectId, CoordError, nowIso, paginate, percentile, round, sha256, testKeyOf } from "./util";
+import { bareProjectId, CoordError, log, nowIso, paginate, percentile, round, sha256, testKeyOf } from "./util";
 
 export const SERVER_VERSION = "0.1.0";
 
@@ -65,6 +66,8 @@ export interface CoordinatorOptions {
   /** Default: COORD_DATA_SOURCE env, else "live". */
   dataSource?: DataSourceKind;
   source?: DataSource;
+  /** Override the reappeared-ledger updater (tests); default server/ledger.ts DEFAULT_LEDGER_UPDATER. */
+  ledgerUpdater?: LedgerUpdater;
   config?: LoadedConfig;
   now?: () => number;
 }
@@ -133,6 +136,7 @@ export class Coordinator {
   constructor(opts: CoordinatorOptions = {}) {
     this.root = opts.root ?? process.cwd();
     this.now = opts.now ?? Date.now;
+    this.ledgerUpdaterOpt = opts.ledgerUpdater;
     const homeOverride = opts.home ?? process.env.COORDINATOR_HOME;
     // Secrets (approval key, audit key, passkeys, APS token) live OUTSIDE the repo.
     this.secureDir = secureDir({ homeOverride });
@@ -152,6 +156,12 @@ export class Coordinator {
 
   readonly secureDir: string;
   readonly webauthn: WebAuthnService;
+  /** Per-model-set reappeared ledger (store side; logic in core, see server/ledger.ts). */
+  get ledger(): LedgerStore {
+    return (this.ledgerStore ??= new FileLedgerStore(this.store, this.ledgerUpdaterOpt ?? DEFAULT_LEDGER_UPDATER));
+  }
+  private ledgerStore?: LedgerStore;
+  private ledgerUpdaterOpt?: LedgerUpdater;
 
   /** Dependencies for server/approval (the only ACC write path). */
   approvalDeps(): ApprovalDeps {
@@ -424,6 +434,14 @@ export class Coordinator {
       warnings: data.warnings,
     };
     await this.store.putTest(rec);
+    // Reappeared ledger: diff against the previous cached version, then persist (no-op until core's updater lands).
+    if (previous) {
+      const prevRaw = await this.loadRaw(previous).catch(() => undefined);
+      if (prevRaw) {
+        const diff = diffTestVersions(prevRaw.clashes, data.clashes, { history: await this.historyBefore(previous) });
+        await this.ledger.apply(projectId, modelSetId, rec.modelSetVersion, testKey, diff).catch((err) => log.warn("ledger.update_failed", { message: (err as Error).message }));
+      }
+    }
     const ctx = await this.store.getContext();
     await this.store.setContext({ ...ctx, projectId, projectName: data.project.name, modelSetId, modelSetName: data.modelSet.name, testKey });
     await this.store.audit({
@@ -431,7 +449,8 @@ export class Coordinator {
       action: "test.ingested",
       projectId,
       modelSetId,
-      testId: input.testId,
+      testId: testKey,
+      accTestId: input.testId,
       details: { testKey, clashes: rec.counts.clashes, version: rec.modelSetVersion, properties: rec.properties.status },
     });
     return { ...this.ingestOutput(rec), durationMs: this.now() - t0, cached: false };
@@ -560,7 +579,8 @@ export class Coordinator {
         action: "classification.run",
         projectId: test.projectId,
         modelSetId: test.modelSetId,
-        testId: test.testId,
+        testId: test.testKey,
+        accTestId: test.testId,
         details: { testKey: test.testKey, groups: out.groups.length, needsReview: nr.length, ruleset: out.ruleset.hash },
       });
     }
@@ -614,7 +634,7 @@ export class Coordinator {
         risk: op === "status_change" ? "low" : "medium",
         affectedClashes: clashes,
       });
-      await this.store.audit({ actor: ENGINE_ACTOR, action: "proposal.created", projectId: test.projectId, modelSetId: test.modelSetId, testId: test.testId, targetIds: [p.id], details: { kind: op, groups: list.length, engineBatch: true } });
+      await this.store.audit({ actor: ENGINE_ACTOR, action: "proposal.created", projectId: test.projectId, modelSetId: test.modelSetId, testId: test.testKey, accTestId: test.testId, targetIds: [p.id], details: { kind: op, groups: list.length, engineBatch: true } });
       out.push({ proposalId: p.id, kind: op, groups: list.length, clashes });
     }
     return out;
@@ -1185,7 +1205,8 @@ export class Coordinator {
       action: "proposal.created",
       projectId: test.projectId,
       modelSetId: test.modelSetId,
-      testId: test.testId,
+      testId: test.testKey,
+      accTestId: test.testId,
       targetIds: [p.id, ...args.target.groupIds],
       details: { kind: p.kind, risk: p.risk, clashes: ids.size, flagged },
     });
@@ -1825,7 +1846,7 @@ export class Coordinator {
     const content = input.format === "md" ? md : markdownToHtml(md, title);
     const name = `${nowIso(this.now()).slice(0, 10)}-${input.kind}-${test.testKey}.${input.format}`;
     const path = await this.store.writeReport(test.projectId, name, content);
-    await this.store.audit({ actor: caller.actor, action: "report.generated", projectId: test.projectId, testId: test.testId, details: { kind: input.kind, format: input.format } });
+    await this.store.audit({ actor: caller.actor, action: "report.generated", projectId: test.projectId, testId: test.testKey, accTestId: test.testId, details: { kind: input.kind, format: input.format } });
     return { path, headline, sections };
   }
 

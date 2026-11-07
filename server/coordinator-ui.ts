@@ -4,6 +4,7 @@
  * approval and apply. Builds on {@link Coordinator}; the HTTP router only
  * validates input and calls these methods.
  */
+import { join } from "node:path";
 import type * as C from "./api/contract";
 import { applyApproved, approvalOptions, approveBatch, verifyBatchApproval, withBatchLock, type ApprovalDeps } from "./approval";
 import type { AssignedGroupCreate, CloseReason, ClosedGroupCreate } from "./aps/types";
@@ -134,7 +135,9 @@ export class CoordinatorUi {
       const mine = tests.filter((t) => bareProjectId(t.projectId) === bareProjectId(p.id));
       let pending = 0;
       for (const t of mine) pending += await this.pendingCount(t);
-      out.push({ id: bareProjectId(p.id), name: p.name, hubId: p.hubId, hubName: p.hubName, modelSetCount: new Set(mine.map((t) => t.modelSetId)).size, pendingDecisions: pending });
+      const sets = await this.core.source.listModelSets(p.id).catch(() => undefined);
+      const modelSetCount = sets ? sets.length : new Set(mine.map((t) => t.modelSetId)).size;
+      out.push({ id: bareProjectId(p.id), name: p.name, hubId: p.hubId, hubName: p.hubName, modelSetCount, pendingDecisions: pending });
     }
     return out;
   }
@@ -336,7 +339,8 @@ export class CoordinatorUi {
         ...(g.levels[0] ? { location: g.levels[0] } : {}),
         includeView: true,
         linkClashIds: g.clashIds.map((c) => `C-${c}`),
-      };
+        ...(engineIssue.viewpointClashId ?? g.representativeClashId ? { viewpointClashId: engineIssue.viewpointClashId ?? g.representativeClashId } : {}),
+      } as C.IssueDraft;
     }
     const primary = cl ?? iss ?? st ?? prio ?? engineBatch;
     const id = primary?.id ?? `E-${test.testKey}-${g.id}`;
@@ -523,7 +527,7 @@ export class CoordinatorUi {
     for (const d of added) {
       const ctx = byTest.get(d.testId)!;
       const action = d.kind === "accept" ? "decision.accepted" : d.kind === "correct" ? "decision.corrected" : d.kind === "reject" ? "decision.rejected" : d.kind === "postpone" ? "decision.postponed" : d.kind === "undo" ? "decision.undone" : "decision.note";
-      await this.store.audit({ actor, action, projectId: ctx.test.projectId, modelSetId: ctx.test.modelSetId, testId: ctx.test.testId, targetIds: [d.targetId, d.proposalId], details: { decisionId: d.id, reasonCode: d.reasonCode ?? null, viewedInViewerMs: d.viewedInViewerMs } });
+      await this.store.audit({ actor, action, projectId: ctx.test.projectId, modelSetId: ctx.test.modelSetId, testId: ctx.test.testKey, accTestId: ctx.test.testId, targetIds: [d.targetId, d.proposalId], details: { decisionId: d.id, reasonCode: d.reasonCode ?? null, viewedInViewerMs: d.viewedInViewerMs } });
       // Corrections and rejections feed the learning loop.
       if ((d.kind === "correct" || d.kind === "reject") && d.targetType === "group") {
         const vc = d.changes.find((c) => c.field === "validity");
@@ -619,7 +623,10 @@ export class CoordinatorUi {
           linkClashIds: g.clashIds.map((c) => `C-${c}`),
         };
         const vpId = (eff.issue as (C.IssueDraft & { viewpointClashId?: string }) | undefined)?.viewpointClashId;
-        const rep = chunk.find((c) => c.id === vpId?.replace(/^C-/, "")) ?? [...chunk].sort((a, b) => b.penetrationMm - a.penetrationMm)[0]!;
+        const rep =
+          chunk.find((c) => c.id === vpId?.replace(/^C-/, "")) ??
+          chunk.find((c) => c.id === g.representativeClashId) ??
+          [...chunk].sort((a, b) => b.penetrationMm - a.penetrationMm || (a.id < b.id ? -1 : 1))[0]!;
         const doc = test.documents.find((x) => x.documentId === rep.a.documentId);
         const typeId = issue.issueType && /^[0-9a-f-]{36}$/i.test(issue.issueType) ? issue.issueType : this.core.config.issues.issueTypeId ?? (this.core.source.kind === "fixtures" ? "00000000-0000-4000-a000-00000000f1a7" : undefined);
         const subId = issue.issueSubtype && /^[0-9a-f-]{36}$/i.test(issue.issueSubtype) ? issue.issueSubtype : this.core.config.issues.issueSubtypeId ?? (this.core.source.kind === "fixtures" ? "00000000-0000-4000-a000-00000000f1a8" : undefined);
@@ -747,18 +754,24 @@ export class CoordinatorUi {
     };
     await this.store.putBatch(batch);
     await this.store.markDecisionsBatched(usedDecisions, batchId);
-    await this.store.audit({ actor: { type: "user", id: user.id, name: user.name }, action: "batch.ready", projectId: test.projectId, modelSetId: test.modelSetId, testId: test.testId, batchId, details: { items: items.length } });
+    await this.store.audit({ actor: { type: "user", id: user.id, name: user.name }, action: "batch.ready", projectId: test.projectId, modelSetId: test.modelSetId, testId: test.testKey, accTestId: test.testId, batchId, details: { items: items.length } });
     return this.batchUi(batch);
   }
 
   async batchUi(b: BatchRecord): Promise<C.Batch> {
     const latest = await this.core.source.latestVersion(b.projectId, b.modelSetId).catch(() => b.modelSetVersion);
     const inc = b.items.filter((i) => !i.excluded);
+    // Status changes = clash.setStatus items only (clashes:close). Issue items (clashes:assign) are
+    // reported separately in issueEffects: they link clashes to an issue, they are not status changes.
     const trans = new Map<string, number>();
-    for (const i of inc) for (const f of i.fields) if (f.field === "status") {
-      const k = `${String(f.accCurrent)}→${f.accNew === "assigned" ? "reviewed" : String(f.accNew)}`;
-      trans.set(k, (trans.get(k) ?? 0) + i.targetIds.length);
+    for (const i of inc) {
+      if (i.operation !== "clash.setStatus") continue;
+      for (const f of i.fields) if (f.field === "status") {
+        const k = `${String(f.accCurrent)}→${String(f.accNew)}`;
+        trans.set(k, (trans.get(k) ?? 0) + i.targetIds.length);
+      }
     }
+    const issueItems = inc.filter((i) => i.operation === "issue.create");
     const byDisc: Record<string, number> = {};
     for (const i of inc) if (i.operation === "issue.create") byDisc[String(i.issue?.ownerDiscipline ?? "?")] = (byDisc[String(i.issue?.ownerDiscipline ?? "?")] ?? 0) + 1;
     const appr = await this.store.getApproval(b.id);
@@ -796,6 +809,7 @@ export class CoordinatorUi {
         const [from, to] = k.split("→");
         return { from: from as C.AccStatus, to: to as C.AccStatus, count };
       }),
+      issueEffects: { issues: issueItems.length, clashesLinked: issueItems.reduce((n, i) => n + i.targetIds.length, 0) },
       issuesByDiscipline: byDisc,
       ...(b.lastPreflightAt ? { lastPreflightAt: b.lastPreflightAt } : {}),
       ...(approval ? { approval } : {}),
@@ -1057,6 +1071,9 @@ export class CoordinatorUi {
   async rules(): Promise<C.RuleSummary[]> {
     const rs = loadRules();
     const s = await this.ruleStats();
+    const { stat } = await import("node:fs/promises");
+    const rulesFile = join(this.core.root, "rules", "classification-rules.yaml");
+    const updatedAt = await stat(rulesFile).then((st) => st.mtime.toISOString()).catch(() => "");
     return rs.source.classification.rules.map((r) => ({
       id: r.id,
       name: r.name,
@@ -1066,7 +1083,7 @@ export class CoordinatorUi {
       hits7d: s.hits.get(r.id) ?? 0,
       acceptance: s.decidedFor.get(r.id) ? round((s.accepted.get(r.id) ?? 0) / s.decidedFor.get(r.id)!, 3) : null,
       corrections: s.corrected.get(r.id) ?? 0,
-      updatedAt: "",
+      updatedAt,
       file: "rules/classification-rules.yaml",
     }));
   }
@@ -1264,7 +1281,6 @@ export class CoordinatorUi {
         rawClashes: latest?.cls.clashes.length ?? 0,
         groupsReviewed: latestDecided.size,
         issuesCreated: audit.filter((e) => e.action === "acc.issue.created").reduce((n, e) => n + Number(e.details.groups ?? 0), 0),
-        issuesClosed: 0,
         aiAccepted: decisions.filter((d) => d.kind === "accept").length,
         aiCorrected: decisions.filter((d) => d.kind === "correct").length,
         aiRejected: decisions.filter((d) => d.kind === "reject").length,
@@ -1303,7 +1319,7 @@ export class CoordinatorUi {
     return {
       items: page.items.map((e) => ({
         id: e.id, at: e.at, actor: e.actor, action: e.action, projectId: bareProjectId(e.projectId || ""), ...(e.modelSetId ? { modelSetId: e.modelSetId } : {}),
-        ...(e.testId ? { testId: e.testId } : {}), ...(e.batchId ? { batchId: e.batchId } : {}), targetIds: e.targetIds, details: e.details,
+        ...(e.testId ? { testId: e.testId } : {}), ...(e.accTestId ? { accTestId: e.accTestId } : {}), ...(e.batchId ? { batchId: e.batchId } : {}), targetIds: e.targetIds, details: e.details,
         ...(e.accResponseId ? { accResponseId: e.accResponseId } : {}), hash: e.hash,
       })),
       total: page.total,

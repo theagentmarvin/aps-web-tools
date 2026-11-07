@@ -323,8 +323,15 @@ export interface Batch {
   stale: boolean;
   counts: { issuesCreate: number; statusChanges: number; assignments: number; comments: number };
   origin: { accepted: number; corrected: number; manual: number };
+  /** humanReviewedPct is a PERCENTAGE in 0..100 (not a 0..1 ratio). */
   review: { humanReviewedPct: number; lowConfidence: number; lowConfidenceViewed: number };
+  /**
+   * Status changes written with clashes:close, in clashes. Sum of counts === counts.statusChanges.
+   * Issue creation is NOT a status change: see issueEffects.
+   */
   statusTransitions: { from: AccStatus; to: AccStatus; count: number }[];
+  /** clashes:assign effects: issues created and clashes linked to them (counts.issuesCreate === issues). */
+  issueEffects: { issues: number; clashesLinked: number };
   issuesByDiscipline: Record<DisciplineCode, number>;
   lastPreflightAt?: string;
   /** Approval record summary (no signature). */
@@ -481,7 +488,8 @@ export interface ReportData {
   scope: ReportScope;
   kpis: {
     activeClashes: number; activeClashesPrev: number | null; groups: number; rawClashes: number; groupsReviewed: number;
-    issuesCreated: number; issuesClosed: number; aiAccepted: number; aiCorrected: number; aiRejected: number;
+    /** Issues created by applied batches (audit). issuesClosed was removed: no ACC issue-status source in v1. */
+    issuesCreated: number; aiAccepted: number; aiCorrected: number; aiRejected: number;
     rawClashesReviewed: number; actualReviewSeconds: number;
   };
   burndown: { label: string; active: number; reviewed: number; resolved: number; closed: number; valid: number }[];
@@ -500,7 +508,10 @@ export interface AuditEvent {
   action: string;
   projectId: string;
   modelSetId?: string;
+  /** Test key (T-xxxxxxxx). */
   testId?: string;
+  /** ACC clash test id. */
+  accTestId?: string;
   batchId?: string;
   targetIds: string[];
   details: Record<string, string | number | boolean | null>;

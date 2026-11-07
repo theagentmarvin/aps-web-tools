@@ -378,7 +378,10 @@ export class Store {
     action: string;
     projectId?: string;
     modelSetId?: string;
+    /** The cached test KEY (T-xxxxxxxx). */
     testId?: string;
+    /** The ACC clash test id, when relevant. */
+    accTestId?: string;
     batchId?: string;
     targetIds?: string[];
     details?: Record<string, string | number | boolean | null>;
@@ -397,6 +400,7 @@ export class Store {
         projectId: e.projectId ?? "",
         modelSetId: e.modelSetId,
         testId: e.testId,
+        accTestId: e.accTestId,
         batchId: e.batchId,
         targetIds: e.targetIds ?? [],
         details: e.details ?? {},

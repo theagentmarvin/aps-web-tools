@@ -101,6 +101,8 @@ export interface GroupRecord {
   maxPenetrationMm: number;
   minPenetrationMm: number;
   sampleClashIds: string[];
+  /** Deterministic representative (rationale, issue draft, pushpin). */
+  representativeClashId?: string;
   /** Dominant MC status of members. */
   accStatus: AccStatus;
   deltaSummary: { new: number; persisting: number; reappeared: number; modified: number };
@@ -412,7 +414,10 @@ export interface AuditEventRecord {
   action: string;
   projectId: string;
   modelSetId?: string;
+  /** Test key (T-xxxxxxxx). */
   testId?: string;
+  /** ACC clash test id. */
+  accTestId?: string;
   batchId?: string;
   targetIds: string[];
   details: Record<string, string | number | boolean | null>;
