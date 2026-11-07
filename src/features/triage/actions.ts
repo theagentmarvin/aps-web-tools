@@ -24,20 +24,20 @@ export const REASONS_BY_FIELD: Record<DecisionField | "reject", ReasonCode[]> = 
   reject: ["R01", "R02", "R03", "R04", "R05", "R06", "R07", "R11", "R12", "R99"],
 };
 
+/** Suggested reason when the coordinator changes validity TO this value. */
 const VALIDITY_REASON: Record<Validity, ReasonCode> = {
   false_positive: "R01",
-  by_design: "R02",
-  tolerance: "R03",
-  duplicate: "R04",
-  model_error: "R05",
+  tolerated: "R03",
+  needs_info: "R99",
   real: "R06",
-  unknown: "R99",
 };
 
+/** Default ACC action per validity (clash-taxonomy.md §2): real → issue; FP → close; tolerated → mark reviewed; needs_info → stays active. */
 export function defaultActionFor(v: Validity): ProposedAction {
-  if (v === "real" || v === "model_error") return { createIssue: true, setStatus: "reviewed" };
-  if (v === "unknown") return { createIssue: false, setStatus: null };
-  return { createIssue: false, setStatus: "closed" };
+  if (v === "real") return { createIssue: true, setStatus: null };
+  if (v === "false_positive") return { createIssue: false, setStatus: "closed" };
+  if (v === "tolerated") return { createIssue: false, setStatus: "reviewed" };
+  return { createIssue: false, setStatus: null };
 }
 
 export function suggestReason(field: DecisionField | "reject", ai: unknown, human: unknown): ReasonCode | undefined {

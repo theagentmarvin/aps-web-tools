@@ -3,11 +3,13 @@
  * docs/api.md). Connect-style middleware usable from Vite (`configureServer`)
  * and from ./standalone.ts.
  *
- * Human-only endpoints require (1) a same-origin request (Origin, else
- * Referer, must equal the request host) and (2) the CSRF token from
- * `GET /api/coord/csrf` in the `X-Coord-CSRF` header, matching the
- * `coord_csrf` SameSite=Strict cookie (double submit). The token is random per
- * server process.
+ * Order of checks (./host-guard.ts): exact Host allowlist (anti DNS
+ * rebinding, X-Forwarded-* ignored) → exact Origin for every non-GET →
+ * Sec-Fetch-Site same-origin when present → for human-only endpoints the CSRF
+ * token from `GET /api/coord/csrf` in `X-Coord-CSRF`, matching the HttpOnly
+ * SameSite=Strict `coord_csrf` cookie (random per process).
+ * These stop other websites, not local non-browser clients: approvals are
+ * proven by a WebAuthn user-verified signature (server/approval/webauthn.ts).
  */
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -17,6 +19,7 @@ import { Coordinator, type CoordinatorOptions } from "../coordinator";
 import { CoordinatorUi, type HumanUser } from "../coordinator-ui";
 import { LiveSource } from "../source/live";
 import { CoordError, httpStatusFor, log } from "../util";
+import { fetchSiteOk, hostAllowed, originMatches } from "./host-guard";
 
 export const API_PREFIX = "/api/coord";
 
@@ -79,15 +82,9 @@ function safeEq(a: string, b: string): boolean {
 }
 
 /** Origin (or Referer) must be the same host the request was sent to. */
+/** @deprecated kept for compatibility: exact Origin match (see ./host-guard.ts). */
 export function isSameOrigin(req: IncomingMessage): boolean {
-  const host = req.headers["x-forwarded-host"] ?? req.headers.host;
-  const src = (req.headers.origin as string | undefined) ?? (req.headers.referer as string | undefined);
-  if (!host || !src) return false;
-  try {
-    return new URL(src).host === host;
-  } catch {
-    return false;
-  }
+  return originMatches(req);
 }
 
 const csv = (v: string | null) => (v ? v.split(",").filter(Boolean) : undefined);
@@ -96,6 +93,43 @@ const num = (v: string | null) => (v !== null && v !== "" && Number.isFinite(Num
 // ── body schemas ────────────────────────────────────────────────────────────
 
 const Id = z.string().min(1).max(200);
+const IsoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+/** humanValue is validated per field (it ends up in ACC request bodies). */
+const HumanValue: Record<string, z.ZodType> = {
+  validity: z.enum(["real", "false_positive", "tolerated", "needs_info"]),
+  priority: z.number().int().min(1).max(4),
+  owner: z.string().regex(/^[A-Z]{2,6}$/),
+  action: z.strictObject({ createIssue: z.boolean(), setStatus: z.enum(["active", "reviewed", "resolved", "closed"]).nullable() }),
+  group: z.strictObject({ type: z.enum(["merge", "split", "move"]), groupIds: z.array(z.string().max(20)).max(20).optional(), clashIds: z.array(z.string().max(30)).max(1000).optional() }),
+  issueDraft: z.strictObject({
+    title: z.string().max(100).optional(),
+    description: z.string().max(1000).optional(),
+    ownerDiscipline: z.string().regex(/^[A-Z]{2,6}$/).optional(),
+    assigneeRole: z.string().max(60).optional(),
+    assigneeId: z.string().max(80).optional(),
+    assigneeType: z.enum(["user", "role", "company"]).optional(),
+    dueDate: IsoDate.optional(),
+    issueType: z.string().max(60).optional(),
+    issueSubtype: z.string().max(60).optional(),
+    location: z.string().max(120).optional(),
+    includeView: z.boolean().optional(),
+    linkClashIds: z.array(z.string().max(30)).max(1000).optional(),
+    pinnedView: z.unknown().optional(),
+  }),
+};
+const ChangeSchema = z
+  .object({
+    field: z.enum(["validity", "priority", "owner", "action", "group", "issueDraft"]),
+    aiValue: z.unknown(),
+    humanValue: z.unknown(),
+    aiConfidence: z.number().min(0).max(1).optional(),
+    aiSource: z.string().max(40).optional(),
+    ruleIds: z.array(z.string().max(20)).max(50).optional(),
+  })
+  .superRefine((c, ctx) => {
+    const r = HumanValue[c.field]!.safeParse(c.humanValue);
+    if (!r.success) ctx.addIssue({ code: "custom", path: ["humanValue"], message: `humanValue inválido para ${c.field}: ${r.error.issues[0]?.message ?? ""}` });
+  });
 const DecisionSchema = z.object({
   id: z.string().min(8).max(80),
   proposalId: Id,
@@ -105,9 +139,7 @@ const DecisionSchema = z.object({
   modelSetId: z.string().max(80),
   projectId: z.string().max(80),
   kind: z.enum(["accept", "correct", "reject", "postpone", "note", "undo"]),
-  changes: z
-    .array(z.object({ field: z.enum(["validity", "priority", "owner", "action", "group", "issueDraft"]), aiValue: z.unknown(), humanValue: z.unknown(), aiConfidence: z.number().optional(), aiSource: z.string().max(40).optional(), ruleIds: z.array(z.string().max(20)).max(50).optional() }))
-    .max(10),
+  changes: z.array(ChangeSchema).max(10),
   reasonCode: z.enum(["R01", "R02", "R03", "R04", "R05", "R06", "R07", "R08", "R09", "R10", "R11", "R12", "R13", "R99"]).optional(),
   note: z.string().max(1000).optional(),
   suggestRule: z.boolean().optional(),
@@ -136,13 +168,39 @@ const IssuePatch = z
     pinnedView: z.unknown(),
   })
   .partial();
-const ApproveSchema = z.object({
+const AssertionSchema = z.object({
+  id: z.string().max(1024),
+  rawId: z.string().max(1024),
+  type: z.literal("public-key"),
+  response: z.object({ authenticatorData: z.string().max(4096), clientDataJSON: z.string().max(8192), signature: z.string().max(2048), userHandle: z.string().max(1024).optional() }),
+  clientExtensionResults: z.record(z.string(), z.unknown()).default({}),
+  authenticatorAttachment: z.string().max(40).optional(),
+});
+/** Strict: unknown keys (e.g. the removed `apply`) are rejected. */
+const ApproveSchema = z.strictObject({
   confirmWord: z.string().max(20),
-  staleOverride: z.boolean().optional(),
   note: z.string().max(500).optional(),
   excludedItemIds: z.array(z.string().max(40)).max(5000).default([]),
-  apply: z.boolean().optional(),
+  webauthn: z.strictObject({ nonce: z.string().regex(/^[0-9a-f]{32}$/), origin: z.string().max(100), response: AssertionSchema }).optional(),
+  demo: z.boolean().optional(),
 });
+const RegisterSchema = z.strictObject({
+  response: z.object({
+    id: z.string().max(1024),
+    rawId: z.string().max(1024),
+    type: z.literal("public-key"),
+    response: z.object({ clientDataJSON: z.string().max(8192), attestationObject: z.string().max(65536) }).passthrough(),
+    clientExtensionResults: z.record(z.string(), z.unknown()).default({}),
+    authenticatorAttachment: z.string().max(40).optional(),
+  }),
+  label: z.string().max(60).optional(),
+  enrollCode: z.string().max(20).optional(),
+  stepUp: AssertionSchema.optional(),
+});
+const enumCsv = <T extends string>(values: readonly [T, ...T[]], v: string | null): T[] | undefined => {
+  const list = csv(v);
+  return list ? z.array(z.enum(values)).parse(list) : undefined;
+};
 const FeedbackSchema = z.object({
   target: z.union([z.object({ proposalId: Id }), z.object({ groupId: Id, testId: z.string().optional() })]),
   verdict: z.enum(["correct", "incorrect", "partially_correct"]),
@@ -184,7 +242,8 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
   const apsAuth = (): ApsAuth | undefined => (coord.source instanceof LiveSource ? coord.source.auth : undefined);
 
   // ── session / auth ─────────────────────────────────────────────────────
-  add("GET", "/csrf", async ({ res }) => {
+  add("GET", "/csrf", async ({ req, res }) => {
+    if (!fetchSiteOk(req)) throw new CoordError("forbidden", "Sec-Fetch-Site distinto de same-origin.");
     res.setHeader("Set-Cookie", `coord_csrf=${csrfToken}; Path=/api/coord; SameSite=Strict; HttpOnly`);
     return { token: csrfToken };
   });
@@ -277,13 +336,13 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
       testId: params.testId,
       filter: {
         pair: csv(query.get("pair")),
-        priority: csv(query.get("priority"))?.map(Number).filter((n) => n >= 1 && n <= 4) as (1 | 2 | 3 | 4)[] | undefined,
-        validity: csv(query.get("validity")) as never,
-        level: csv(query.get("level")),
-        accStatus: csv(query.get("accStatus")) as never,
-        delta: csv(query.get("delta")) as never,
+        priority: enumCsv(["1", "2", "3", "4"], query.get("priority"))?.map(Number) as (1 | 2 | 3 | 4)[] | undefined,
+        validity: enumCsv(["real", "false_positive", "tolerated", "needs_info"], query.get("validity")),
+        level: csv(query.get("level"))?.map((l) => z.string().max(60).parse(l)),
+        accStatus: enumCsv(["active", "reviewed", "resolved", "closed"], query.get("accStatus")),
+        delta: enumCsv(["new", "persisting", "reappeared", "modified", "resolved"], query.get("delta")),
       },
-      sort: (query.get("sort") ?? undefined) as never,
+      sort: z.enum(["priority", "confidence_asc", "count_desc", "distance", "level"]).optional().parse(query.get("sort") ?? undefined),
       limit: num(query.get("limit")),
       cursor: query.get("cursor") ?? undefined,
     }),
@@ -311,7 +370,7 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
     async ({ body, user }) => ui.sendToApproval(z.object({ projectId: Id, modelSetId: Id, testId: z.string().regex(/^T-[0-9a-f]{8}$/) }).parse(body), await user()),
     true,
   );
-  add("GET", "/batches", async ({ query }) => ui.listBatches({ state: csv(query.get("state")), projectId: query.get("projectId") ?? undefined }));
+  add("GET", "/batches", async ({ query }) => ui.listBatches({ state: enumCsv(["draft", "ready", "approved", "applied", "partial", "discarded"], query.get("state")), projectId: query.get("projectId") ?? undefined }));
   add("GET", "/batches/:batchId", async ({ params }) => ui.getBatch(params.batchId));
   add("POST", "/batches/:batchId/preflight", async ({ params, user }) => ui.preflight(params.batchId, await user()), true);
   add("PATCH", "/batches/:batchId/items", async ({ params, body }) => {
@@ -321,7 +380,32 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
   add("PATCH", "/batches/:batchId/items/:itemId/issue", async ({ params, body }) => ui.updateIssue(params.batchId, params.itemId, IssuePatch.parse(body ?? {}) as never), true);
   add("POST", "/batches/:batchId/return", async ({ params, user }) => ui.returnToReview(params.batchId, await user()), true);
   add("POST", "/batches/:batchId/discard", async ({ params, user }) => ui.discard(params.batchId, await user()), true);
-  add("POST", "/batches/:batchId/approve", async ({ params, body, user }) => ui.approve(params.batchId, ApproveSchema.parse(body) as never, await user()), true);
+  add(
+    "POST",
+    "/batches/:batchId/approve",
+    async ({ req, params, body, user }) => {
+      const b = ApproveSchema.parse(body);
+      // The WebAuthn origin is the request origin, never a client claim.
+      if (b.webauthn) b.webauthn.origin = String(req.headers.origin ?? "");
+      if (b.demo && coord.source.kind !== "fixtures") throw new CoordError("forbidden", "La aprobación de demostración solo existe en modo fixtures.");
+      return ui.approve(params.batchId, b as never, await user());
+    },
+    true,
+  );
+  add("GET", "/webauthn/approve-options", async ({ query }) => {
+    const batch = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/).parse(query.get("batch") ?? "");
+    return ui.approveOptions(batch, csv(query.get("exclude")) ?? []);
+  }, true);
+  add("GET", "/webauthn/register-options", async ({ user }) => ui.webauthnRegisterOptions(await user()), true);
+  add(
+    "POST",
+    "/webauthn/register",
+    async ({ req, body, user }) => {
+      const b = RegisterSchema.parse(body);
+      return ui.webauthnRegister({ ...b, origin: String(req.headers.origin ?? "") }, await user());
+    },
+    true,
+  );
   add(
     "POST",
     "/batches/:batchId/apply",
@@ -377,9 +461,11 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
         return;
       }
       try {
-        if (method !== "GET" || route.human) {
-          if (!isSameOrigin(req)) throw new CoordError("forbidden", "Solicitud de otro origen rechazada.");
-        }
+        // 1. Exact Host allowlist FIRST (anti DNS rebinding). X-Forwarded-* ignored.
+        if (!hostAllowed(req)) throw new CoordError("forbidden", "Host no permitido.");
+        // 2. Mutations: exact Origin. Human-only GETs: fetch metadata same-origin.
+        if (method !== "GET" && !originMatches(req)) throw new CoordError("forbidden", "Solicitud de otro origen rechazada.");
+        if (!fetchSiteOk(req)) throw new CoordError("forbidden", "Sec-Fetch-Site distinto de same-origin.");
         if (route.human) {
           const header = String(req.headers["x-coord-csrf"] ?? "");
           const ck = cookie(req, "coord_csrf") ?? "";

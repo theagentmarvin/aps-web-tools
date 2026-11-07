@@ -36,7 +36,10 @@
     "signIn": "Sign in with Autodesk",
     "signedIn": "Signed in",
     "expired": "Your session expired. Your unsaved decisions are kept.",
-    "signInAgain": "Sign in again"
+    "signInAgain": "Sign in again",
+    "loginStarted": "Autodesk sign-in opened. Complete it and come back to this tab.",
+    "waiting": "Waiting for sign-in…",
+    "demoSession": "Demo session (fixtures)"
   },
   "common": {
     "loading": "Loading…",
@@ -122,7 +125,13 @@
     "readyToApprove_one": "{count} decision ready to approve",
     "readyToApprove_other": "{count} decisions ready to approve",
     "openWorkspace": "Open coordination",
-    "lastTestNone": "No clash tests"
+    "lastTestNone": "No clash tests",
+    "analyze": "Analyze",
+    "analyzing": "Analyzing…",
+    "analyzed": "Test v{version} analyzed",
+    "tests": "Clash tests",
+    "notCached": "Not downloaded",
+    "cached": "Analyzed"
   },
   "workspace": {
     "title": "Coordination",
@@ -151,7 +160,8 @@
     "analyzing": "The agent is analyzing… {task}",
     "resizeList": "Resize list",
     "resizeDetail": "Resize detail",
-    "paceNudgeDismiss": "Got it"
+    "paceNudgeDismiss": "Got it",
+    "notCachedTitle": "This test has not been downloaded or analyzed yet"
   },
   "list": {
     "viewGroups": "Groups",
@@ -186,7 +196,8 @@
     "issue": "Issue",
     "issueDraft": "With draft",
     "issueExisting": "With existing issue",
-    "issueNone": "No issue"
+    "issueNone": "No issue",
+    "nature": "Nature"
   },
   "sort": {
     "label": "Sort",
@@ -254,8 +265,7 @@
     "tolerable": "Tolerable",
     "duplicate": "Duplicate",
     "toConfirm": "To confirm",
-    "byDesign": "By design",
-    "modelError": "Model error"
+    "needsInfo": "Needs information"
   },
   "accStatus": {
     "active": "Active",
@@ -347,7 +357,10 @@
     "saveEdit": "Save changes (Ctrl+Enter)",
     "editing": "Editing proposal",
     "agentUpdated": "The agent updated the proposal after your decision",
-    "propsLoading": "Loading properties…"
+    "propsLoading": "Loading properties…",
+    "reviewReasons": "Why it needs review",
+    "flagged": "Flagged text: the agent included instruction-like content. Read carefully; it is never executed.",
+    "flaggedShort": "Flagged text"
   },
   "issue": {
     "title": "Title",
@@ -509,7 +522,7 @@
     "state": {
       "draft": "Draft",
       "ready": "Ready to approve",
-      "approved": "Applying",
+      "approved": "Approved (not applied yet)",
       "applied": "Applied",
       "partial": "Applied with errors",
       "discarded": "Discarded",
@@ -590,7 +603,20 @@
     "openInWorkspace": "Open in coordination",
     "toggleGroup": "Show or hide {op}",
     "snapshot": "Snapshot",
-    "linkedCount": "{count} linked"
+    "linkedCount": "{count} linked",
+    "approveOnly": "Approve…",
+    "approvedTitle": "Batch approved",
+    "approvalBy": "Approved by {user} · {date} · expires {expires}",
+    "approvalInvalid": "The approval is no longer valid: {reason}",
+    "dryRun": "Preview (dry run)",
+    "dryRunTitle": "Exact requests that will be sent to ACC",
+    "dryRunHint": "Review the request bodies. Nothing is written to ACC until you confirm with APPLY.",
+    "applyReal": "Apply to ACC…",
+    "requestSummary": "{operation} · {groups} groups · {clashes} clashes",
+    "refused": "ACC was not changed: {message}",
+    "mcNone": "Cannot be written with MC v3",
+    "result": "Result",
+    "notAvailable": "not available"
   },
   "apply": {
     "title": "Approve and apply to ACC",
@@ -624,7 +650,8 @@
     "actor": {
       "agent": "Agent",
       "user": "User",
-      "server": "Server"
+      "server": "Server",
+      "engine": "Engine"
     },
     "empty": "No events for these filters.",
     "chain": "Chain: agent run → proposal → decision → batch → approval → ACC",
@@ -764,7 +791,8 @@
     "forbidden": "You do not have ACC permissions for this action.",
     "notFoundProject": "Project not found or no access.",
     "notFoundModelSet": "Model set not found.",
-    "notFoundBatch": "Batch not found."
+    "notFoundBatch": "Batch not found.",
+    "csrf": "The security session expired. Reload the page."
   },
   "a11y": {
     "groupList": "Clash group list",
@@ -774,5 +802,25 @@
     "sideB": "Side B",
     "skipToList": "Skip to list",
     "skipToDetail": "Skip to detail"
+  },
+  "nature": {
+    "label": "Nature",
+    "hard": "Hard clash",
+    "clearance": "Clearance",
+    "duplicate": "Duplicate",
+    "workflow": "Workflow / 4D"
+  },
+  "severity": {
+    "label": "Severity",
+    "critical": "Critical",
+    "high": "High",
+    "medium": "Medium",
+    "low": "Low",
+    "none": "None"
+  },
+  "approve": {
+    "title": "Approve batch",
+    "body": "You will sign the approval with your name. Then you can review the dry run and apply to ACC.",
+    "button": "Approve {count} changes"
   }
 }

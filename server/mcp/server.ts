@@ -64,7 +64,7 @@ async function applyTool(coord: Coordinator, a: { batchId: string; dryRun?: bool
   coord.requireLevel(1, "apply_approved_proposals");
   const dryRun = a.dryRun !== false;
   if (!(await coord.store.getBatch(a.batchId))) throw new CoordError("not_found", `Lote ${a.batchId} no existe`, "Usa el id del lote (L-…) que aprobó el coordinador en la UI web.");
-  const deps = { store: coord.store, source: coord.source, config: coord.config, effectiveLevel: coord.effectiveLevel };
+  const deps = coord.approvalDeps();
   const r: ApplyResult = await applyApproved(deps, a.batchId, { dryRun, actor: AGENT_ACTOR, includeBodies: dryRun });
   const outcome = r.refused
     ? "refused"

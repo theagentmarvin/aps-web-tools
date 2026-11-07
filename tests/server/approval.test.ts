@@ -20,7 +20,7 @@ beforeEach(async () => {
 });
 afterEach(() => cleanup());
 
-const deps = (c: Coordinator) => ({ store: c.store, source: c.source, config: c.config, effectiveLevel: c.effectiveLevel });
+const deps = (c: Coordinator) => c.approvalDeps();
 const actor = { type: "user" as const, id: HUMAN.id, name: HUMAN.name };
 
 /** Accept 3 closable + 3 real groups and send them to approval. */
@@ -51,7 +51,7 @@ describe("HMAC human approval", () => {
     const b = await readyBatch();
     const refused = await applyApproved(deps(coord), b.id, { actor });
     expect(refused.refused?.reason).toBe("not_approved");
-    const { approval } = await approveBatch(deps(coord), b.id, { ...HUMAN, channel: "web-ui" });
+    const { approval } = await approveBatch(deps(coord), b.id, { ...HUMAN, channel: "web-ui" }, { demo: true });
     expect(approval.hmac).toMatch(/^[0-9a-f]{64}$/);
     expect(approval.testVersion).toBe(42);
     expect(approval.approvedBy.name).toBe("Camila Rojas");
@@ -63,7 +63,7 @@ describe("HMAC human approval", () => {
 
   it("detects a tampered approval record", async () => {
     const b = await readyBatch();
-    await approveBatch(deps(coord), b.id, { ...HUMAN, channel: "web-ui" });
+    await approveBatch(deps(coord), b.id, { ...HUMAN, channel: "web-ui" }, { demo: true });
     const file = coord.store.path("approvals", `${b.id}.json`);
     const rec = JSON.parse(await readFile(file, "utf8"));
     rec.expiresAt = "2099-01-01T00:00:00.000Z";
@@ -73,7 +73,7 @@ describe("HMAC human approval", () => {
 
   it("detects a batch payload changed after approval", async () => {
     const b = await readyBatch();
-    await approveBatch(deps(coord), b.id, { ...HUMAN, channel: "web-ui" });
+    await approveBatch(deps(coord), b.id, { ...HUMAN, channel: "web-ui" }, { demo: true });
     const rec = (await coord.store.getBatch(b.id))!;
     const before = batchPayloadHash(rec);
     (rec.items.find((i) => i.mcOperation === "clash.close")!.accNew as { title: string }).title = "Cambiado después";
@@ -86,14 +86,14 @@ describe("HMAC human approval", () => {
 
   it("expires approvals", async () => {
     const b = await readyBatch();
-    await approveBatch(deps(coord), b.id, { ...HUMAN, channel: "web-ui" });
+    await approveBatch(deps(coord), b.id, { ...HUMAN, channel: "web-ui" }, { demo: true });
     const later = makeCoord(home, { now: () => Date.now() + 8 * 86_400_000 });
     expect(await verifyBatchApproval(deps(later), b.id)).toMatchObject({ ok: false, reason: "approval_expired" });
   });
 
   it("refuses when the model set moved to a newer version (version drift)", async () => {
     const b = await readyBatch();
-    await approveBatch(deps(coord), b.id, { ...HUMAN, channel: "web-ui" });
+    await approveBatch(deps(coord), b.id, { ...HUMAN, channel: "web-ui" }, { demo: true });
     (coord.source as FixtureSource).latestVersion = async () => 43;
     expect(await verifyBatchApproval(deps(coord), b.id)).toMatchObject({ ok: false, reason: "stale_test_version" });
     const r = await applyApproved(deps(coord), b.id, { actor, dryRun: true });
@@ -103,13 +103,13 @@ describe("HMAC human approval", () => {
   it("does not approve a batch built on an old version", async () => {
     const k41 = await ingest(coord, 41);
     const b = await readyBatch(ui, k41, 1, 1);
-    await expect(approveBatch(deps(coord), b.id, { ...HUMAN, channel: "web-ui" })).rejects.toThrow(/v41/);
+    await expect(approveBatch(deps(coord), b.id, { ...HUMAN, channel: "web-ui" }, { demo: true })).rejects.toThrow(/v41/);
   });
 
   it("L0 cannot approve or apply", async () => {
     const b = await readyBatch();
     const l0 = makeCoord(home, { config: testConfig({}, 0) });
-    await expect(approveBatch(deps(l0), b.id, { ...HUMAN, channel: "web-ui" })).rejects.toThrow(/L0/);
+    await expect(approveBatch(deps(l0), b.id, { ...HUMAN, channel: "web-ui" }, { demo: true })).rejects.toThrow(/L0/);
     expect((await applyApproved(deps(l0), b.id, { actor })).refused?.reason).toBe("autonomy_level_forbids");
   });
 });
@@ -117,7 +117,7 @@ describe("HMAC human approval", () => {
 describe("apply", () => {
   it("dryRun returns one POST per operation and test carrying many groups, without writing", async () => {
     const b = await readyBatch();
-    await approveBatch(deps(coord), b.id, { ...HUMAN, channel: "web-ui" });
+    await approveBatch(deps(coord), b.id, { ...HUMAN, channel: "web-ui" }, { demo: true });
     const r = await applyApproved(deps(coord), b.id, { actor });
     expect(r.dryRun).toBe(true);
     expect(r.requests).toHaveLength(2);
@@ -133,7 +133,8 @@ describe("apply", () => {
 
   it("applies once; idempotency keys prevent a second send", async () => {
     const b = await readyBatch();
-    await approveBatch(deps(coord), b.id, { ...HUMAN, channel: "web-ui" });
+    await approveBatch(deps(coord), b.id, { ...HUMAN, channel: "web-ui" }, { demo: true });
+    await applyApproved(deps(coord), b.id, { actor });
     const r = await applyApproved(deps(coord), b.id, { actor, dryRun: false });
     expect(r.ok).toBe(true);
     expect(r.batchState).toBe("applied");
@@ -160,7 +161,8 @@ describe("apply", () => {
     const c = makeCoord(home, { config: testConfig({ apply: { jobsPerHourPerOperation: 1, maxGroupsPerRequest: 1 } }) });
     const u = new CoordinatorUi(c);
     const b = await readyBatch(u, testKey, 3, 1);
-    await approveBatch(deps(c), b.id, { ...HUMAN, channel: "web-ui" });
+    await approveBatch(deps(c), b.id, { ...HUMAN, channel: "web-ui" }, { demo: true });
+    await applyApproved(deps(c), b.id, { actor });
     const r = await applyApproved(deps(c), b.id, { actor, dryRun: false });
     expect(r.requests.filter((q) => q.outcome === "applied")).toHaveLength(2); // 1 close + 1 assign
     expect(r.requests.filter((q) => q.outcome === "refused")).toHaveLength(2);

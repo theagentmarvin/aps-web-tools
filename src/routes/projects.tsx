@@ -99,7 +99,7 @@ function ProjectCard({ p }: { p: ProjectSummary }) {
   return (
     <Link to={`/proyectos/${p.id}`} className="block rounded-lg border border-brand-muted/20 bg-white p-4 transition-all hover:border-brand-muted/40 hover:shadow-md">
       <div className="font-medium text-gray-900">{p.name}</div>
-      <div className="mt-1 text-xs text-gray-500">{t("projects.modelSets", { count: p.modelSetCount })}</div>
+      {p.modelSetCount > 0 && <div className="mt-1 text-xs text-gray-500">{t("projects.modelSets", { count: p.modelSetCount })}</div>}
       {p.pendingDecisions > 0 && <span className="mt-2 inline-block rounded-full bg-brand/10 px-2 py-0.5 text-xs text-brand">{t("projects.pendingBadge", { count: p.pendingDecisions })}</span>}
     </Link>
   );

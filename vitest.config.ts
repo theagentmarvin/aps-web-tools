@@ -9,5 +9,9 @@ export default defineConfig({
       "@server": path.resolve(__dirname, "./server"),
     },
   },
-  test: { include: ["tests/**/*.test.ts", "core/**/*.test.ts", "server/**/*.test.ts"] },
+  test: {
+    include: ["tests/**/*.test.ts", "core/**/*.test.ts", "server/**/*.test.ts"],
+    // Plain-file key protection in tests (DPAPI has its own dedicated test).
+    env: { COORD_KEY_PROTECTION: "none" },
+  },
 });

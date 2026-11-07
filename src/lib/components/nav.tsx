@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, useLocation } from "react-router";
 import { useT, type TKey } from "~/i18n";
 import { useApi } from "~/lib/api";
-import { useAuth } from "~/lib/auth-context";
+import { useCoordAuth } from "~/lib/coord-auth";
 import { AgentStatusIndicator, LanguageSwitch } from "./shell-widgets";
 
 const LINKS: { to: string; key: TKey; end?: boolean }[] = [
@@ -38,22 +38,12 @@ function useReadyBatchCount(): number {
 function UserMenu() {
   const t = useT();
   const api = useApi();
-  const { isAuthenticated, logout } = useAuth();
+  const { status, logout } = useCoordAuth();
   const [open, setOpen] = useState(false);
-  const [initials, setInitials] = useState("··");
-  const [name, setName] = useState("");
   const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (api.mode !== "mock" && !isAuthenticated) return;
-    api.getCurrentUser().then(
-      (u) => {
-        setInitials(u.initials);
-        setName(u.name);
-      },
-      () => undefined,
-    );
-  }, [api, isAuthenticated]);
+  const initials = status?.user?.initials ?? "··";
+  const name = status?.user?.name ?? "";
+  const canSignOut = api.mode === "http" && status?.loggedIn && status.dataSource === "live";
 
   useEffect(() => {
     if (!open) return;
@@ -81,12 +71,12 @@ function UserMenu() {
           <Link role="menuitem" to="/ajustes" onClick={() => setOpen(false)} className="block px-3 py-1.5 text-gray-700 hover:bg-brand-surface">
             {t("nav.settings")}
           </Link>
-          {isAuthenticated && (
+          {canSignOut && (
             <button
               role="menuitem"
               type="button"
               onClick={() => {
-                logout();
+                void logout();
                 setOpen(false);
               }}
               className="block w-full px-3 py-1.5 text-left text-gray-700 hover:bg-brand-surface"
@@ -103,6 +93,7 @@ function UserMenu() {
 export function Nav() {
   const t = useT();
   const api = useApi();
+  const { status: coordStatus } = useCoordAuth();
   const ready = useReadyBatchCount();
   return (
     <nav aria-label={t("nav.mainNav")} className="flex flex-shrink-0 items-center gap-6 border-b border-brand-muted/20 bg-white px-6 py-2 shadow-sm">
@@ -129,10 +120,12 @@ export function Nav() {
         ))}
       </ul>
       <div className="ml-auto flex items-center gap-4">
-        {api.mode === "mock" && (
+        {api.mode === "mock" ? (
           <span title={t("app.demoModeHint")} className="hidden rounded border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] text-amber-800 lg:inline">
             {t("app.demoMode")}
           </span>
+        ) : (
+          coordStatus?.dataSource === "fixtures" && <span className="hidden rounded border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] text-amber-800 lg:inline">{t("auth.demoSession")}</span>
         )}
         <AgentStatusIndicator />
         <LanguageSwitch />

@@ -4,7 +4,7 @@
  */
 import { useState, type ReactNode } from "react";
 import { useI18n, useT } from "~/i18n";
-import type { ApplyStatus, Batch, BatchItem, IssueDraft } from "~/lib/api/types";
+import type { ApplyResponse, ApplyStatus, Batch, BatchItem, IssueDraft } from "~/lib/api/types";
 import { Modal } from "~/lib/components/Modal";
 import { IconAlert, IconCheck, Spinner } from "~/lib/components/icons";
 import { Button, ProgressBar, cardCls, inputCls } from "~/lib/components/ui";
@@ -44,13 +44,15 @@ export function BatchSummaryView({ batch, preflight }: { batch: Batch; preflight
             </span>
           )}
         </li>
-        <li className="flex items-center gap-2">
-          <span className="font-mono text-gray-500">=</span>
-          {t("batch.assignments", { count: batch.counts.assignments })}
-        </li>
+        {batch.counts.assignments > 0 && (
+          <li className="flex items-center gap-2">
+            <span className="font-mono text-gray-500">=</span>
+            {t("batch.assignments", { count: batch.counts.assignments })}
+          </li>
+        )}
       </ul>
       <p className="text-gray-600">{t("batch.origin", batch.origin)}</p>
-      <p className="text-gray-600">{t("batch.reviewCoverage", { pct: fmt.pct(batch.review.humanReviewedPct), low: batch.review.lowConfidence })}</p>
+      <p className="text-gray-600">{t("batch.reviewCoverage", { pct: fmt.pct(batch.review.humanReviewedPct / 100), low: batch.review.lowConfidence })}</p>
       <div className="text-gray-600">{preflight}</div>
       {conflicts > 0 && <p className="text-amber-800">{t("batch.preflightConflicts", { count: conflicts })}</p>}
     </div>
@@ -184,28 +186,38 @@ export function ConflictsList({ items, readOnly, onInclude, onReturn }: { items:
   );
 }
 
-export function ApplyConfirmDialog({ batch, onCancel, onConfirm, busy }: { batch: Batch; onCancel: () => void; onConfirm: () => void; busy: boolean }) {
+export function changeCount(batch: Batch): number {
+  return batch.counts.issuesCreate + batch.counts.statusChanges + batch.counts.assignments + batch.counts.comments;
+}
+
+/**
+ * Typed confirmation. mode "approve": signs the approval (server requires the
+ * word when the batch creates issues or has ≥ 50 changes). mode "apply": real
+ * write to ACC, always behind the typed word.
+ */
+export function ApplyConfirmDialog({ batch, mode, onCancel, onConfirm, busy }: { batch: Batch; mode: "approve" | "apply"; onCancel: () => void; onConfirm: (word: string) => void; busy: boolean }) {
   const t = useT();
   const [checked, setChecked] = useState(false);
   const [typed, setTyped] = useState("");
-  const total = batch.counts.issuesCreate + batch.counts.statusChanges + batch.counts.assignments + batch.counts.comments;
-  const needWord = batch.counts.issuesCreate > 0 || total >= 50;
+  const total = changeCount(batch);
+  const needWord = mode === "apply" || batch.counts.issuesCreate > 0 || total >= 50;
   const word = t("apply.confirmWord");
   const ok = checked && (!needWord || typed.trim().toLowerCase() === word.toLowerCase());
   return (
     <Modal
-      title={t("apply.title")}
+      title={mode === "approve" ? t("approve.title") : t("apply.title")}
       width="w-[520px]"
       onClose={onCancel}
       footer={
         <>
           <Button onClick={onCancel}>{t("common.cancel")}</Button>
-          <Button variant="primary" disabled={!ok || busy} onClick={onConfirm}>
-            {t("apply.button", { count: total })}
+          <Button variant="primary" disabled={!ok || busy} onClick={() => onConfirm(typed.trim() || word)}>
+            {mode === "approve" ? t("approve.button", { count: total }) : t("apply.button", { count: total })}
           </Button>
         </>
       }
     >
+      {mode === "approve" && <p className="mb-2 font-medium">{t("approve.body")}</p>}
       <p>{t("apply.intro", { project: batch.projectName })}</p>
       <ul className="mt-2 list-disc space-y-1 pl-5">
         {batch.counts.issuesCreate > 0 && <li className="text-red-700">{t("apply.issuesWarning", { count: batch.counts.issuesCreate })}</li>}
@@ -268,6 +280,30 @@ export function ApplyProgress({ status }: { status: ApplyStatus }) {
           </tbody>
         </table>
       )}
+    </div>
+  );
+}
+
+/** Dry-run preview: the exact ACC requests the apply would send. */
+export function DryRunPreview({ res }: { res: ApplyResponse }) {
+  const t = useT();
+  if (res.refused) return <p className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">{t("batch.refused", { message: res.refused.message })}</p>;
+  return (
+    <div className={`${cardCls} space-y-3 p-4 text-sm`}>
+      <h2 className="font-semibold text-gray-800">{res.dryRun ? t("batch.dryRunTitle") : t("batch.result")}</h2>
+      {res.dryRun && <p className="text-xs text-gray-600">{t("batch.dryRunHint")}</p>}
+      {res.requests.map((r) => (
+        <details key={r.idempotencyKey} className="rounded border border-brand-muted/20" open={res.requests.length <= 2}>
+          <summary className="cursor-pointer px-3 py-2 text-xs">
+            <span className="font-mono font-medium">POST {r.path}</span>
+            <span className="ml-2 text-gray-600">{t("batch.requestSummary", { operation: r.operation, groups: r.groups, clashes: r.clashes })}</span>
+            <span className={`ml-2 rounded px-1 ${r.outcome === "failed" || r.outcome === "refused" ? "bg-red-50 text-red-700" : "bg-gray-100 text-gray-700"}`}>{r.outcome}</span>
+          </summary>
+          {r.message && <p className="px-3 text-xs text-gray-600">{r.message}</p>}
+          {r.body !== undefined && <pre className="max-h-72 overflow-auto border-t border-brand-muted/20 bg-gray-50 p-3 font-mono text-[11px] text-gray-800">{JSON.stringify(r.body, null, 2)}</pre>}
+          {r.createdIssueIds && r.createdIssueIds.length > 0 && <p className="px-3 pb-2 font-mono text-[11px] text-green-800">{r.createdIssueIds.join(", ")}</p>}
+        </details>
+      ))}
     </div>
   );
 }

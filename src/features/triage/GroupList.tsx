@@ -6,7 +6,7 @@
 import { memo, useEffect, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useI18n, useT } from "~/i18n";
-import { ConfidenceDots, DecisionStateIcon, DeltaBadge, DisciplinePairChip, PriorityChip, SpotCheckChip, StatusBadge } from "~/lib/components/badges";
+import { ConfidenceDots, DecisionStateIcon, DeltaBadge, DisciplinePairChip, FlaggedChip, PriorityChip, SpotCheckChip, StatusBadge } from "~/lib/components/badges";
 import { IconChevronDown, IconChevronRight, IconFlag, IconNoCube } from "~/lib/components/icons";
 import { useTriageContext } from "./actions";
 import { useTriage, type Row } from "./store";
@@ -146,6 +146,7 @@ const GroupRow = memo(function GroupRow({ row }: { row: Row }) {
           <span className="font-mono text-xs text-gray-500">×{g.clashIds.length}</span>
           <DeltaBadge delta={g.delta} />
           {e.s.proposal?.spotCheck && <SpotCheckChip />}
+          {e.s.proposal?.flagged && <FlaggedChip />}
           <span className="ml-auto flex items-center gap-1">
             {noViewer && <IconNoCube size={13} label={t("list.noViewer")} className="text-gray-400" />}
             {flagged && <IconFlag size={13} label={t("detail.agentUpdated")} className="text-amber-700" />}

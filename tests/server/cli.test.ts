@@ -32,6 +32,26 @@ describe("CLI", () => {
     expect(approvalChannelBlocked({ CLAUDECODE: "1" }, true)).toMatch(/Claude Code/);
     expect(approvalChannelBlocked({}, false)).toMatch(/TTY/);
     expect(approvalChannelBlocked({}, true)).toBeUndefined();
+    // Present but empty still counts (e.g. `CLAUDECODE= npm run coordinator -- approve …`).
+    expect(approvalChannelBlocked({ CLAUDECODE: "" }, true)).toMatch(/Claude Code/);
+  });
+
+  it("passkey-enroll is refused under Claude Code; approve is refused in live mode", async () => {
+    process.env.CLAUDECODE = "";
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    expect(await main(["passkey-enroll"])).toBe(2);
+    errSpy.mockRestore();
+    delete process.env.CLAUDECODE;
+    process.env.COORD_DATA_SOURCE = "";
+    const tty = process.stdin.isTTY;
+    Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+    const err2 = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      expect(await main(["approve", "L-2026-11-07-01"])).toBe(2);
+    } finally {
+      err2.mockRestore();
+      Object.defineProperty(process.stdin, "isTTY", { value: tty, configurable: true });
+    }
   });
 
   it("`approve` exits non-zero when CLAUDECODE is set and creates nothing", async () => {
@@ -55,7 +75,7 @@ describe("CLI", () => {
     expect(JSON.parse(before.out)).toMatchObject({ valid: false, reason: "not_approved" });
     expect(await coord.store.getApproval(b.id)).toBeUndefined();
 
-    await approveBatch({ store: coord.store, source: coord.source, config: coord.config, effectiveLevel: 1 }, b.id, { ...HUMAN, channel: "cli" });
+    await approveBatch(coord.approvalDeps(), b.id, { ...HUMAN, channel: "cli" }, { demo: true });
     const after = await run(["verify-approval", b.id, "--json"]);
     expect(after.code).toBe(0);
     expect(JSON.parse(after.out)).toMatchObject({ valid: true, batchId: b.id, approvedBy: HUMAN.name, proposalCount: expect.any(Number) });

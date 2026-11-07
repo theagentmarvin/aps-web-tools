@@ -302,7 +302,10 @@ export function RationaleBlock({ proposal, defaultOpen }: { proposal: Proposal; 
         <span id="sec-rationale">{t("detail.rationale")}</span>
       </SectionTitle>
       <div className="space-y-2 px-4 pb-4 text-sm text-gray-800">
-        <p lang="es" className={open ? "" : "line-clamp-3"}>
+        {proposal.flagged && (
+          <p className="rounded border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-800">{t("detail.flagged")}</p>
+        )}
+        <p lang="es" className={`whitespace-pre-line ${open ? "" : "line-clamp-3"}`}>
           {text}
         </p>
         <button type="button" aria-expanded={open} onClick={() => store.toggleRationale(defaultOpen)} className="text-xs text-brand hover:underline">

@@ -24,21 +24,57 @@ Environment:
 
 ## Storage (`.coordinator/`)
 
-`auth/token.json` (APS token, `server/aps/auth.ts`) · `secret/approval.key` (HMAC key, created on first approval) · `cache/` (normalized tests) · `tests/<testKey>/{test,classification}.json` · `proposals/<P-YYYYMMDD-NNNN>.json` · `rule-proposals/<id>.patch` · `batches/<L-YYYY-MM-DD-NN>.json` · `approvals/<batchId>.json` (signed) · `decisions/decisions.jsonl` · `feedback/feedback.jsonl` (with feature snapshots) · `audit/audit.jsonl` (hash-chained; `Store.verifyAudit()`) · `applied/<idempotencyKey>.json` · `budget/jobs.json` (local jobs/hour counter) · `projects/<projectId>/notes.md` · `reports/<projectId>/…` · `state/{context.json,counters.json,store.lock,apply.lock}`.
+Secrets are **not** stored here; see "Secure directory" below. `cache/` (normalized tests) · `tests/<testKey>/{test,classification}.json` · `proposals/<P-YYYYMMDD-NNNN>.json` · `rule-proposals/<id>.patch` · `batches/<L-YYYY-MM-DD-NN>.json` · `approvals/<batchId>.json` (signed) · `decisions/decisions.jsonl` · `feedback/feedback.jsonl` (with feature snapshots) · `audit/audit.jsonl` (HMAC-SHA256 chain keyed with the out-of-repo audit key; `Store.verifyAudit()`) · `applied/<idempotencyKey>.json` · `budget/jobs.json` (local jobs/hour counter) · `projects/<projectId>/notes.md` · `reports/<projectId>/…` · `state/{context.json,counters.json,store.lock,apply.lock}`.
 
 Writes are atomic: a temp file plus a rename, retried on Windows sharing violations. Mutations hold a single-writer lock. The lock is an O_EXCL lock file with stale takeover, and it is re-entrant within one async call chain.
+
+### Secure directory (outside the repo)
+
+`COORD_SECURE_DIR`, else `<COORDINATOR_HOME>/secret` when `COORDINATOR_HOME` (or a test home) is set, else `%APPDATA%\bim-coordinator` on Windows or `~/.config/bim-coordinator` elsewhere.
+
+| File | Contents |
+|---|---|
+| `approval-key.json` | Approval HMAC key. DPAPI-protected (CurrentUser) on Windows; plain 0600 elsewhere or with `COORD_KEY_PROTECTION=none`, which the tests use. |
+| `audit-key.json` | Audit-chain key. Same protection as the approval key. |
+| `webauthn-credentials.json` | Passkeys (MAC'd). |
+| `webauthn-enroll.json` | One-time enrolment code (hashed). |
+| `aps-token.json` | Coordinator APS token cache. |
+| `browser-session.json` | Server-held refresh token for the browser session. |
+
+**Limits:** DPAPI protects against other OS users and offline copies, not against processes of the same user (see Threat model).
 
 ## Lifecycles
 
 - **Proposal** (`kind`: classification, group_action, issue_draft, status_change, rule_change): `draft → pending_review → approved | rejected | withdrawn`, then `approved → applied | failed`. `failed → applied` is a retry, and `approved → pending_review` happens when a batch is returned.
 - **Batch** (lote): `ready` is created by "Enviar a aprobación" from the human decisions on a test. From there: `ready → approved` (HMAC approval) `→ applied | partial`. `ready → draft` (returned) and `→ discarded` are also possible.
-- **Approval record**: `{batchId, projectId, modelSetId, testId, testKey, testVersion, proposalIds, itemIds, payloadHash, approvedBy{id,name,channel}, approvedAt, expiresAt, nonce, note?, hmac}`. `payloadHash` covers each included item's MC operation, targets and the exact ACC body. Apply and `verify-approval` re-check the signature, payload, expiry and that `testVersion` is still the latest model set version.
-- **Apply**: one `clashes:close` and one `clashes:assign` POST per test, each carrying many groups (chunked at `apply.maxGroupsPerRequest`). A local budget of `apply.jobsPerHourPerOperation` (default 200, ACC allows 250) applies per project and operation. Jobs are polled. Every request has an idempotency key (a hash of batch, operation and body), so a request is never sent twice. `dryRun` (the default) returns the exact bodies.
+- **Approval record**: `{batchId, projectId, modelSetId, testId, testKey, testVersion, proposalIds, itemIds, payloadHash, approvedBy{id,name,channel}, approvedAt, expiresAt, nonce, note?, dataSource, demo?, webauthn?{credentialId, nonce, origin, rpID, response}, hmac}`.
+  - `payloadHash` covers each included item's MC operation, targets and the exact ACC body.
+  - Apply and `verify-approval` re-check all of the following:
+    - the HMAC;
+    - the payload;
+    - expiry;
+    - that `testVersion` is still the latest;
+    - the WebAuthn signature, re-verified against the challenge derived from the current payload. A demo approval is accepted only with the fixtures source.
+    - a matching `batch.approved` audit event in an intact chain.
+  - A real apply also needs a prior dry run of the same payload (`autonomy.requireDryRunBeforeApply`).
+  - Every batch mutation and apply runs under one heartbeated batch lock (`state/apply.lock`), and verification happens inside the lock. An approved batch can't be edited; returning it to review deletes the approval.
+- **Apply**: one `clashes:close` and one `clashes:assign` POST per test, each carrying many groups (chunked at `apply.maxGroupsPerRequest`). A local budget of `apply.jobsPerHourPerOperation` (default 200, ACC allows 250) applies per project and operation. Jobs are polled. Every request has an idempotency key. A timeout or network error during or after the POST marks it `unknown`. Before anything is resent, the request is **reconciled** with ACC: first the job status, then the assigned/closed clash groups of the test. If everything is present, it is marked applied; if nothing is, it is safe to send; if only part is, a human must check. `dryRun` (the default) returns the exact bodies.
 - MC v3 has no "reviewed" write. `mark_reviewed` therefore closes with a tolerance reason (`MINIMAL_OVERLAP`), following the contract. `reopen` (and setting a status to active) is not applied from batches in v1: the item is created excluded, with a conflict note.
 
 ## HTTP API (`/api/coord/*`)
 
-All JSON. Errors have the shape `{error:{code,message,hint?}}` with status 400/401/403/404/409/429/500. **Human-only** endpoints (marked H) require a same-origin request (Origin, else Referer, must equal Host) and the header `X-Coord-CSRF: <token>`. The token comes from `GET /api/coord/csrf`, which also sets the matching `coord_csrf` cookie (HttpOnly, SameSite=Strict). Every non-GET request is also checked for same origin. The approver identity is the APS profile in live mode, else `approver.name` from the config. In fixtures mode it is "Coordinadora Demo".
+All JSON. Errors have the shape `{error:{code,message,hint?}}` with status 400/401/403/404/409/429/500.
+
+Checks, in order, on every `/api/coord`, `/api/auth` and `/api/aps` request (Vite and standalone):
+
+1. **Host** must be exactly `localhost:<port>`, `127.0.0.1:<port>` or `[::1]:<port>`. `X-Forwarded-*` is ignored. This is the anti DNS-rebinding check.
+2. Every **non-GET** needs `Origin` exactly equal to `http://<Host>`; Referer is not accepted.
+3. When the browser sends `Sec-Fetch-Site`, it must be `same-origin`.
+4. **Human-only** endpoints (marked H) also need `X-Coord-CSRF: <token>`. The token comes from `GET /csrf`, which also sets the matching `coord_csrf` cookie (HttpOnly, SameSite=Strict).
+
+**Honest limit:** these checks stop other websites. They do **not** stop a local non-browser client, which can forge headers. What proves a human approved is the WebAuthn user-verified signature.
+
+The approver identity is the APS profile in live mode, else `approver.name` from the config. In fixtures mode it is "Coordinadora Demo".
 
 | Method | Path | Request | Response |
 |---|---|---|---|
@@ -76,7 +112,10 @@ All JSON. Errors have the shape `{error:{code,message,hint?}}` with status 400/4
 | PATCH H | `/batches/:batchId/items/:itemId/issue` | `Partial<IssueDraft>` | `Batch` |
 | POST H | `/batches/:batchId/return` | – | `Batch` |
 | POST H | `/batches/:batchId/discard` | – | `Batch` |
-| POST H | `/batches/:batchId/approve` | `ApproveRequest` (`confirmWord` APLICAR/APPLY when issues > 0 or changes ≥ 50; `apply?`) | `ApplyStatus` |
+| GET H | `/webauthn/approve-options?batch&exclude` | – | `ApproveOptionsResponse` |
+| POST H | `/batches/:batchId/approve` | `ApproveRequest` (`confirmWord` APLICAR/APPLY when issues > 0 or changes ≥ 50; live: `webauthn{nonce,origin,response}`; fixtures: `demo:true`; unknown keys such as `apply` → 400) | `ApplyStatus` (never applies) |
+| GET H | `/webauthn/register-options` | – | `RegisterOptionsResponse` |
+| POST H | `/webauthn/register` | `RegisterRequest` | `{credentialId,label,enrolledVia}` |
 | POST H | `/batches/:batchId/apply` | `{dryRun?=true}` | `ApplyResponse` |
 | GET | `/batches/:batchId/apply-status` | – | `ApplyStatus` |
 | POST H | `/feedback` | `FeedbackInput` | `{feedbackId}` |
@@ -88,6 +127,43 @@ All JSON. Errors have the shape `{error:{code,message,hint?}}` with status 400/4
 | GET | `/learning/calibration` | – | `Calibration` |
 | GET | `/reports?projectId&modelSetId&from&to` | – | `ReportData` |
 | GET | `/audit?project&user&action&from&to&batch&limit&cursor` | – | `Page<AuditEvent>` |
+
+## Browser approval flow (for the UI, coder D)
+
+Use `@simplewebauthn/browser`, pinned to the same major version as the server (14.0.x). The RP ID is `localhost`, so open the UI as `http://localhost:3000`, not `127.0.0.1`. Browsers reject IP addresses as an RP ID.
+
+**Enrol once (first passkey):**
+1. The coordinator runs `npm run coordinator -- passkey-enroll` in their own terminal. The command refuses to run under Claude Code or without a TTY, and prints a 10-character code that is valid for 10 minutes and works once.
+2. The UI (Ajustes → Passkey) calls `GET /api/coord/webauthn/register-options`. When `requires` is `"enroll_code"`, it asks the user for the code.
+3. `const resp = await startRegistration({ optionsJSON: r.registration })`. This prompts Windows Hello.
+4. `POST /api/coord/webauthn/register` with `{ response: resp, enrollCode, label }`.
+
+**More passkeys:** `requires` is `"step_up"`. First call `startAuthentication({ optionsJSON: r.stepUp })`, then `startRegistration({ optionsJSON: r.registration })`, then POST `{ response, stepUp, label }`.
+
+**Approve a batch (live):**
+1. Make sure a preflight newer than 10 minutes exists: `POST /batches/:id/preflight`. Apply exclusions first with `PATCH /batches/:id/items`.
+2. `const o = await GET /api/coord/webauthn/approve-options?batch=<id>&exclude=<csv>`. The challenge is derived from the exact payload, and the nonce lasts 2 minutes and works once.
+3. `const assertion = await startAuthentication({ optionsJSON: o.options })`. User verification is required, which means a PIN or biometrics.
+4. `POST /batches/:id/approve` with `{ confirmWord, excludedItemIds: <same as step 2>, webauthn: { nonce: o.nonce, origin: location.origin, response: assertion } }`. The server replaces `origin` with the request Origin.
+5. Applying is a separate call: `POST /batches/:id/apply { dryRun: true }`, show the bodies, then `{ dryRun: false }`. A real apply without a prior dry run of the same payload is refused.
+
+**Fixtures mode:** skip WebAuthn and send `demo: true`. Show a visible "Aprobación de demostración" label. The live data source refuses demo approvals.
+
+If any edit happens after step 2 (exclusions, issue text), the approve call is refused. Ask for new options.
+
+**Browser APS session:** `POST /api/auth/callback {code}` and `POST /api/auth/refresh` return only `{access_token, token_type, expires_in, scope}`, with no `refresh_token`. The server keeps the refresh token and downscopes to `data:read viewables:read` (`APS_BROWSER_SCOPE` overrides this). Any `refresh_token` the client sends is ignored. The `/api/aps` proxy is GET-only and allowlisted to `/project/v1`, `/data/v1`, `/modelderivative/v2/(regions/eu/)designdata`, `/derivativeservice/v2`, `/bim360/modelset/v3` and `/construction/index/v2`.
+
+## CLI and approvals
+
+- `approve <batchId>` works only in fixtures mode, as a demo approval. It needs a TTY and is refused when `CLAUDECODE` exists, even if empty. **In live mode the CLI cannot approve.** Use the web UI with a passkey.
+- `verify-approval <batchId> --json` is read-only. It exits 0 with `{"valid":true,batchId,approvedBy,expiresAt,testVersion,itemCount,proposalCount}`, else exits 1 with `{"valid":false,"reason"}`.
+- `passkey-enroll` is described in the enrolment steps above.
+
+## Threat model (v1)
+
+- **In scope:** model error; prompt injection through model or ACC text; an agent misusing its tools; other websites in the coordinator's browser (CSRF, DNS rebinding); accidental double application.
+- **Out of scope for v1:** a malicious process running as the same OS user. It can call DPAPI, read the keys, rewrite the store and the credential list (including registering its own software authenticator), or patch the code.
+- **Roadmap:** run the server as a separate OS user or service that owns the secrets and the store.
 
 ## MCP server `coord`
 

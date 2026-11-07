@@ -1,11 +1,12 @@
 /**
  * Detail / AI reasoning pane (spec §3.7) with the sticky decision bar.
  */
+import { useEffect, useState } from "react";
 import { useI18n, useT } from "~/i18n";
 import { useApi, useAsync } from "~/lib/api";
 import { band } from "~/lib/api/decision-utils";
 import type { Calibration, IssueDraft } from "~/lib/api/types";
-import { SpotCheckChip } from "~/lib/components/badges";
+import { FlaggedChip, NatureBadge, SeverityLabel, SpotCheckChip } from "~/lib/components/badges";
 import { IconChevronLeft, IconChevronRight } from "~/lib/components/icons";
 import { EmptyState, Kbd, Skeleton } from "~/lib/components/ui";
 import { DECISION_KEY } from "~/lib/labels";
@@ -110,9 +111,17 @@ export function DetailPanel() {
           <span>· {t("list.clashesCount", { count: members.length || 1 })}</span>
           {e.s.level && <span>· {e.s.level}</span>}
           {proposal?.spotCheck && <SpotCheckChip />}
+          {proposal?.flagged && <FlaggedChip />}
+          {e.s.group && <NatureBadge value={e.s.group.nature} />}
         </p>
+        {e.s.group && (
+          <p className="mt-0.5 text-xs text-gray-500">
+            {t("severity.label")}: <SeverityLabel value={e.s.group.severity} />
+          </p>
+        )}
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto" id="triage-detail" tabIndex={-1}>
+        {kind === "group" && e.s.group?.reviewState === "needs_review" && <ReviewReasons testId={e.s.group.testId} groupId={id} />}
         <EvidenceSection e={e} members={members} />
         {proposal ? (
           <>
@@ -174,5 +183,39 @@ function DecisionBar({ targetId }: { targetId: string }) {
         </div>
       )}
     </div>
+  );
+}
+
+/** Server review reasons (GroupDetail.reviewReasons), fetched after the cursor settles. */
+function ReviewReasons({ testId, groupId }: { testId: string; groupId: string }) {
+  const t = useT();
+  const api = useApi();
+  const [reasons, setReasons] = useState<string[]>([]);
+  useEffect(() => {
+    let alive = true;
+    setReasons([]);
+    const id = window.setTimeout(() => {
+      api.getGroup(testId, groupId).then(
+        (d) => alive && setReasons(d.reviewReasons ?? []),
+        () => undefined,
+      );
+    }, 300);
+    return () => {
+      alive = false;
+      window.clearTimeout(id);
+    };
+  }, [api, testId, groupId]);
+  if (!reasons.length) return null;
+  return (
+    <section className="mx-4 mt-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900" aria-label={t("detail.reviewReasons")}>
+      <p className="font-medium">{t("detail.reviewReasons")}</p>
+      <ul className="mt-1 list-disc pl-4">
+        {reasons.map((r) => (
+          <li key={r} lang="es">
+            {r}
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

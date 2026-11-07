@@ -9,6 +9,11 @@
  */
 import type {
   AgentStatus,
+  ApplyRequest,
+  ApplyResponse,
+  AuthStatus,
+  LoginStartResponse,
+  SessionInfo,
   ApplyStatus,
   ApproveRequest,
   Assignee,
@@ -50,7 +55,11 @@ export type ApiMode = "mock" | "http";
 export interface CoordinatorApi {
   readonly mode: ApiMode;
 
-  // Session / agent
+  // Auth / session (server-side PKCE; the browser never holds the APS secret)
+  getAuthStatus(): Promise<AuthStatus>;
+  login(): Promise<LoginStartResponse>;
+  logout(): Promise<{ ok: true }>;
+  getSession(): Promise<SessionInfo>;
   getCurrentUser(): Promise<UserInfo>;
   getAgentStatus(): Promise<AgentStatus>;
   getHomeSummary(): Promise<HomeSummary>;
@@ -60,7 +69,10 @@ export interface CoordinatorApi {
   listProjects(params?: { hubId?: string; q?: string }): Promise<ProjectSummary[]>;
   getProject(projectId: string): Promise<ProjectSummary>;
   listModelSets(projectId: string): Promise<ModelSetSummary[]>;
+  /** Cached tests (id = test key) plus not-yet-ingested ACC tests (`cached: false`). */
   listTests(projectId: string, modelSetId: string): Promise<TestRun[]>;
+  /** Download + cache + classify an ACC clash test. Long-running. */
+  ingestTest(projectId: string, modelSetId: string, accTestId: string, opts?: { refresh?: boolean }): Promise<{ testKey: string }>;
 
   // Triage
   /** Whole workspace payload for one test (default: latest). */
@@ -88,7 +100,10 @@ export interface CoordinatorApi {
   updateBatchIssue(batchId: string, itemId: string, issue: Partial<IssueDraft>): Promise<Batch>;
   returnBatchToReview(batchId: string): Promise<Batch>;
   discardBatch(batchId: string): Promise<Batch>;
+  /** Signs the HMAC approval; the batch moves to `approved`. Does not write to ACC. */
   approveBatch(batchId: string, req: ApproveRequest): Promise<ApplyStatus>;
+  /** dryRun (default true) returns the exact ACC request bodies; dryRun:false writes to ACC. */
+  applyBatch(batchId: string, req: ApplyRequest): Promise<ApplyResponse>;
   getApplyStatus(batchId: string): Promise<ApplyStatus>;
 
   // Learning / rules
@@ -110,7 +125,10 @@ export class ApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
-    readonly code: "not_found" | "forbidden" | "not_authenticated" | "server" | "network" | "validation" = "server",
+    readonly code: "not_found" | "forbidden" | "not_authenticated" | "server" | "network" | "validation" | "conflict" | "csrf" = "server",
+    /** Server error code (e.g. not_ingested, invalid_state, approval_invalid). */
+    readonly serverCode?: string,
+    readonly hint?: string,
   ) {
     super(message);
     this.name = "ApiError";

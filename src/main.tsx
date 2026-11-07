@@ -4,6 +4,7 @@ import { RouterProvider } from "react-router";
 import { I18nProvider } from "./i18n";
 import { ApiProvider } from "./lib/api";
 import { AuthProvider } from "./lib/auth-context";
+import { CoordAuthProvider } from "./lib/coord-auth";
 import { ToastProvider } from "./lib/components/Toast";
 import { SettingsProvider } from "./lib/settings";
 import { router } from "./router";
@@ -15,9 +16,11 @@ createRoot(document.getElementById("root")!).render(
       <SettingsProvider>
         <AuthProvider>
           <ApiProvider>
-            <ToastProvider>
-              <RouterProvider router={router} />
-            </ToastProvider>
+            <CoordAuthProvider>
+              <ToastProvider>
+                <RouterProvider router={router} />
+              </ToastProvider>
+            </CoordAuthProvider>
           </ApiProvider>
         </AuthProvider>
       </SettingsProvider>

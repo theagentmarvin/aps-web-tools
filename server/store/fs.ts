@@ -5,7 +5,8 @@
  * enough for one MCP process plus one web server on the same machine.
  */
 import { mkdirSync } from "node:fs";
-import { appendFile, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { appendFile, mkdir, open, readFile, readdir, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { AsyncLocalStorage } from "node:async_hooks";
 
@@ -110,7 +111,10 @@ const inProcess = new Map<string, Promise<void>>();
 /**
  * Run `fn` holding an exclusive lock on `lockPath`. Re-entrant within the same
  * async call chain; serialised in-process with a promise chain and across
- * processes with an O_EXCL lock file.
+ * processes with an O_EXCL lock file `{pid, nonce, at}`.
+ * - The holder heartbeats the file mtime every staleMs/3, so a long apply is
+ *   never mistaken for a crashed holder.
+ * - Release removes the file only if it still carries OUR pid and nonce.
  */
 export async function withFileLock<T>(lockPath: string, fn: () => Promise<T>, opts: LockOptions = {}): Promise<T> {
   const mine = held.getStore();
@@ -124,13 +128,20 @@ export async function withFileLock<T>(lockPath: string, fn: () => Promise<T>, op
   inProcess.set(lockPath, chained);
   await prev;
   try {
-    await acquireFile(lockPath, opts);
+    const staleMs = opts.staleMs ?? 30_000;
+    const nonce = await acquireFile(lockPath, opts);
+    const beat = setInterval(() => {
+      const t = new Date();
+      void utimes(lockPath, t, t).catch(() => undefined);
+    }, Math.max(250, Math.floor(staleMs / 3)));
+    beat.unref?.();
     try {
       const set = new Set(mine ?? []);
       set.add(lockPath);
       return await held.run(set, fn);
     } finally {
-      await rm(lockPath, { force: true });
+      clearInterval(beat);
+      await releaseFile(lockPath, nonce);
     }
   } finally {
     release();
@@ -138,16 +149,26 @@ export async function withFileLock<T>(lockPath: string, fn: () => Promise<T>, op
   }
 }
 
-async function acquireFile(lockPath: string, opts: LockOptions): Promise<void> {
+async function releaseFile(lockPath: string, nonce: string): Promise<void> {
+  try {
+    const cur = JSON.parse(await readFile(lockPath, "utf8")) as { pid?: number; nonce?: string };
+    if (cur.pid === process.pid && cur.nonce === nonce) await rm(lockPath, { force: true });
+  } catch {
+    // Missing or unreadable: nothing of ours to release.
+  }
+}
+
+async function acquireFile(lockPath: string, opts: LockOptions): Promise<string> {
   const staleMs = opts.staleMs ?? 30_000;
   const deadline = Date.now() + (opts.timeoutMs ?? 15_000);
+  const nonce = randomBytes(12).toString("hex");
   await mkdir(dirname(lockPath), { recursive: true });
   for (let attempt = 0; ; attempt++) {
     try {
       const fh = await open(lockPath, "wx");
-      await fh.writeFile(JSON.stringify({ pid: process.pid, at: Date.now() }));
+      await fh.writeFile(JSON.stringify({ pid: process.pid, nonce, at: Date.now() }));
       await fh.close();
-      return;
+      return nonce;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
       const age = await stat(lockPath).then((s) => Date.now() - s.mtimeMs).catch(() => 0);

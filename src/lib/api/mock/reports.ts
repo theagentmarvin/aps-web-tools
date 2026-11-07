@@ -102,7 +102,7 @@ export function seedAudit(): T.AuditEvent[] {
   const mgr = { type: "user" as const, id: USERS[1].id, name: USERS[1].short };
   const server = { type: "server" as const, id: "server", name: "Servidor" };
   const hrt = PROJECTS[2];
-  const ev: T.AuditEvent[] = [
+  const ev: Omit<T.AuditEvent, "hash">[] = [
     { id: "A-0001", at: h(1), actor: agent, action: "proposal.created", projectId: p.id, modelSetId: ms.id, testId: "T-3f9a21c0", targetIds: ["G-0001", "G-0150"], details: { proposals: 150, runId: "run-1a2b14" } },
     { id: "A-0002", at: h(2), actor: agent, action: "rule.suggested", projectId: p.id, targetIds: ["RS-0001"], details: { title: "Pasadas previstas en losas EST×SAN" } },
     { id: "A-0003", at: h(21), actor: user, action: "decision.accepted", projectId: p.id, modelSetId: ms.id, testId: "T-3f9a21c0", targetIds: ["G-0003"], details: { proposalId: "P-20261104-0003", viewedInViewerMs: 4200 } },
@@ -116,7 +116,7 @@ export function seedAudit(): T.AuditEvent[] {
     { id: "A-0011", at: h(170), actor: mgr, action: "rule.disabled", projectId: p.id, targetIds: ["FP-012"], details: { reason: "Generaba falsos cierres en cielos RF" } },
     { id: "A-0012", at: h(171), actor: mgr, action: "settings.changed", projectId: p.id, targetIds: [], details: { key: "dwellGuardSeconds", from: 1, to: 1.5 } },
   ];
-  return ev;
+  return ev.map((e, i) => ({ ...e, hash: fakeHash(e.id + i) }));
 }
 
 export function seedCorrections(): T.CorrectionRow[] {
@@ -182,4 +182,11 @@ export function seedSuggestions(): T.RuleSuggestion[] {
       createdAt: new Date(Date.now() - 27 * 3600000).toISOString(),
     },
   ];
+}
+
+/** Deterministic pseudo-hash for mock audit events (the real store hash-chains them). */
+export function fakeHash(s: string): string {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
+  return (h >>> 0).toString(16).padStart(8, "0").repeat(8);
 }

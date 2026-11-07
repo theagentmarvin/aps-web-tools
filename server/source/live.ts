@@ -23,6 +23,18 @@ import { getModelSetVersion, listModelSets, listModelSetVersions, getModelSet } 
 import { log } from "../util";
 import type { ClashWriter, DataSource, SourceClashTest, SourceModelSet, SourceProject, SourceTestData } from "./types";
 
+/**
+ * Hosts allowed for presigned clash resource downloads: Amazon S3 endpoints
+ * only (virtual-hosted and regional styles). Narrower than the generic
+ * server/aps/download.ts default (any amazonaws / autodesk host).
+ * UNVERIFIED on a real tenant which S3 region APS uses; extend here if needed.
+ */
+export const CLASH_RESOURCE_HOSTS: readonly string[] = [
+  ".s3.amazonaws.com",
+  ".s3-accelerate.amazonaws.com",
+  ...["us-east-1", "us-east-2", "us-west-1", "us-west-2", "eu-west-1", "eu-west-2", "eu-central-1", "ap-southeast-1", "ap-southeast-2", "ap-northeast-1", "ca-central-1"].flatMap((r) => [`.s3.${r}.amazonaws.com`, `.s3.dualstack.${r}.amazonaws.com`]),
+];
+
 interface DmHub {
   id: string;
   attributes?: { name?: string };
@@ -163,7 +175,7 @@ export class LiveSource implements DataSource {
     const ms = await getModelSet(this.ctx, projectId, modelSetId);
     const msv = await getModelSetVersion(this.ctx, projectId, modelSetId, test.modelSetVersion);
     opts.progress?.("download", 0, 3);
-    const raw = await fetchClashResults(this.ctx, projectId, testId);
+    const raw = await fetchClashResults(this.ctx, projectId, testId, { allowedHostSuffixes: CLASH_RESOURCE_HOSTS, maxBytes: 256 * 1024 * 1024 });
     opts.progress?.("normalize", 1, 3);
     const result = normalizeClashTest(raw, { documentVersions: msv.documentVersions });
     let clashes = result.clashes;

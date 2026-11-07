@@ -5,7 +5,7 @@
  * validates input and calls these methods.
  */
 import type * as C from "./api/contract";
-import { applyApproved, approveBatch, verifyBatchApproval, type ApprovalDeps } from "./approval";
+import { applyApproved, approvalOptions, approveBatch, verifyBatchApproval, withBatchLock, type ApprovalDeps } from "./approval";
 import type { AssignedGroupCreate, CloseReason, ClosedGroupCreate } from "./aps/types";
 import { AGENT_ACTOR, type Coordinator, proposalSummary, type ReviewState } from "./coordinator";
 import { CLOSABLE, loadRules } from "./engine";
@@ -67,7 +67,7 @@ export class CoordinatorUi {
   }
 
   approvalDeps(): ApprovalDeps {
-    return { store: this.core.store, source: this.core.source, config: this.core.config, effectiveLevel: this.core.effectiveLevel };
+    return this.core.approvalDeps();
   }
 
   // ── session ──────────────────────────────────────────────────────────────
@@ -91,7 +91,17 @@ export class CoordinatorUi {
     return {
       autonomy: s.autonomy,
       dataSource: s.dataSource,
-      ...(s.active ? { active: s.active } : {}),
+      ...(s.active
+        ? {
+            active: {
+              projectId: s.active.projectId,
+              projectName: s.active.projectName.untrusted,
+              ...(s.active.modelSetId ? { modelSetId: s.active.modelSetId } : {}),
+              ...(s.active.modelSetName ? { modelSetName: (s.active.modelSetName as { untrusted: string }).untrusted } : {}),
+              ...(s.active.testKey ? { testKey: s.active.testKey } : {}),
+            },
+          }
+        : {}),
       pending: s.pending,
       versions: s.versions,
       confidenceBands: this.bands,
@@ -838,89 +848,118 @@ export class CoordinatorUi {
   }
 
   async preflight(id: string, user: HumanUser): Promise<C.PreflightResult> {
-    const b = await this.requireBatch(id);
-    const at = nowIso(this.core.now());
-    let conflicts = 0;
-    if (b.state === "draft" || b.state === "ready") {
-      const st = await this.core.source.triageState(b.projectId, b.testId);
-      for (const i of b.items) {
-        if (i.mcOperation === "none") continue;
-        const closed = i.targetIds.filter((t) => st.closed.has(t.replace(/^C-/, ""))).length;
-        const assigned = i.targetIds.filter((t) => st.assigned.has(t.replace(/^C-/, ""))).length;
-        if (closed || assigned) {
-          conflicts++;
-          i.conflict = { reason: `En ACC ya hay ${closed} cerradas y ${assigned} con incidencia`, accValueNow: { closed, assigned } };
-          i.excluded = true;
+    return withBatchLock(this.store, async () => {
+      const b = await this.requireBatch(id);
+      const at = nowIso(this.core.now());
+      let conflicts = 0;
+      if (b.state === "draft" || b.state === "ready") {
+        const st = await this.core.source.triageState(b.projectId, b.testId);
+        for (const i of b.items) {
+          if (i.mcOperation === "none") continue;
+          const closed = i.targetIds.filter((t) => st.closed.has(t.replace(/^C-/, ""))).length;
+          const assigned = i.targetIds.filter((t) => st.assigned.has(t.replace(/^C-/, ""))).length;
+          if (closed || assigned) {
+            conflicts++;
+            i.conflict = { reason: `En ACC ya hay ${closed} cerradas y ${assigned} con incidencia`, accValueNow: { closed, assigned } };
+            i.excluded = true;
+          }
         }
+        b.lastPreflightAt = at;
+        await this.store.putBatch(b);
       }
-      b.lastPreflightAt = at;
-      await this.store.putBatch(b);
-    }
-    await this.store.audit({ actor: { type: "user", id: user.id, name: user.name }, action: "preflight.run", projectId: b.projectId, batchId: id, details: { conflicts } });
-    return { at, conflicts, batch: await this.batchUi(b) };
+      await this.store.audit({ actor: { type: "user", id: user.id, name: user.name }, action: "preflight.run", projectId: b.projectId, batchId: id, details: { conflicts } });
+      return { at, conflicts, batch: await this.batchUi(b) };
+    });
+  }
+
+  /** Any edit is allowed only before approval (draft/ready); an approved batch must be returned first. */
+  private editable(b: BatchRecord): void {
+    if (b.state !== "draft" && b.state !== "ready") throw new CoordError("invalid_state", `El lote está ${b.state}; devuélvelo a revisión para modificarlo (la aprobación se anula).`);
   }
 
   async setItemsExcluded(id: string, itemIds: string[], excluded: boolean): Promise<C.Batch> {
-    const b = await this.requireBatch(id);
-    if (b.state !== "draft" && b.state !== "ready") throw new CoordError("invalid_state", `El lote está ${b.state}; ya no se puede modificar.`);
-    const set = new Set(itemIds);
-    for (const i of b.items) if (set.has(i.id)) {
-      if (!excluded && i.mcOperation === "none") continue;
-      i.excluded = excluded;
-    }
-    await this.store.putBatch(b);
-    return this.batchUi(b);
+    return withBatchLock(this.store, async () => {
+      const b = await this.requireBatch(id);
+      this.editable(b);
+      const set = new Set(itemIds);
+      for (const i of b.items) if (set.has(i.id)) {
+        if (!excluded && i.mcOperation === "none") continue;
+        i.excluded = excluded;
+      }
+      await this.store.putBatch(b);
+      return this.batchUi(b);
+    });
   }
 
   async updateIssue(id: string, itemId: string, patch: Partial<C.IssueDraft>): Promise<C.Batch> {
-    const b = await this.requireBatch(id);
-    if (b.state !== "draft" && b.state !== "ready") throw new CoordError("invalid_state", `El lote está ${b.state}; ya no se puede modificar.`);
-    const it = b.items.find((i) => i.id === itemId);
-    if (!it || it.mcOperation !== "clash.assign") throw new CoordError("not_found", `Ítem de incidencia ${itemId} no existe`);
-    const body = it.accNew as AssignedGroupCreate;
-    if (patch.title !== undefined) body.title = sanitizeModelText(patch.title, 100);
-    if (patch.description !== undefined) body.description = patch.description.replace(/\u0000/g, "").slice(0, 1000);
-    if (patch.dueDate !== undefined) body.dueDate = patch.dueDate;
-    if (patch.assigneeId !== undefined) {
-      body.assignedTo = patch.assigneeId;
-      body.assignedToType = patch.assigneeType === "company" ? "Company" : patch.assigneeType === "role" ? "Role" : "User";
-    }
-    if (patch.issueType && /^[0-9a-f-]{36}$/i.test(patch.issueType)) body.issueTypeId = patch.issueType;
-    if (patch.issueSubtype && /^[0-9a-f-]{36}$/i.test(patch.issueSubtype)) body.issueSubTypeId = patch.issueSubtype;
-    it.issue = { ...(it.issue ?? {}), ...patch };
-    it.fields = it.fields.map((f) => (f.field === "issue" ? { ...f, accNew: body.title } : f));
-    if (it.conflict && body.issueTypeId && body.issueSubTypeId && it.conflict.reason.startsWith("Falta el tipo")) delete it.conflict;
-    if (it.origin === "ai_accepted") it.origin = "ai_corrected";
-    it.reasonCode = "R13";
-    await this.store.putBatch(b);
-    return this.batchUi(b);
+    return withBatchLock(this.store, async () => {
+      const b = await this.requireBatch(id);
+      this.editable(b);
+      const it = b.items.find((i) => i.id === itemId);
+      if (!it || it.mcOperation !== "clash.assign") throw new CoordError("not_found", `Ítem de incidencia ${itemId} no existe`);
+      const body = it.accNew as AssignedGroupCreate;
+      if (patch.title !== undefined) body.title = sanitizeModelText(patch.title, 100);
+      if (patch.description !== undefined) body.description = patch.description.replace(/\u0000/g, "").slice(0, 1000);
+      if (patch.dueDate !== undefined) body.dueDate = patch.dueDate;
+      if (patch.assigneeId !== undefined) {
+        body.assignedTo = patch.assigneeId;
+        body.assignedToType = patch.assigneeType === "company" ? "Company" : patch.assigneeType === "role" ? "Role" : "User";
+      }
+      if (patch.issueType && /^[0-9a-f-]{36}$/i.test(patch.issueType)) body.issueTypeId = patch.issueType;
+      if (patch.issueSubtype && /^[0-9a-f-]{36}$/i.test(patch.issueSubtype)) body.issueSubTypeId = patch.issueSubtype;
+      it.issue = { ...(it.issue ?? {}), ...patch };
+      it.fields = it.fields.map((f) => (f.field === "issue" ? { ...f, accNew: body.title } : f));
+      if (it.conflict && body.issueTypeId && body.issueSubTypeId && it.conflict.reason.startsWith("Falta el tipo")) delete it.conflict;
+      if (it.origin === "ai_accepted") it.origin = "ai_corrected";
+      it.reasonCode = "R13";
+      await this.store.putBatch(b);
+      return this.batchUi(b);
+    });
   }
 
+  /** Back to review: the approval record is deleted (any later apply is refused). */
   async returnToReview(id: string, user: HumanUser): Promise<C.Batch> {
-    const b = await this.requireBatch(id);
-    const updated = await this.store.transitionBatch(id, "draft");
-    await this.store.deleteApproval(id);
-    await this.store.markDecisionsBatched(b.items.flatMap((i) => i.decisionIds), undefined);
-    for (const pid of new Set(b.items.flatMap((i) => i.proposalIds))) {
-      const p = await this.store.getProposal(pid);
-      if (p?.state === "approved") await this.store.transitionProposal(pid, "pending_review", user.name, `lote ${id} devuelto`);
-    }
-    await this.store.audit({ actor: { type: "user", id: user.id, name: user.name }, action: "batch.returned", projectId: b.projectId, batchId: id });
-    return this.batchUi(updated);
+    return withBatchLock(this.store, async () => {
+      const b = await this.requireBatch(id);
+      const updated = await this.store.transitionBatch(id, "draft");
+      await this.store.deleteApproval(id);
+      await this.store.markDecisionsBatched(b.items.flatMap((i) => i.decisionIds), undefined);
+      for (const pid of new Set(b.items.flatMap((i) => i.proposalIds))) {
+        const p = await this.store.getProposal(pid);
+        if (p?.state === "approved") await this.store.transitionProposal(pid, "pending_review", user.name, `lote ${id} devuelto`);
+      }
+      await this.store.audit({ actor: { type: "user", id: user.id, name: user.name }, action: "batch.returned", projectId: b.projectId, batchId: id });
+      return this.batchUi(updated);
+    });
   }
 
   async discard(id: string, user: HumanUser): Promise<C.Batch> {
-    const b = await this.requireBatch(id);
-    const updated = await this.store.transitionBatch(id, "discarded");
-    await this.store.deleteApproval(id);
-    await this.store.markDecisionsBatched(b.items.flatMap((i) => i.decisionIds), undefined);
-    await this.store.audit({ actor: { type: "user", id: user.id, name: user.name }, action: "batch.discarded", projectId: b.projectId, batchId: id });
-    return this.batchUi(updated);
+    return withBatchLock(this.store, async () => {
+      const b = await this.requireBatch(id);
+      const updated = await this.store.transitionBatch(id, "discarded");
+      await this.store.deleteApproval(id);
+      await this.store.markDecisionsBatched(b.items.flatMap((i) => i.decisionIds), undefined);
+      await this.store.audit({ actor: { type: "user", id: user.id, name: user.name }, action: "batch.discarded", projectId: b.projectId, batchId: id });
+      return this.batchUi(updated);
+    });
   }
 
-  /** HUMAN approval (web UI). Runs a preflight when the last one is older than 10 min. */
+  /**
+   * Step 1 of the approval ceremony: WebAuthn options whose challenge is derived
+   * from the batch payload (with the requested exclusions applied).
+   */
+  async approveOptions(id: string, excludedItemIds: string[] = []) {
+    const r = await approvalOptions(this.approvalDeps(), id, excludedItemIds);
+    return { batchId: r.batchId, nonce: r.nonce, payloadHash: r.payloadHash, testVersion: r.testVersion, items: r.items, options: r.options };
+  }
+
+  /**
+   * Step 2: HUMAN approval. Live mode requires the WebAuthn assertion produced
+   * for the options of step 1; fixtures mode accepts `demo: true` (labelled demo
+   * approval). Never applies: apply is always a separate call.
+   */
   async approve(id: string, req: C.ApproveRequest, user: HumanUser): Promise<C.ApplyStatus> {
-    let b = await this.requireBatch(id);
+    const b = await this.requireBatch(id);
     const inc = b.items.filter((i) => !i.excluded && !(req.excludedItemIds ?? []).includes(i.id));
     const issues = inc.filter((i) => i.operation === "issue.create").length;
     const changes = inc.reduce((n, i) => n + i.targetIds.length, 0);
@@ -928,12 +967,31 @@ export class CoordinatorUi {
       throw new CoordError("validation_error", "Escribe APLICAR para confirmar.");
     }
     if (!b.lastPreflightAt || this.core.now() - Date.parse(b.lastPreflightAt) > 10 * 60_000) {
+      if (req.webauthn) throw new CoordError("conflict", "El pre-chequeo con ACC tiene más de 10 minutos: ejecútalo y pide opciones de aprobación nuevas.");
       await this.preflight(id, user);
-      b = await this.requireBatch(id);
     }
-    await approveBatch(this.approvalDeps(), id, { id: user.id, name: user.name, channel: "web-ui" }, { note: req.note, excludedItemIds: req.excludedItemIds });
-    if (req.apply) await this.apply(id, { dryRun: false }, { type: "user", id: user.id, name: user.name });
+    await approveBatch(this.approvalDeps(), id, { id: user.id, name: user.name, channel: "web-ui" }, {
+      ...(req.note ? { note: req.note } : {}),
+      excludedItemIds: req.excludedItemIds,
+      ...(req.webauthn ? { webauthn: req.webauthn as never } : {}),
+      ...(req.demo ? { demo: true } : {}),
+    });
     return this.applyStatus(id);
+  }
+
+  async webauthnRegisterOptions(user: HumanUser) {
+    return this.core.webauthn.registrationOptions(user.name);
+  }
+
+  async webauthnRegister(input: { origin: string; response: unknown; label?: string; enrollCode?: string; stepUp?: unknown }, user: HumanUser) {
+    const cred = await this.core.webauthn.register(input as never);
+    await this.store.audit({
+      actor: { type: "user", id: user.id, name: user.name },
+      action: "webauthn.enrolled",
+      targetIds: [cred.id],
+      details: { label: cred.label, via: cred.enrolledVia, credentialId: cred.id },
+    });
+    return { credentialId: cred.id, label: cred.label, enrolledVia: cred.enrolledVia };
   }
 
   async apply(id: string, req: C.ApplyRequest, actor: Actor): Promise<C.ApplyResponse> {

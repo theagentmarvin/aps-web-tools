@@ -111,7 +111,7 @@ describe("coord MCP server (fixtures)", () => {
     expect(refused.data).toMatchObject({ batchId: batch.id, outcome: "refused", refusedReason: "not_approved" });
 
     // A HUMAN approves through the service (web UI path), never through MCP.
-    await approveBatch({ store: coord.store, source: coord.source, config: coord.config, effectiveLevel: 1 }, batch.id, { ...HUMAN, channel: "web-ui" });
+    await approveBatch(coord.approvalDeps(), batch.id, { ...HUMAN, channel: "web-ui" }, { demo: true });
 
     const dry = await call("apply_approved_proposals", { batchId: batch.id });
     expect(dry.data.outcome).toBe("would_apply");

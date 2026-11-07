@@ -12,11 +12,12 @@ import type {
   IssueDraft,
   Priority,
   Proposal,
+  Severity,
   TestDocument,
   TestRun,
   Validity,
 } from "../types";
-import { DISCIPLINES, GRID_LETTERS, LEVELS, TEMPLATES, USERS, type ClashTemplate, type ElementTemplate } from "./catalog";
+import { DISCIPLINES, GRID_LETTERS, LEVELS, TEMPLATES, USERS, kindToNature, kindToValidity, type ClashTemplate, type ElementTemplate, type MockKind } from "./catalog";
 
 // ── PRNG ───────────────────────────────────────────────────────────
 
@@ -107,11 +108,18 @@ function pickTemplate(r: Rng): ClashTemplate {
   return TEMPLATES[Number(idx)];
 }
 
-function priorityFor(validity: Validity, penMax: number, ownerA: string): Priority {
+function priorityFor(validity: MockKind, penMax: number, ownerA: string): Priority {
+  if (validity === "unknown") return 3;
   if (validity !== "real" && validity !== "model_error") return 4;
   if (penMax > 100 || (ownerA === "EST" && penMax > 60)) return 1;
   if (penMax > 40) return 2;
   return 3;
+}
+
+function severityFor(v: Validity, penMax: number): Severity {
+  if (v === "false_positive" || v === "tolerated") return "none";
+  if (v === "needs_info") return "medium";
+  return penMax > 150 ? "critical" : penMax > 60 ? "high" : penMax > 25 ? "medium" : "low";
 }
 
 function confidence(r: Rng, bias: number): number {
@@ -123,7 +131,7 @@ function sourceFor(r: Rng): FieldSource {
   return r.weighted<FieldSource>({ rule: 0.6, llm: 0.25, "rule+llm": 0.15 });
 }
 
-const VALIDITY_RULES: Record<Validity, string[]> = {
+const VALIDITY_RULES: Record<MockKind, string[]> = {
   real: ["PRI-001"],
   false_positive: ["FP-003", "FP-001"],
   duplicate: ["DUP-001", "DUP-004"],
@@ -133,7 +141,7 @@ const VALIDITY_RULES: Record<Validity, string[]> = {
   unknown: [],
 };
 
-const VALIDITY_ES: Record<Validity, string> = {
+const VALIDITY_ES: Record<MockKind, string> = {
   real: "válida",
   false_positive: "falso positivo",
   duplicate: "duplicada",
@@ -143,7 +151,7 @@ const VALIDITY_ES: Record<Validity, string> = {
   unknown: "por confirmar",
 };
 
-function rationale(t: ClashTemplate, v: Validity, count: number, penMax: number, level: string): string {
+function rationale(t: ClashTemplate, v: MockKind, count: number, penMax: number, level: string): string {
   const what = `${t.b.categoryEs.toLowerCase()} de ${DISCIPLINES.find((d) => d.code === t.b.discipline)?.es.toLowerCase()} contra ${t.a.categoryEs.toLowerCase()}`;
   switch (v) {
     case "real":
@@ -205,6 +213,8 @@ export interface GenerateOptions {
   groups: number;
   clashes: number;
   analyzed: boolean;
+  /** ACC clash test id (defaults to testId). */
+  accTestId?: string;
   /** First analysed test of the set: everything is "new". */
   firstTest?: boolean;
 }
@@ -226,7 +236,9 @@ export function generateTest(o: GenerateOptions): GeneratedTest {
     const gx = r.int(0, GRID_LETTERS.length - 2);
     const gy = r.int(1, 7);
     const grid = `${GRID_LETTERS[gx]}–${GRID_LETTERS[gx + 1]} / ${gy}–${gy + r.int(1, 2)}`;
-    const validity = r.weighted<Validity>(t.validity);
+    const validity = r.weighted<MockKind>(t.validity);
+    const domainValidity: Validity = kindToValidity(validity);
+    const nature = kindToNature(validity);
     const groupId = `G-${pad(gi + 1, 4)}`;
     const bElem = makeElement(r, t.b, docs, lvl.name, r.int(1, 40));
     const shareA = r.chance(0.3);
@@ -264,6 +276,8 @@ export function generateTest(o: GenerateOptions): GeneratedTest {
         a,
         b,
         level: lvl.name,
+        validity: domainValidity,
+        nature,
         delta,
         persistingCount: delta === "persisting" ? r.int(1, 4) : undefined,
         persistingSince: delta === "persisting" ? `v${o.version - 1}` : undefined,
@@ -282,11 +296,12 @@ export function generateTest(o: GenerateOptions): GeneratedTest {
       .replace("{B}", bElem.name)
       .replace("{n}", String(size))
       .replace("{level}", lvl.name);
-    const createIssue = validity === "real" || validity === "model_error";
+    const createIssue = domainValidity === "real";
     const group: ClashGroup = {
       id: groupId,
       testId: o.testId,
       strategy: shareA ? "by_element" : r.pick(["by_system_run", "by_root_cause", "by_level_zone"] as const),
+      engineStrategy: shareA ? "element" : "zone",
       title,
       clashIds,
       pair: [t.a.discipline, t.b.discipline],
@@ -299,6 +314,12 @@ export function generateTest(o: GenerateOptions): GeneratedTest {
       issue: createIssue ? (r.chance(0.12) ? "existing" : "draft") : "none",
       updatedAt: new Date(created.getTime() + r.int(1, 120) * 60000).toISOString(),
       elementMissing: missing || undefined,
+      validity: domainValidity,
+      nature,
+      severity: severityFor(domainValidity, penMax),
+      priority: priorityFor(validity, penMax, t.a.discipline),
+      confidence: 1,
+      reviewState: "auto_ok",
     };
     if (group.issue === "existing") group.existingIssueId = `#${r.int(120, 480)}`;
     groups.push(group);
@@ -318,6 +339,7 @@ export function generateTest(o: GenerateOptions): GeneratedTest {
     const proposalId = `P-${o.completedOn.slice(0, 10).replace(/-/g, "")}-${pad(gi + 1, 4)}`;
     const p: Proposal = {
       id: proposalId,
+      sourceProposalIds: [proposalId],
       targetType: "group",
       targetId: groupId,
       testId: o.testId,
@@ -326,11 +348,11 @@ export function generateTest(o: GenerateOptions): GeneratedTest {
       createdAt: group.updatedAt,
       updatedAt: group.updatedAt,
       fields: {
-        validity: { value: validity, confidence: vConf, source: vSource, ruleIds: vRules },
+        validity: { value: domainValidity, confidence: vConf, source: vSource, ruleIds: vRules },
         priority: { value: priority, confidence: pConf, source: pSource, ruleIds: pRules },
         owner: { value: t.owner, confidence: oConf, source: "rule", ruleIds: oRules },
         action: {
-          value: { createIssue, setStatus: validity === "unknown" ? null : createIssue ? "reviewed" : "closed" },
+          value: { createIssue, setStatus: domainValidity === "false_positive" ? "closed" : domainValidity === "tolerated" ? "reviewed" : null },
           confidence: Math.min(vConf, 0.97),
           source: vSource,
           ruleIds: vRules,
@@ -348,6 +370,9 @@ export function generateTest(o: GenerateOptions): GeneratedTest {
       spotCheck: false,
     };
     const minConf = Math.min(vConf, pConf, oConf, p.fields.action.confidence);
+    group.confidence = minConf;
+    group.priority = priority;
+    group.reviewState = minConf < 0.7 || domainValidity === "needs_info" ? "needs_review" : "proposed";
     p.spotCheck = minConf >= 0.85 && (gi * 7919) % 19 === 0;
     if (createIssue) p.issueDraft = issueDraftFor(t, group, firstA, bElem, created, clashIds);
     if (!o.firstTest && deltaCounts.persisting > size / 2 && r.chance(0.12)) {
@@ -365,6 +390,8 @@ export function generateTest(o: GenerateOptions): GeneratedTest {
 
   const test: TestRun = {
     id: o.testId,
+    accTestId: o.accTestId ?? o.testId,
+    cached: true,
     modelSetId: o.modelSetId,
     modelSetVersion: o.version,
     completedOn: o.completedOn,

@@ -2,7 +2,36 @@
  * Static catalog for the mock: disciplines, clash templates per discipline
  * pair, rules. Labels follow rules/discipline-matrix.yaml.
  */
-import type { Discipline, RuleEffect, RuleState, Validity } from "../types";
+import type { Discipline, Nature, RuleEffect, RuleState, Validity } from "../types";
+
+/**
+ * Internal mock "pattern" (finer than the domain vocabulary). Mapped at the
+ * output boundary to the engine vocabulary (docs/domain/clash-taxonomy.md):
+ * duplicate → false_positive + nature duplicate; by_design (standard
+ * penetration) → tolerated; model_error → real (rootCause modeling_error);
+ * unknown → needs_info.
+ */
+export type MockKind = "real" | "false_positive" | "duplicate" | "tolerance" | "by_design" | "model_error" | "unknown";
+
+export function kindToValidity(k: MockKind): Validity {
+  switch (k) {
+    case "real":
+    case "model_error":
+      return "real";
+    case "false_positive":
+    case "duplicate":
+      return "false_positive";
+    case "tolerance":
+    case "by_design":
+      return "tolerated";
+    default:
+      return "needs_info";
+  }
+}
+
+export function kindToNature(k: MockKind): Nature {
+  return k === "duplicate" ? "duplicate" : "hard";
+}
 
 export const DISCIPLINES: Discipline[] = [
   { code: "EST", es: "Estructura", en: "Structure" },
@@ -33,7 +62,7 @@ export interface ClashTemplate {
   /** Title pattern: {A} first element name, {B} second, {n} count, {level}. */
   title: string;
   /** Validity distribution for this template. */
-  validity: Partial<Record<Validity, number>>;
+  validity: Partial<Record<MockKind, number>>;
   toleranceMm: number;
   /** Discipline that usually moves (who-moves rule). */
   owner: string;

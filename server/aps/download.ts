@@ -57,7 +57,10 @@ export function isGzip(bytes: Uint8Array): boolean {
 }
 
 /** Gunzip when the magic bytes say so, else return the input unchanged. */
-export function maybeGunzip(bytes: Uint8Array, maxOutputBytes = 1024 * 1024 * 1024): Uint8Array {
+/** Decompressed-size cap (zip-bomb guard): 512 MB. */
+export const MAX_DECOMPRESSED_BYTES = 512 * 1024 * 1024;
+
+export function maybeGunzip(bytes: Uint8Array, maxOutputBytes = MAX_DECOMPRESSED_BYTES): Uint8Array {
   if (!isGzip(bytes)) return bytes;
   try {
     return gunzipSync(bytes, { maxOutputLength: maxOutputBytes });

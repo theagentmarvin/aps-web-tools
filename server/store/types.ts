@@ -328,6 +328,25 @@ export interface ApprovalRecord {
   expiresAt: string;
   nonce: string;
   note?: string;
+  /** Data source the approval was given against; demo approvals are valid only for "fixtures". */
+  dataSource: "live" | "fixtures";
+  /** Fixtures-only demo approval without WebAuthn (clearly labelled; refused by the live source). */
+  demo?: true;
+  /** Verified WebAuthn assertion over the derived challenge (live mode). */
+  webauthn?: {
+    credentialId: string;
+    nonce: string;
+    origin: string;
+    rpID: string;
+    response: {
+      id: string;
+      rawId: string;
+      type: "public-key";
+      response: { authenticatorData: string; clientDataJSON: string; signature: string; userHandle?: string };
+      clientExtensionResults: Record<string, unknown>;
+      authenticatorAttachment?: string;
+    };
+  };
   hmac: string;
 }
 

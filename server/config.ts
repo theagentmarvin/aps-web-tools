@@ -99,6 +99,15 @@ export const ConfigSchema = z.object({
       issueSubtypeId: z.string().optional(),
     })
     .prefault({}),
+  /** WebAuthn relying party for approvals (rpID must be a hostname; browsers reject IPs). */
+  webauthn: z
+    .object({
+      rpID: z.string().default("localhost"),
+      rpName: z.string().default("Coordinador BIM SalfaCorp"),
+      /** Exact allowed origins; default: ui.baseUrl. */
+      origins: z.array(z.string()).default([]),
+    })
+    .prefault({}),
   approver: z
     .object({
       /** Fallback approver display name when the APS profile is unavailable. */
@@ -168,6 +177,12 @@ export function loadConfig(root: string = process.cwd(), env: NodeJS.ProcessEnv 
   const local = readJson(localPath);
   if (local !== undefined) sources.push("coordinator.config.local.json");
   const merged = deepMerge(main ?? {}, local ?? {});
+  // The local file may LOWER the autonomy level but never raise it: level = min(base, local).
+  const baseLevel = (main as { autonomy?: { level?: number } } | undefined)?.autonomy?.level;
+  const localLevel = (local as { autonomy?: { level?: number } } | undefined)?.autonomy?.level;
+  if (isPlainObject(merged) && isPlainObject(merged.autonomy) && baseLevel !== undefined && localLevel !== undefined) {
+    merged.autonomy.level = Math.min(baseLevel, localLevel);
+  }
   if (isPlainObject(merged)) delete merged.$schema;
   const config = ConfigSchema.parse(merged);
   const configuredLevel = config.autonomy.level as AutonomyLevel;

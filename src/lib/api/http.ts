@@ -5,6 +5,16 @@
  *
  * Endpoints expected from the server:
  *
+ *   GET    /api/coord/csrf                                       → {token} + coord_csrf cookie
+ *   GET    /api/coord/auth/status                                → AuthStatus
+ *   POST   /api/coord/auth/login   (H)                           → LoginStartResponse
+ *   POST   /api/coord/auth/logout  (H)                           → {ok}
+ *   GET    /api/coord/session                                    → SessionInfo
+ *   POST   /api/coord/projects/:p/model-sets/:m/tests/:accTestId/ingest (H) {refresh?,classify?} → {testKey}
+ *   POST   /api/coord/batches/:batchId/apply (H) {dryRun?=true}  → ApplyResponse
+ *   (H) = human-only: X-Coord-CSRF header + same origin. The client sends the header on every non-GET call.
+ *   Types: server/api/contract.ts. Full table: docs/api.md.
+ *
  *   GET    /api/coord/me                                         → UserInfo
  *   GET    /api/coord/agent/status                               → AgentStatus
  *   GET    /api/coord/home                                       → HomeSummary
@@ -65,15 +75,52 @@ function qs(params?: Query): string {
 
 const enc = encodeURIComponent;
 
+/**
+ * Model-derived text can arrive wrapped as `{untrusted, flagged?}` (MCP
+ * convention). The UI only ever renders text, so unwrap to the plain string at
+ * the boundary; flagged agent content is surfaced via `Proposal.flagged`.
+ */
+export function unwrapUntrusted(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(unwrapUntrusted);
+  if (v && typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    const keys = Object.keys(o);
+    if ("untrusted" in o && keys.every((k) => k === "untrusted" || k === "flagged")) return String(o.untrusted ?? "");
+    const out: Record<string, unknown> = {};
+    for (const k of keys) out[k] = unwrapUntrusted(o[k]);
+    return out;
+  }
+  return v;
+}
+
 export class HttpCoordinatorApi implements CoordinatorApi {
   readonly mode = "http" as const;
+  private csrf: Promise<string> | null = null;
 
-  private async req<R>(method: string, path: string, body?: unknown): Promise<R> {
+  /** CSRF token for human-only calls (double submit with the coord_csrf cookie). */
+  private token(refresh = false): Promise<string> {
+    if (!this.csrf || refresh) {
+      this.csrf = fetch(`${BASE}/csrf`, { credentials: "same-origin" })
+        .then((r) => r.json() as Promise<{ token: string }>)
+        .then((j) => j.token)
+        .catch((err) => {
+          this.csrf = null;
+          throw new ApiError(String(err), 0, "network");
+        });
+    }
+    return this.csrf;
+  }
+
+  private async req<R>(method: string, path: string, body?: unknown, retried = false): Promise<R> {
+    const headers: Record<string, string> = {};
+    if (body !== undefined) headers["Content-Type"] = "application/json";
+    // Every mutating call carries the CSRF header (required on human-only endpoints, harmless elsewhere).
+    if (method !== "GET") headers["X-Coord-CSRF"] = await this.token();
     let res: Response;
     try {
       res = await fetch(`${BASE}${path}`, {
         method,
-        headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+        headers,
         body: body === undefined ? undefined : JSON.stringify(body),
         credentials: "same-origin",
       });
@@ -82,23 +129,43 @@ export class HttpCoordinatorApi implements CoordinatorApi {
     }
     if (!res.ok) {
       let message = `${res.status} ${res.statusText}`;
+      let serverCode: string | undefined;
+      let hint: string | undefined;
       try {
-        const j = (await res.json()) as { error?: { message?: string } };
+        const j = (await res.json()) as { error?: { code?: string; message?: string; hint?: string } };
         if (j.error?.message) message = j.error.message;
+        serverCode = j.error?.code;
+        hint = j.error?.hint;
       } catch {
         /* non-JSON error body */
       }
+      const isCsrf = res.status === 403 && /csrf/i.test(message);
+      // Token may be stale (server restarted): refresh once and retry.
+      if (isCsrf && !retried && method !== "GET") {
+        await this.token(true);
+        return this.req<R>(method, path, body, true);
+      }
       const code =
-        res.status === 404 ? "not_found" : res.status === 403 ? "forbidden" : res.status === 401 ? "not_authenticated" : res.status === 400 ? "validation" : "server";
-      throw new ApiError(message, res.status, code);
+        isCsrf ? "csrf"
+        : res.status === 404 ? "not_found"
+        : res.status === 403 ? "forbidden"
+        : res.status === 401 ? "not_authenticated"
+        : res.status === 409 ? "conflict"
+        : res.status === 400 ? "validation"
+        : "server";
+      throw new ApiError(message, res.status, code, serverCode, hint);
     }
-    return (await res.json()) as R;
+    return unwrapUntrusted(await res.json()) as R;
   }
 
   private get<R>(path: string, q?: Query) {
     return this.req<R>("GET", `${path}${qs(q)}`);
   }
 
+  getAuthStatus() { return this.get<T.AuthStatus>("/auth/status"); }
+  login() { return this.req<T.LoginStartResponse>("POST", "/auth/login"); }
+  logout() { return this.req<{ ok: true }>("POST", "/auth/logout"); }
+  getSession() { return this.get<T.SessionInfo>("/session"); }
   getCurrentUser() { return this.get<T.UserInfo>("/me"); }
   getAgentStatus() { return this.get<T.AgentStatus>("/agent/status"); }
   getHomeSummary() { return this.get<T.HomeSummary>("/home"); }
@@ -109,6 +176,10 @@ export class HttpCoordinatorApi implements CoordinatorApi {
   listModelSets(projectId: string) { return this.get<T.ModelSetSummary[]>(`/projects/${enc(projectId)}/model-sets`); }
   listTests(projectId: string, modelSetId: string) {
     return this.get<T.TestRun[]>(`/projects/${enc(projectId)}/model-sets/${enc(modelSetId)}/tests`);
+  }
+
+  ingestTest(projectId: string, modelSetId: string, accTestId: string, opts?: { refresh?: boolean }) {
+    return this.req<{ testKey: string }>("POST", `/projects/${enc(projectId)}/model-sets/${enc(modelSetId)}/tests/${enc(accTestId)}/ingest`, { refresh: opts?.refresh ?? false, classify: true });
   }
 
   getTriage(projectId: string, modelSetId: string, testId?: string) {
@@ -159,6 +230,7 @@ export class HttpCoordinatorApi implements CoordinatorApi {
   returnBatchToReview(id: string) { return this.req<T.Batch>("POST", `/batches/${enc(id)}/return`); }
   discardBatch(id: string) { return this.req<T.Batch>("POST", `/batches/${enc(id)}/discard`); }
   approveBatch(id: string, r: T.ApproveRequest) { return this.req<T.ApplyStatus>("POST", `/batches/${enc(id)}/approve`, r); }
+  applyBatch(id: string, r: T.ApplyRequest) { return this.req<T.ApplyResponse>("POST", `/batches/${enc(id)}/apply`, { dryRun: r.dryRun ?? true }); }
   getApplyStatus(id: string) { return this.get<T.ApplyStatus>(`/batches/${enc(id)}/apply-status`); }
 
   submitFeedback(input: T.FeedbackInput) { return this.req<{ feedbackId: string }>("POST", "/feedback", input); }

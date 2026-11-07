@@ -2,20 +2,32 @@
  * Enum → i18n key maps, so components never hardcode user-facing labels.
  */
 import type { TKey } from "~/i18n";
-import type { AccStatus, BatchOperation, BatchState, DecisionField, DecisionState, Delta, Priority, Validity } from "./api/types";
+import type { AccStatus, BatchOperation, BatchState, DecisionField, DecisionState, Delta, Nature, Priority, Severity, Validity } from "./api/types";
 
 export const VALIDITY_KEY: Record<Validity, TKey> = {
   real: "validity.valid",
   false_positive: "validity.falsePositive",
-  tolerance: "validity.tolerable",
-  duplicate: "validity.duplicate",
-  unknown: "validity.toConfirm",
-  by_design: "validity.byDesign",
-  model_error: "validity.modelError",
+  tolerated: "validity.tolerable",
+  needs_info: "validity.needsInfo",
 };
 
-/** Order of the `v` validity menu (digits 1..7). */
-export const VALIDITY_ORDER: Validity[] = ["real", "false_positive", "tolerance", "duplicate", "unknown", "by_design", "model_error"];
+/** Order of the `v` validity menu (digits 1..4). */
+export const VALIDITY_ORDER: Validity[] = ["real", "false_positive", "tolerated", "needs_info"];
+
+export const NATURE_KEY: Record<Nature, TKey> = {
+  hard: "nature.hard",
+  clearance: "nature.clearance",
+  duplicate: "nature.duplicate",
+  workflow: "nature.workflow",
+};
+
+export const SEVERITY_KEY: Record<Severity, TKey> = {
+  critical: "severity.critical",
+  high: "severity.high",
+  medium: "severity.medium",
+  low: "severity.low",
+  none: "severity.none",
+};
 
 export const STATUS_KEY: Record<AccStatus, TKey> = {
   active: "accStatus.active",

@@ -36,7 +36,10 @@
     "signIn": "Iniciar sesión con Autodesk",
     "signedIn": "Sesión iniciada",
     "expired": "Tu sesión expiró. Tus decisiones sin guardar se conservan.",
-    "signInAgain": "Volver a iniciar sesión"
+    "signInAgain": "Volver a iniciar sesión",
+    "loginStarted": "Se abrió el inicio de sesión de Autodesk. Completa el ingreso y vuelve a esta pestaña.",
+    "waiting": "Esperando el inicio de sesión…",
+    "demoSession": "Sesión de demostración (fixtures)"
   },
   "common": {
     "loading": "Cargando…",
@@ -122,7 +125,13 @@
     "readyToApprove_one": "{count} decisión lista para aprobar",
     "readyToApprove_other": "{count} decisiones listas para aprobar",
     "openWorkspace": "Abrir coordinación",
-    "lastTestNone": "Sin pruebas de interferencias"
+    "lastTestNone": "Sin pruebas de interferencias",
+    "analyze": "Analizar",
+    "analyzing": "Analizando…",
+    "analyzed": "Prueba v{version} analizada",
+    "tests": "Pruebas de interferencias",
+    "notCached": "Sin descargar",
+    "cached": "Analizada"
   },
   "workspace": {
     "title": "Coordinación",
@@ -151,7 +160,8 @@
     "analyzing": "El agente está analizando… {task}",
     "resizeList": "Cambiar ancho de la lista",
     "resizeDetail": "Cambiar ancho del detalle",
-    "paceNudgeDismiss": "Entendido"
+    "paceNudgeDismiss": "Entendido",
+    "notCachedTitle": "Esta prueba aún no se ha descargado ni analizado"
   },
   "list": {
     "viewGroups": "Grupos",
@@ -186,7 +196,8 @@
     "issue": "Incidencia",
     "issueDraft": "Con borrador",
     "issueExisting": "Con incidencia existente",
-    "issueNone": "Sin incidencia"
+    "issueNone": "Sin incidencia",
+    "nature": "Naturaleza"
   },
   "sort": {
     "label": "Orden",
@@ -254,8 +265,7 @@
     "tolerable": "Tolerable",
     "duplicate": "Duplicada",
     "toConfirm": "Por confirmar",
-    "byDesign": "Pasada prevista",
-    "modelError": "Error de modelo"
+    "needsInfo": "Requiere información"
   },
   "accStatus": {
     "active": "Activa",
@@ -347,7 +357,10 @@
     "saveEdit": "Guardar cambios (Ctrl+Enter)",
     "editing": "Editando propuesta",
     "agentUpdated": "El agente actualizó la propuesta después de tu decisión",
-    "propsLoading": "Cargando propiedades…"
+    "propsLoading": "Cargando propiedades…",
+    "reviewReasons": "Por qué requiere revisión",
+    "flagged": "Texto marcado: el agente incluyó contenido con forma de instrucción. Léelo con cuidado; no se ejecuta.",
+    "flaggedShort": "Texto marcado"
   },
   "issue": {
     "title": "Título",
@@ -509,7 +522,7 @@
     "state": {
       "draft": "Borrador",
       "ready": "Listo para aprobar",
-      "approved": "Aplicando",
+      "approved": "Aprobado (pendiente de aplicar)",
       "applied": "Aplicado",
       "partial": "Aplicado con errores",
       "discarded": "Descartado",
@@ -590,7 +603,20 @@
     "openInWorkspace": "Abrir en coordinación",
     "toggleGroup": "Mostrar u ocultar {op}",
     "snapshot": "Imagen",
-    "linkedCount": "{count} vinculadas"
+    "linkedCount": "{count} vinculadas",
+    "approveOnly": "Aprobar…",
+    "approvedTitle": "Lote aprobado",
+    "approvalBy": "Aprobado por {user} · {date} · vence {expires}",
+    "approvalInvalid": "La aprobación ya no es válida: {reason}",
+    "dryRun": "Vista previa (simulación)",
+    "dryRunTitle": "Solicitudes exactas que se enviarán a ACC",
+    "dryRunHint": "Revisa los cuerpos de las solicitudes. Nada se escribe en ACC hasta que confirmes con APLICAR.",
+    "applyReal": "Aplicar en ACC…",
+    "requestSummary": "{operation} · {groups} grupos · {clashes} interferencias",
+    "refused": "ACC no se modificó: {message}",
+    "mcNone": "No se puede escribir con MC v3",
+    "result": "Resultado",
+    "notAvailable": "no disponible"
   },
   "apply": {
     "title": "Aprobar y aplicar en ACC",
@@ -624,7 +650,8 @@
     "actor": {
       "agent": "Agente",
       "user": "Usuario",
-      "server": "Servidor"
+      "server": "Servidor",
+      "engine": "Motor"
     },
     "empty": "Sin eventos para estos filtros.",
     "chain": "Cadena: ejecución del agente → propuesta → decisión → lote → aprobación → ACC",
@@ -764,7 +791,8 @@
     "forbidden": "No tienes permisos en ACC para esta acción.",
     "notFoundProject": "Proyecto no encontrado o sin acceso.",
     "notFoundModelSet": "Conjunto de modelos no encontrado.",
-    "notFoundBatch": "Lote no encontrado."
+    "notFoundBatch": "Lote no encontrado.",
+    "csrf": "La sesión de seguridad expiró. Recarga la página."
   },
   "a11y": {
     "groupList": "Lista de grupos de interferencias",
@@ -774,5 +802,25 @@
     "sideB": "Lado B",
     "skipToList": "Ir a la lista",
     "skipToDetail": "Ir al detalle"
+  },
+  "nature": {
+    "label": "Naturaleza",
+    "hard": "Interferencia física",
+    "clearance": "Holgura",
+    "duplicate": "Duplicado",
+    "workflow": "Secuencia / 4D"
+  },
+  "severity": {
+    "label": "Severidad",
+    "critical": "Crítica",
+    "high": "Alta",
+    "medium": "Media",
+    "low": "Baja",
+    "none": "Ninguna"
+  },
+  "approve": {
+    "title": "Aprobar lote",
+    "body": "Firmarás la aprobación con tu nombre. Después podrás ver la simulación y aplicar en ACC.",
+    "button": "Aprobar {count} cambios"
   }
 }

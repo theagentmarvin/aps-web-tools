@@ -22,8 +22,8 @@
  * - List tools return a TABLE (`columns` + `rows`) instead of an array of
  *   objects: ~40-50 % fewer tokens for the same rows.
  * - IDs are short and stable so the model can quote them cheaply:
- *   test `T-3f9a21c0`, group `G-0042`, clash `C-41299469560661`,
- *   proposal `P-20261106-0007`, feedback `F-…`, rule `R-HVAC-012`, element `E-1:4521` (docIndex:dbId).
+ *   group `G-3fa9c1d2e4` (core/group), clash `41299469560661` (MC stable id), rule `EST-002`,
+ *   batch `L-2026-11-05-01`, element `E-1:4521` (docIndex:dbId); test keys and proposal ids are opaque server ids.
  * - Strings that come from BIM models or ACC (element names, type names, comments,
  *   issue text written by people) are UNTRUSTED. The server sanitises them
  *   (strip control chars, collapse whitespace, truncate to 120 chars) and only ever
@@ -35,36 +35,45 @@ import { z } from "zod";
 // Shared primitives
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const TestKey = z.string().regex(/^T-[0-9a-f]{8}$/).describe("Cached clash test key returned by ingest_clash_test, e.g. T-3f9a21c0");
-export const GroupId = z.string().regex(/^G-\d{4,6}$/).describe("Group id, unique within a test, e.g. G-0042");
-export const ClashId = z.string().regex(/^C-\d+$/).describe("Clash id, e.g. C-41299469560661");
-export const ProposalId = z.string().regex(/^P-\d{8}-\d{4}$/);
+// IDs follow what core/ and server/ actually produce (orchestrator decisions, 2026-11-06):
+// - group ids: core/group groupId() = "G-" + 10 hex chars of sha1(strategy|key)
+// - clash ids: MC stable numeric ids (stable across model set versions, research §3), as decimal strings
+// - test keys / proposal ids / batch ids: opaque server ids; validated only as safe tokens
+const SafeId = (prefixHint: string) =>
+  z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$/).describe(`Opaque server id (${prefixHint})`);
+export const TestKey = SafeId("cached clash test key returned by ingest_clash_test");
+export const GroupId = z.string().regex(/^G-[0-9a-f]{10}$/).describe("Group id from core/group, e.g. G-3fa9c1d2e4");
+export const ClashId = z.string().regex(/^\d{1,20}$/).describe("MC stable clash id as a decimal string, e.g. 41299469560661");
+export const ProposalId = SafeId("proposal id");
+/** Approval batch (UX 'lote'), e.g. L-2026-11-05-01. Same charset the guard-apply hook accepts. */
+export const BatchId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/).describe("Approval batch id (lote), e.g. L-2026-11-05-01");
 export const ElementRef = z.string().regex(/^E-\d+:\d+$/).describe("docIndex:dbId within the test, e.g. E-1:4521");
-export const RuleId = z.string().regex(/^R-[A-Z0-9-]+$/);
+/** Rule ids from rules/classification-rules.yaml, e.g. EST-002, FP-001, TOL-005, DEF-999. */
+export const RuleId = z.string().regex(/^[A-Z]{2,4}-\d{3}$/);
 
 export const Limit = (def: number, max: number) => z.number().int().min(1).max(max).default(def);
 export const Cursor = z.string().optional().describe("Opaque cursor from a previous page's nextCursor");
 
-/** MC numeric status 1..4 normalised. */
-export const ClashStatus = z.enum(["active", "reviewed", "resolved", "closed"]);
+/** Per-clash triage state for the current test (research §3.3): open | assigned (issue) | closed. */
+export const TriageState = z.enum(["open", "assigned", "closed"]);
 
-/**
- * Validity taxonomy. ASSUMPTION: final list comes from the BIM specialist
- * (docs/domain/). Keep this enum in sync with rules/taxonomy.yaml.
- */
-export const Validity = z.enum([
-  "real",            // genuine coordination problem
-  "false_positive",  // geometric artefact, insulation/hosted element, soft vs hard mismatch
-  "duplicate",       // same physical conflict already represented by another clash/group
-  "tolerance",       // within project tolerance (e.g. penetration < X mm for that pair)
-  "by_design",       // intended condition (sleeve/pasada prevista, embedded item)
-  "model_error",     // modelling defect (wrong level, duplicated element, misplaced link)
-  "unknown",
+// Taxonomy: values MUST equal core/rules/schemas.ts (VALIDITIES, NATURES, ROOT_CAUSES, SEVERITIES,
+// SUGGESTED_ACTIONS). When moving this file into server/mcp/, import those constants instead of
+// redeclaring them. Source of truth: docs/domain/clash-taxonomy.md.
+export const Validity = z.enum(["real", "false_positive", "tolerated", "needs_info"]);
+export const Nature = z.enum(["hard", "clearance", "duplicate", "workflow"]);
+export const RootCause = z.enum([
+  "design_coordination", "routing_conflict", "missing_opening", "modeling_error", "lod_mismatch",
+  "outdated_model", "duplicate_model", "model_hygiene", "not_applicable",
 ]);
-export const Severity = z.enum(["critical", "high", "medium", "low"]);
-/** Discipline codes are project-configurable (rules/disciplines.yaml). Examples: ARQ, EST, CLIMA, SANIT, ELEC, CORR, INC, GAS. */
+export const Severity = z.enum(["critical", "high", "medium", "low", "none"]);
+export const SuggestedAction = z.enum(["close_not_issue", "mark_reviewed", "create_issue", "hygiene_issue", "request_info", "escalate"]);
+export const Band = z.enum(["P1", "P2", "P3", "P4", "NONE"]);
+/** Discipline codes from rules/discipline-matrix.yaml: ARQ INT FAC MOB PAI EST CLI CAL SAN AP ALC ALL ELE CORR INC GAS ASC CIV COORD UNK. */
 export const DisciplineCode = z.string().regex(/^[A-Z]{2,6}$/);
 export const ConfidenceBand = z.enum(["alta", "media", "baja"]);
+/** MC closed-group reasons (research §3.3, ClosedGroupCreate.reason). */
+export const CloseReason = z.enum(["OTHER", "VALID_INTERFACE", "VALID_PENETRATION", "MINIMAL_OVERLAP", "ITEM_CAN_FLEX", "MODEL_INACCURACY", "FIELD_FIX"]);
 
 export const Evidence = z.object({
   kind: z.enum(["rule_hit", "property", "geometry", "history", "project_note", "coordinator_statement"]),
@@ -100,15 +109,24 @@ export interface Table<Row extends readonly unknown[] = unknown[]> {
   nextCursor?: string;
 }
 
+/** Compact view of core/classify Classification (docs/domain/clash-taxonomy.md header). */
 export interface Classification {
   validity: z.infer<typeof Validity>;
+  nature: z.infer<typeof Nature>;
+  rootCause: z.infer<typeof RootCause>;
+  responsibleDiscipline: string;
+  secondaryDiscipline?: string;
+  mover?: "left" | "right" | "none";
   severity: z.infer<typeof Severity>;
-  responsibleDiscipline?: string;
-  rootCause?: string;     // code from rules/taxonomy.yaml, e.g. "routing_through_beam"
-  priority: number;       // 0..100, from core/score
-  confidence: number;     // 0..1, engine-calibrated
+  priority: number;       // 0..100, rules/priority-scoring.yaml
+  band: z.infer<typeof Band>;
+  confidence: number;     // 0..1, from the rule
+  humanReview: boolean;   // critical | confidence < 0.70 | needs_info | rule says so
+  suggestedAction: z.infer<typeof SuggestedAction>;
+  ruleId: string;
+  rationale: string;      // Spanish, engine template
+  tags: string[];         // e.g. seguridad_personas, penetracion_mayor
   source: "engine" | "agent" | "coordinator";
-  ruleIds: string[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -183,7 +201,7 @@ export interface IngestClashTestOutput {
   modelSet: { id: string; name: string; version: number };
   viewName: string;
   documents: Array<{ docIndex: number; name: Untrusted; discipline?: string; disciplineSource: "rule" | "unknown" }>;
-  counts: { clashes: number; elements: number; byStatus: Record<z.infer<typeof ClashStatus>, number> };
+  counts: { clashes: number; afterDedupe: number; elements: number; byTriageState: Record<z.infer<typeof TriageState>, number> };
   penetrationMm: { p50: number; p90: number; max: number };
   properties: { status: "ready" | "pending" | "partial" | "skipped"; coveragePct: number };
   previousTestKey?: string;  // same view, previous model set version, if cached
@@ -195,22 +213,25 @@ export interface IngestClashTestOutput {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const ClashFilter = z.object({
-  status: z.array(ClashStatus).optional(),
+  triageState: z.array(TriageState).optional(),
   validity: z.array(Validity).optional(),
   severity: z.array(Severity).optional(),
-  disciplinePair: z.array(z.string().regex(/^[A-Z]{2,6}×[A-Z]{2,6}$/)).optional().describe("Alphabetical pair, e.g. CLIMA×EST"),
+  band: z.array(Band).optional(),
+  suggestedAction: z.array(SuggestedAction).optional(),
+  disciplinePair: z.array(z.string().regex(/^[A-Z]{2,6}×[A-Z]{2,6}$/)).optional().describe("Alphabetical pair, e.g. CLI×EST"),
   level: z.array(z.string().max(40)).optional(),
   minPenetrationMm: z.number().min(0).optional(),
-  needsReview: z.boolean().optional(),
+  needsReview: z.boolean().optional().describe("humanReview = true and no human decision yet"),
   confidenceBelow: z.number().min(0).max(1).optional(),
   confidenceAtLeast: z.number().min(0).max(1).optional(),
   ruleId: z.array(RuleId).optional(),
-  diffState: z.enum(["new", "persisting", "reopened"]).optional(),
+  tag: z.array(z.string().max(40)).optional().describe("e.g. seguridad_personas"),
+  diffState: z.enum(["new", "persisting", "reappeared"]).optional(),
 }).partial();
 
 export const SummaryDimension = z.enum([
-  "disciplinePair", "documentPair", "categoryPair", "status", "validity", "severity",
-  "level", "responsibleDiscipline", "rootCause", "ruleId", "confidenceBand", "diffState",
+  "disciplinePair", "documentPair", "categoryPair", "triageState", "validity", "nature", "severity", "band",
+  "level", "responsibleDiscipline", "rootCause", "suggestedAction", "ruleId", "confidenceBand", "diffState",
 ]);
 
 export const SummarizeClashesInput = z.object({
@@ -228,17 +249,21 @@ export const RunClassificationInput = z.object({
   rulesetRef: z.string().optional().describe("Default: current rules/ on disk. Or a rule-change proposal id to dry-run a candidate ruleset"),
   dryRun: z.boolean().default(false).describe("Compute stats without persisting groups/classifications"),
   proposeAutoAccepted: z.boolean().default(false).describe(
-    "Create engine-sourced BATCH proposals for groups at/above the auto-accept threshold " +
-    "(status_change for closable validities, classification for 'real'). Requires autonomy level >= 1."),
+    "Create engine-sourced proposals for groups with humanReview = false " +
+    "(close_not_issue / mark_reviewed for non-issues, create_issue skeleton for 'real'). They land in the open " +
+    "draft batch (lote) of this test. Requires autonomy level >= 1."),
 });
 export interface RunClassificationOutput {
   testKey: string;
   ruleset: { version: string; rules: number; hash: string };
-  groups: { total: number; byStrategy: Record<string, number> };
+  groups: { total: number; byStrategy: Record<string, number> }; // core/group strategies: nonissue, hygiene, needsinfo, hub-mover, hub-fixed, run, zone, single
   clashesClassified: number;
   byValidity: Record<z.infer<typeof Validity>, number>;   // in clashes
-  confidence: { alta: number; media: number; baja: number }; // in groups, bands from coordinator.config.json thresholds
-  needsReview: { groups: number; clashes: number };
+  byBand: Record<z.infer<typeof Band>, number>;            // in groups
+  // in groups; core/group/review.ts confidenceBand(): alta = ≥ autoAccept[validity] (real 0.80, false_positive 0.92,
+  // duplicate nature 0.90, tolerated 0.92; needs_info never alta), media = ≥ reviewFloor 0.55, baja = below
+  confidence: { alta: number; media: number; baja: number };
+  needsReview: { groups: number; clashes: number };       // humanReview = true
   unmatchedClashes: number;     // no rule fired
   topRules: Array<{ ruleId: string; hits: number }>; // max 10
   carriedDecisions: number;     // human decisions carried over from previous version (diff matching)
@@ -270,17 +295,17 @@ export const GetGroupInput = z.object({
 });
 export interface GetGroupOutput {
   groupId: string;
-  strategy: "by_element" | "by_system_run" | "by_level_zone" | "by_root_cause";
+  strategy: "nonissue" | "hygiene" | "needsinfo" | "hub-mover" | "hub-fixed" | "run" | "zone" | "single"; // core/group GroupStrategy
   clashCount: number;
   label: string;
   location: { levels: string[]; gridHint?: string; bboxM?: [number, number, number, number, number, number] };
   classification: Classification;
   reviewState: "auto_ok" | "needs_review" | "proposed" | "decided";
-  reviewReasons: string[];      // e.g. ["confidence 0.58 < 0.75", "rules R-A and R-B disagree"]
+  reviewReasons: string[];      // e.g. ["confianza 0,58 < 0,70", "severidad critical", "DEF-999 sin regla específica"]
   evidence: Array<z.infer<typeof Evidence>>;
   history?: { firstSeenVersion: number; versionsPersisting: number; previousDecision?: string };
   existingProposals: string[];  // proposal ids touching this group
-  sample: Array<{ clashId: string; status: string; penetrationMm: number; distanceMm: number; left: string; right: string }>;
+  sample: Array<{ clashId: string; triageState: string; penetrationMm: number; distanceMm: number; left: string; right: string }>;
   elements?: Array<ElementSummary>;
 }
 export interface ElementSummary {
@@ -304,7 +329,7 @@ export const ListClashesInput = z.object({
   limit: Limit(50, 100),
   cursor: Cursor,
 });
-/** columns: clashId, groupId, status, validity, penetrationMm, leftRef, leftCategory, rightRef, rightCategory, level */
+/** columns: clashId, groupId, triageState, validity, penetrationMm, leftRef, leftCategory, rightRef, rightCategory, level */
 export type ListClashesOutput = Table<[string, string, string, string, number, string, string, string, string, string]>;
 
 export const GetElementPropertiesInput = z.object({
@@ -326,9 +351,10 @@ export const DiffTestVersionsInput = z.object({
 });
 export interface DiffTestVersionsOutput {
   base: { testKey: string; version: number }; target: { testKey: string; version: number };
-  matching: { method: "element_pair_externalId"; unmatchedElementsPct: number };
-  totals: { new: number; resolved: number; persisting: number; reopened: number };
-  byDimension: Table;                 // columns: <dim>, new, resolved, persisting, reopened
+  /** core/ingest/diff.ts: MC clash id first (stable across versions), UniqueId pairKey fallback. */
+  matching: { byClashId: number; byPairKey: number; unmatched: number };
+  totals: { new: number; resolved: number; persisting: number; elementDeleted: number; reappeared: number };
+  byDimension: Table;                 // columns: <dim>, new, resolved, persisting, elementDeleted, reappeared
   topPersistingGroups: Table;         // columns: groupId, label, versionsPersisting, clashCount, previousDecision
   decisionsCarried: number;           // decided groups whose decision was mapped to the new version
 }
@@ -368,9 +394,12 @@ export const ProposeClassificationInput = z.object({
   target: Target,
   validity: Validity,
   severity: Severity.optional(),
+  rootCause: RootCause.optional(),
   responsibleDiscipline: DisciplineCode.optional(),
-  rootCause: z.string().max(60).optional(),
-  disagreesWithEngine: z.boolean().default(false).describe("Must be true if validity differs from the engine's classification"),
+  secondaryDiscipline: DisciplineCode.optional(),
+  suggestedAction: SuggestedAction.optional(),
+  ruleId: RuleId.optional().describe("Rule the agent agrees with or challenges"),
+  disagreesWithEngine: z.boolean().default(false).describe("Must be true if validity, severity or responsibility differs from the engine"),
 });
 
 export const ProposeGroupActionInput = z.object({
@@ -384,26 +413,39 @@ export const ProposeGroupActionInput = z.object({
   ]),
 });
 
+/**
+ * Issue draft. Applied ONLY via MC `clashes:assign` (research §3.3/§5: Issues v1 cannot create placement
+ * issues), which creates the ACC issue linked to the group's clashes with a pushpin. ACC limits apply:
+ * title ≤ 100, description ≤ 1000. Issue type/subtype, assignee (user/role/company), due date and the 3D
+ * view are fixed by the human in the approval UI. Writing guide: docs/domain/issue-writing-guide.md.
+ */
 export const DraftIssueInput = z.object({
   ...ProposalCommon,
   groupId: GroupId,
-  title: z.string().min(10).max(120).describe("Spanish, pattern: '[PAR] Elemento A × Elemento B – ubicación'"),
-  description: z.string().min(40).max(2500).describe("Spanish markdown: Problema / Ubicación / Elementos / Propuesta de solución / Referencias"),
+  kind: z.enum(["coordination", "hygiene"]).default("coordination").describe("hygiene = one issue per responsible file and rule (DUP-/HYG-)"),
+  title: z.string().min(10).max(100).describe("Spanish: [{band}][{DISC_RESP}×{DISC_OTRA}] {nivel} · {ubicación} · {qué} {verbo} {qué}"),
+  description: z.string().min(40).max(1000).describe("Spanish, template of issue-writing-guide.md §2: Problema / Ubicación / Elementos / Acción solicitada / Referencias"),
   responsibleDiscipline: DisciplineCode,
+  secondaryDiscipline: DisciplineCode.optional(),
   assigneeRole: z.string().max(60).optional().describe("Role or company, NOT a person; the human picks the ACC assignee in the UI"),
-  issueTypeHint: z.string().max(60).optional().describe("ACC issue type/subtype name; mapped by server against project config"),
-  priorityHint: z.enum(["critical", "high", "medium", "low"]),
-  dueInDays: z.number().int().min(1).max(60).optional(),
-  linkClashIds: z.array(ClashId).max(50).optional().describe("Default: representative clashes of the group"),
-  viewpointClashId: ClashId.optional().describe("Clash used for the issue viewpoint/pushpin"),
+  priorityHint: Band.exclude(["NONE"]),
+  linkClashIds: z.array(ClashId).max(1000).optional().describe("Default: all clashes of the group (clashes:assign accepts 1..1000)"),
+  viewpointClashId: ClashId.optional().describe("Clash used for the pushpin; default: max penetration"),
 });
 
+/**
+ * Close / mark reviewed / reopen. Applied via MC `clashes:close` (closed group with reason) or
+ * `clashes:reopen` (deletes closed groups; irreversible). Both are batched POSTs returning a job.
+ * The server rejects close_not_issue / mark_reviewed when the engine or agent validity is `real` or
+ * `needs_info`, and requires human review for > 50 clashes or tag `seguridad_personas`.
+ */
 export const ProposeStatusChangeInput = z.object({
   ...ProposalCommon,
   target: Target,
-  toStatus: z.enum(["reviewed", "closed", "active"]).describe("closed = not an issue / accepted; active = reopen"),
-  reasonCode: z.enum(["false_positive", "duplicate", "tolerance", "by_design", "issue_created", "resolved_in_model", "reopen"]),
-  issueProposalId: ProposalId.optional().describe("When reasonCode=issue_created, the draft_issue proposal it depends on"),
+  action: z.enum(["close_not_issue", "mark_reviewed", "reopen"]).describe(
+    "close_not_issue = false_positive; mark_reviewed = tolerated (MC has no 'reviewed' state: the server closes with a tolerance reason); reopen = undo a closed group"),
+  accReason: CloseReason.optional().describe("Override the server's default mapping (false_positive→MODEL_INACCURACY|VALID_INTERFACE by rule, tolerated→MINIMAL_OVERLAP|ITEM_CAN_FLEX|FIELD_FIX)"),
+  closedGroupIds: z.array(z.string()).max(20).optional().describe("For reopen: MC closed group ids (1..20)"),
 });
 
 /** Shared output of every propose_* / draft_issue tool. */
@@ -414,7 +456,8 @@ export interface ProposalCreatedOutput {
   risk: "low" | "medium" | "high";     // computed by server policy, drives L2/L3 eligibility
   affectedClashes: number;
   conflictsWith: string[];             // other pending proposals on the same clashes
-  reviewUrl: string;                   // web UI deep link, e.g. http://localhost:5173/aprobaciones/P-20261106-0007
+  batchId?: string;                    // open draft batch (lote) the proposal was added to
+  reviewUrl: string;                   // web UI deep link, e.g. http://localhost:5173/aprobaciones/L-2026-11-05-01
 }
 export type ProposalKind = "classification" | "group_action" | "issue" | "status_change" | "rule_change";
 export type ProposalStatus = "pending" | "approved" | "rejected" | "withdrawn" | "superseded" | "applying" | "applied" | "failed";
@@ -450,7 +493,9 @@ export const RecordFeedbackInput = z.object({
     validity: Validity.optional(),
     severity: Severity.optional(),
     responsibleDiscipline: DisciplineCode.optional(),
-    rootCause: z.string().max(60).optional(),
+    secondaryDiscipline: DisciplineCode.optional(),
+    rootCause: RootCause.optional(),
+    suggestedAction: SuggestedAction.optional(),
     grouping: z.enum(["ok", "should_merge", "should_split"]).optional(),
   }).optional(),
   coordinatorStatement: z.string().max(500).describe("What the coordinator said, paraphrased in Spanish"),
@@ -473,18 +518,22 @@ export type ListFeedbackOutput = Table;
 
 export const EvaluateRulesetInput = z.object({
   candidatePatch: z.string().max(20000).optional().describe("Unified diff against rules/. Omit to evaluate current rules"),
-  suites: z.array(z.enum(["fixtures", "feedback_replay"])).default(["fixtures", "feedback_replay"]),
+  suites: z.array(z.enum(["eval_scenarios", "fixtures", "feedback_replay"])).default(["eval_scenarios", "fixtures", "feedback_replay"])
+    .describe("eval_scenarios = EV-01..EV-25 of docs/domain/eval-scenarios.md (exact-match fields), same code as scripts/eval.ts"),
 });
 export interface EvaluateRulesetOutput {
   baseline: EvalMetrics; candidate?: EvalMetrics;
-  regressions: Array<{ scenario: string; clashId: string; expected: string; got: string }>; // max 20
+  regressions: Array<{ scenario: string; field: string; expected: string; got: string }>; // max 20
   schemaErrors: string[];
 }
 export interface EvalMetrics {
-  validityAccuracy: number; macroF1: number;
-  unsafeClosureRate: number;     // real clashes classified as closable (FP/dup/tolerance/by_design). Target 0.
-  groupingARI: number;           // adjusted Rand index vs expert groups
-  feedbackReplayAgreement: number;
+  scenariosExactMatch: number;   // EV scenarios where every asserted field matches (of 25)
+  rubricScore: number;           // 0..100, eval-scenarios.md "Agent rubric" applied to engine output
+  validityAccuracy: number;
+  unsafeClosureRate: number;     // `real` (expected) classified as false_positive|tolerated. Hard gate: 0.
+  criticalFalseNegatives: number; // expected critical classified below high or as non-issue. Hard gate: 0.
+  diffAccuracy?: number;         // fixtures v41→v42 expectedDiff
+  feedbackReplayAgreement?: number;
 }
 
 export const ProposeRuleChangeInput = z.object({
@@ -492,7 +541,7 @@ export const ProposeRuleChangeInput = z.object({
   patch: z.string().max(20000).describe("Unified diff touching only rules/**"),
   rationale: z.string().max(1500),
   feedbackIds: z.array(z.string()).min(1).max(100),
-  evaluation: z.object({ baselineMacroF1: z.number(), candidateMacroF1: z.number(), unsafeClosureRate: z.number() }),
+  evaluation: z.object({ baselineRubricScore: z.number(), candidateRubricScore: z.number(), unsafeClosureRate: z.number(), criticalFalseNegatives: z.number() }),
   scope: z.enum(["project", "company"]),
 });
 // output: ProposalCreatedOutput with kind "rule_change"; patch saved to .coordinator/rule-proposals/<id>.patch
@@ -519,17 +568,28 @@ export interface GenerateReportOutput {
 // 8. Apply (the ONLY ACC write path)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Applies ONE human-approved batch (lote). The server verifies the approval (HMAC with
+ * .coordinator/secret/approval.key, payload hash, expiry, test freshness) exactly like
+ * `tsx server/cli.ts verify-approval <batchId> --json`, which the guard-apply hook also runs.
+ * Writes: MC clashes:assign (issues with pushpin), clashes:close, clashes:reopen — batched POSTs
+ * returning jobs that the server polls to Succeeded/Failed.
+ */
 export const ApplyApprovedProposalsInput = z.object({
-  proposalIds: z.array(ProposalId).min(1).max(50),
-  dryRun: z.boolean().default(true).describe("Default true: show exactly which ACC calls would be made"),
+  batchId: BatchId,
+  dryRun: z.boolean().default(true).describe("Default true: list the exact ACC requests without sending them"),
 });
 export interface ApplyApprovedProposalsOutput {
-  results: Array<{
-    proposalId: string;
-    outcome: "applied" | "would_apply" | "refused" | "failed";
-    reason?: "not_approved" | "approval_signature_invalid" | "payload_changed_since_approval" | "approval_expired"
-      | "autonomy_level_forbids" | "stale_test_version" | "aps_error";
-    accRefs?: string[];         // issue ids, clash ids updated
+  batchId: string;
+  outcome: "would_apply" | "applied" | "partial" | "refused" | "failed";
+  refusedReason?: "not_approved" | "approval_signature_invalid" | "payload_changed_since_approval" | "approval_expired"
+    | "autonomy_level_forbids" | "stale_test_version";
+  operations: Array<{
+    op: "clash.assign" | "clash.close" | "clash.reopen";
+    groups: number; clashes: number;
+    jobId?: string; jobStatus?: "Running" | "Succeeded" | "Failed";
+    createdIssueIds?: string[];
+    error?: string;
   }>;
   auditId: string;
 }
@@ -581,9 +641,9 @@ export const TOOLS: ToolSpec[] = [
   { family: "proposal", name: "propose_group_action", title: "Propose group action", minLevel: 1, annotations: LOCAL_WRITE, input: ProposeGroupActionInput,
     description: "Propose merge/split/move/priority/responsible changes. Local store only." },
   { family: "proposal", name: "draft_issue", title: "Draft ACC issue", minLevel: 1, annotations: LOCAL_WRITE, input: DraftIssueInput,
-    description: "Draft a Spanish ACC issue for a group. Stored as a proposal; a human approves and picks the assignee in the web UI." },
+    description: "Draft a Spanish ACC issue (title ≤100, description ≤1000) for a real or hygiene group. Stored as a proposal; a human approves and picks type, assignee and view in the web UI; applied via MC clashes:assign." },
   { family: "proposal", name: "propose_status_change", title: "Propose clash status change", minLevel: 1, annotations: LOCAL_WRITE, input: ProposeStatusChangeInput,
-    description: "Propose reviewed/closed/reopen for clashes or a group, with a reason code. Local store only." },
+    description: "Propose close_not_issue (false_positive), mark_reviewed (tolerated) or reopen for a group or clashes. Never for real/needs_info. Local store only." },
   { family: "proposal", name: "list_proposals", title: "List proposals", minLevel: 0, annotations: RO_LOCAL, input: ListProposalsInput,
     description: "Paged table of proposals with status counts." },
   { family: "proposal", name: "withdraw_proposal", title: "Withdraw proposal", minLevel: 1, annotations: LOCAL_WRITE, input: WithdrawProposalInput,
@@ -593,13 +653,13 @@ export const TOOLS: ToolSpec[] = [
   { family: "learning", name: "list_feedback", title: "List feedback", minLevel: 0, annotations: RO_LOCAL, input: ListFeedbackInput,
     description: "Feedback clustered by signature or rule, for rules curation." },
   { family: "learning", name: "evaluate_ruleset", title: "Evaluate ruleset", minLevel: 0, annotations: { ...RO_LOCAL, idempotentHint: true }, input: EvaluateRulesetInput,
-    description: "Run fixture evals and feedback replay for current rules or a candidate patch; returns metric deltas." },
+    description: "Run the EV scenarios, fixture checks and feedback replay for current rules or a candidate patch; returns metric deltas and regressions." },
   { family: "learning", name: "propose_rule_change", title: "Propose rule change", minLevel: 1, annotations: LOCAL_WRITE, input: ProposeRuleChangeInput,
     description: "Store a rules/ patch as a rule_change proposal. Never edits rules/; a human merges." },
   { family: "report", name: "generate_report", title: "Generate report", minLevel: 0, annotations: { ...RO_LOCAL, readOnlyHint: false }, input: GenerateReportInput,
     description: "Render a report file from cached data; numbers come from the server, the agent supplies only the narrative." },
-  { family: "apply", name: "apply_approved_proposals", title: "Apply approved proposals to ACC", minLevel: 1, annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true }, input: ApplyApprovedProposalsInput,
-    description: "Apply proposals that a HUMAN approved in the web UI/CLI. Refuses anything without a valid approval record. dryRun defaults to true." },
+  { family: "apply", name: "apply_approved_proposals", title: "Apply an approved batch to ACC", minLevel: 1, annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true }, input: ApplyApprovedProposalsInput,
+    description: "Apply ONE batch (lote) that a HUMAN approved in the web UI. Refuses without a valid approval. dryRun defaults to true. Main agent only." },
 ];
 
 /** Tools subagents must never get (also enforced by hooks). */

@@ -5,12 +5,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 import { useI18n, useT, type TKey } from "~/i18n";
 import { useApi, useAsync } from "~/lib/api";
-import type { ApplyStatus, Batch, IssueDraft } from "~/lib/api/types";
+import { useCoordAuth } from "~/lib/coord-auth";
+import type { ApplyResponse, ApplyStatus, Batch, IssueDraft } from "~/lib/api/types";
 import { Modal } from "~/lib/components/Modal";
 import { PageHeader } from "~/lib/components/PageHeader";
 import { useToast } from "~/lib/components/Toast";
 import { Banner, Button, EmptyState, ErrorState, SkeletonRows, inputCls } from "~/lib/components/ui";
-import { ApplyConfirmDialog, ApplyProgress, BatchSummaryView, ConflictsList, IssuePreviewCard, PreflightStatus, preflightFresh } from "~/features/approvals/BatchParts";
+import { ApplyConfirmDialog, ApplyProgress, BatchSummaryView, ConflictsList, DryRunPreview, IssuePreviewCard, PreflightStatus, preflightFresh } from "~/features/approvals/BatchParts";
 import { BatchDiffTable } from "~/features/approvals/BatchDiffTable";
 import { BatchStateLabel } from "./approvals";
 
@@ -29,13 +30,16 @@ export function BatchPage() {
   const tab = (TABS as readonly string[]).includes(sp.get("tab") ?? "") ? (sp.get("tab") as Tab) : "resumen";
   const { data: batch, setData: setBatch, error, loading, reload } = useAsync<Batch>(() => api.getBatch(batchId), [api, batchId]);
   const [preflighting, setPreflighting] = useState(false);
-  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmMode, setConfirmMode] = useState<"approve" | "apply" | null>(null);
+  const [dryRun, setDryRun] = useState<ApplyResponse | null>(null);
+  const [applying, setApplying] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [apply, setApply] = useState<ApplyStatus | null>(null);
   const [staleOk, setStaleOk] = useState(false);
   const [staleNote, setStaleNote] = useState("");
   const autoRan = useRef(false);
+  const { status: authStatus } = useCoordAuth();
 
   const runPreflight = useCallback(async () => {
     setPreflighting(true);
@@ -56,9 +60,28 @@ export function BatchPage() {
     if (!preflightFresh(batch)) void runPreflight();
   }, [batch, runPreflight]);
 
-  // Apply progress polling (also when re-opening a batch that is applying).
+  const loadDryRun = useCallback(async () => {
+    try {
+      setDryRun(await api.applyBatch(batchId, { dryRun: true }));
+    } catch (err) {
+      toast.show(String(err instanceof Error ? err.message : err), { tone: "error" });
+    }
+  }, [api, batchId, toast]);
+
+  // Approved batch: show the dry run (exact ACC request bodies) before any real write.
   useEffect(() => {
-    if (!batch || (batch.state !== "approved" && !apply)) return;
+    if (batch?.state === "approved" && !dryRun && !applying) void loadDryRun();
+  }, [batch?.state, dryRun, applying, loadDryRun]);
+
+  // Applied / partial batch: show the final status once.
+  useEffect(() => {
+    if (!batch || apply || (batch.state !== "applied" && batch.state !== "partial")) return;
+    api.getApplyStatus(batchId).then(setApply, () => undefined);
+  }, [api, batch, apply, batchId]);
+
+  // Apply progress polling, only after a real apply was started here.
+  useEffect(() => {
+    if (!applying) return;
     if (apply && (apply.state === "applied" || apply.state === "partial")) return;
     const id = window.setInterval(async () => {
       try {
@@ -66,6 +89,7 @@ export function BatchPage() {
         setApply(s);
         if (s.state === "applied" || s.state === "partial") {
           window.clearInterval(id);
+          setApplying(false);
           reload();
         }
       } catch {
@@ -73,7 +97,7 @@ export function BatchPage() {
       }
     }, 1000);
     return () => window.clearInterval(id);
-  }, [api, batchId, batch, apply, reload]);
+  }, [api, batchId, applying, apply, reload]);
 
   if (error) return <ErrorState error={error} onRetry={reload} />;
   if (loading || !batch) return <SkeletonRows count={6} height="h-12" />;
@@ -91,19 +115,40 @@ export function BatchPage() {
   async function saveIssue(itemId: string, patch: Partial<IssueDraft>) {
     setBatch(await api.updateBatchIssue(batchId, itemId, patch));
   }
-  async function approve() {
+  async function approve(word: string) {
     if (!batch) return;
     setBusy(true);
     try {
-      const s = await api.approveBatch(batchId, {
-        confirmWord: t("apply.confirmWord"),
-        staleOverride: batch.stale ? staleOk : undefined,
+      await api.approveBatch(batchId, {
+        confirmWord: word,
+        // The stale-base override is enforced in the UI (checkbox + note); the note travels with the approval.
         note: staleNote || undefined,
         excludedItemIds: batch.items.filter((i) => i.excluded).map((i) => i.id),
+        // Fixtures mode approves with demo:true; live mode needs a WebAuthn assertion (not wired yet).
+        demo: authStatus?.dataSource === "fixtures" ? true : undefined,
       });
-      setApply(s);
-      setConfirmOpen(false);
-      setBatch({ ...batch, state: "approved" });
+      setConfirmMode(null);
+      setDryRun(null);
+      reload();
+    } catch (err) {
+      toast.show(String(err instanceof Error ? err.message : err), { tone: "error" });
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function applyReal() {
+    setBusy(true);
+    try {
+      const res = await api.applyBatch(batchId, { dryRun: false });
+      setConfirmMode(null);
+      if (res.refused) {
+        setDryRun(res);
+        return;
+      }
+      setDryRun(res);
+      setApply(res.status);
+      if (res.status.state === "applied" || res.status.state === "partial") reload();
+      else setApplying(true);
     } catch (err) {
       toast.show(String(err instanceof Error ? err.message : err), { tone: "error" });
     } finally {
@@ -148,7 +193,25 @@ export function BatchPage() {
           {t("batch.staleWarning", { latest: batch.latestVersion })}
         </Banner>
       )}
+      {batch.approval && (
+        <Banner tone={batch.approval.valid ? "info" : "error"} className="mb-4 rounded">
+          {batch.approval.valid
+            ? t("batch.approvalBy", { user: batch.approval.approvedBy, date: fmt.dateTime(batch.approval.approvedAt), expires: fmt.dateTime(batch.approval.expiresAt) })
+            : t("batch.approvalInvalid", { reason: batch.approval.reason ?? "" })}
+        </Banner>
+      )}
       {apply && <div className="mb-4"><ApplyProgress status={apply} /></div>}
+      {batch.state === "approved" && (
+        <div className="mb-4 space-y-3">
+          {dryRun ? <DryRunPreview res={dryRun} /> : <SkeletonRows count={2} height="h-12" />}
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={loadDryRun}>{t("batch.dryRun")}</Button>
+            <Button variant="primary" className="ml-auto" disabled={!dryRun || !!dryRun.refused || applying || batch.approval?.valid === false} onClick={() => setConfirmMode("apply")}>
+              {t("batch.applyReal")}
+            </Button>
+          </div>
+        </div>
+      )}
 
       <div role="tablist" aria-label={t("batch.title", { id: batch.id })} className="mb-4 flex gap-1 border-b border-brand-muted/20">
         {TABS.map((tb) => (
@@ -190,8 +253,8 @@ export function BatchPage() {
               <Button variant="danger" onClick={() => setDiscardOpen(true)}>
                 {t("batch.discard")}
               </Button>
-              <Button variant="primary" className="ml-auto" disabled={!canApprove} onClick={() => setConfirmOpen(true)} title={!preflightFresh(batch) ? t("batch.preflightRequired") : undefined}>
-                {t("batch.approve")}
+              <Button variant="primary" className="ml-auto" disabled={!canApprove} onClick={() => setConfirmMode("approve")} title={!preflightFresh(batch) ? t("batch.preflightRequired") : undefined}>
+                {t("batch.approveOnly")}
               </Button>
             </div>
           )}
@@ -210,7 +273,7 @@ export function BatchPage() {
         ))}
       {tab === "conflictos" && <ConflictsList items={conflicts} readOnly={readOnly} onInclude={(id, include) => toggle([id], !include)} onReturn={(id) => toggle([id], true)} />}
 
-      {confirmOpen && <ApplyConfirmDialog batch={batch} busy={busy} onCancel={() => setConfirmOpen(false)} onConfirm={approve} />}
+      {confirmMode && <ApplyConfirmDialog batch={batch} mode={confirmMode} busy={busy} onCancel={() => setConfirmMode(null)} onConfirm={confirmMode === "approve" ? approve : applyReal} />}
       {discardOpen && (
         <Modal
           title={t("batch.discard")}

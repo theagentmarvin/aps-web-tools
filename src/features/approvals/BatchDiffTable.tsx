@@ -106,6 +106,12 @@ export function BatchDiffTable({ batch, readOnly, onToggle }: { batch: Batch; re
                   {first && (
                     <>
                       <span className={`truncate ${item.targetType === "clash" ? "font-mono" : ""}`}>{item.label}</span>
+                      {item.mcOperation === "none" && <span title={item.conflict?.reason} className="shrink-0 rounded bg-gray-100 px-1 text-[10px] text-gray-600">{t("batch.mcNone")}</span>}
+                      {item.result && (
+                        <span title={item.result.message} className={`shrink-0 rounded px-1 text-[10px] ${item.result.status === "applied" ? "bg-green-50 text-green-800" : item.result.status === "failed" ? "bg-red-50 text-red-700" : "bg-gray-100 text-gray-600"}`}>
+                          {item.result.status}
+                        </span>
+                      )}
                       {item.groupId && (
                         <a
                           href={`/coordinacion/${batch.projectId}/${batch.modelSetId}?test=${batch.testId}&${item.targetType === "clash" ? "clash" : "group"}=${item.targetType === "clash" ? item.targetIds[0] : item.groupId}&decision=`}

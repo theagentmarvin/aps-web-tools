@@ -5,17 +5,17 @@
 import { Link } from "react-router";
 import { useI18n, useT } from "~/i18n";
 import { useApi, useAsync } from "~/lib/api";
-import { useAuth } from "~/lib/auth-context";
 import { SignInCard } from "~/lib/components/AuthGate";
+import { useCoordAuth } from "~/lib/coord-auth";
 import { IconChevronRight } from "~/lib/components/icons";
 import { EmptyState, ErrorState, Skeleton, cardCls } from "~/lib/components/ui";
 import { ReportKpis } from "~/features/reports/ReportKpis";
 
 export function HomePage() {
-  const api = useApi();
-  const { isAuthenticated } = useAuth();
+  const { status } = useCoordAuth();
   const t = useT();
-  if (api.mode !== "mock" && !isAuthenticated) return <SignInCard title={t("home.signInTitle")} body={t("home.signInBody")} />;
+  if (!status) return <Skeleton className="h-40" />;
+  if (!status.loggedIn) return <SignInCard title={t("home.signInTitle")} body={t("home.signInBody")} />;
   return <Dashboard />;
 }
 

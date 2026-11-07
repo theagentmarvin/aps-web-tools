@@ -69,4 +69,34 @@ export async function acceptGroups(ui: CoordinatorUi, testKey: string, groupIds:
   await ui.saveDecisions(decisions, HUMAN);
 }
 
+/**
+ * Coordinator over fixture data but with the source reporting kind "live":
+ * demo approvals are refused and WebAuthn is required, like in production.
+ */
+export function makeLiveLike(home: string, opts: { config?: LoadedConfig } = {}): Coordinator {
+  const src = new FixtureSource({ home });
+  Object.defineProperty(src, "kind", { value: "live" });
+  return new Coordinator({ root: ROOT, home, source: src, config: opts.config ?? testConfig() });
+}
+
+/** Enrol the first passkey with the CLI one-time code flow. */
+export async function enrollPasskey(coord: Coordinator, auth: { register(o: { challenge: string }): unknown; origin: string }): Promise<void> {
+  const { code } = await coord.webauthn.createEnrollCode();
+  const opts = await coord.webauthn.registrationOptions(HUMAN.name);
+  await coord.webauthn.register({ origin: auth.origin, response: auth.register(opts.registration) as never, enrollCode: code });
+}
+
+/** Full WebAuthn approval ceremony against approval options derived from the batch. */
+export async function approveWithPasskey(
+  coord: Coordinator,
+  batchId: string,
+  auth: { assert(o: { challenge: string }, x?: { userVerified?: boolean; origin?: string }): unknown; origin: string },
+  opts: { userVerified?: boolean } = {},
+) {
+  const { approvalOptions, approveBatch } = await import("../../server/approval");
+  const o = await approvalOptions(coord.approvalDeps(), batchId);
+  const response = auth.assert(o.options, { userVerified: opts.userVerified });
+  return approveBatch(coord.approvalDeps(), batchId, { ...HUMAN, channel: "web-ui" }, { webauthn: { nonce: o.nonce, origin: auth.origin, response: response as never } });
+}
+
 export { CoordinatorUi, FIXTURE_PROJECT_ID };

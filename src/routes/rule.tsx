@@ -4,6 +4,7 @@
 import { Link, useParams } from "react-router";
 import { useI18n, useT } from "~/i18n";
 import { useApi, useAsync } from "~/lib/api";
+import type { DecisionState } from "~/lib/api/types";
 import { DecisionStateIcon } from "~/lib/components/badges";
 import { ChartCard } from "~/lib/components/charts";
 import { PageHeader } from "~/lib/components/PageHeader";
@@ -12,6 +13,12 @@ import { useToast } from "~/lib/components/Toast";
 import { Banner, Button, ErrorState, SkeletonRows, cardCls } from "~/lib/components/ui";
 import { BRAND } from "~/lib/charts/theme";
 import { RULE_STATE_CLS } from "./rules";
+
+const STATES: DecisionState[] = ["pending", "accepted", "corrected", "rejected", "postponed", "inherited"];
+/** The server sends decision as free text; unknown values render as pending. */
+function asDecisionState(v: string): DecisionState {
+  return (STATES as string[]).includes(v) ? (v as DecisionState) : "pending";
+}
 
 export function RulePage() {
   const t = useT();
@@ -72,7 +79,7 @@ export function RulePage() {
               <ul className="divide-y divide-brand-muted/10 text-sm">
                 {r.recentHits.map((h) => (
                   <li key={h.groupId} className="flex items-center gap-2 py-1.5">
-                    <DecisionStateIcon state={h.decision} />
+                    <DecisionStateIcon state={asDecisionState(h.decision)} />
                     <Link to={`/coordinacion/${h.projectId}/${h.modelSetId}?group=${h.groupId}&decision=`} className="min-w-0 flex-1 truncate hover:text-brand">
                       <span className="font-mono text-xs text-gray-500">{h.groupId}</span> {h.title}
                     </Link>

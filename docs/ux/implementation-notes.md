@@ -71,3 +71,29 @@ All JSON. Errors are `{ error: { code, message } }` with a matching status code.
   - The filter Web Worker (filter and sort of about 1.3k items runs well within budget on the main thread).
 - **Saved views.** The view name is asked for with `window.prompt`.
 - **Callback.** `routes/callback.tsx` got one change: it redirects to `sessionStorage["coord.returnTo"]` when set.
+
+## Phase 2 (wired to server/api, http + fixtures)
+
+- **Types.** `src/lib/api/types.ts` now re-exports the wire types from `server/api/contract.ts` (type-only import) and adds only UI-only items: `REASON_CODES`, `VALIDITIES`, `NATURES`, `SEVERITIES`, `DecisionState`, `plain()`.
+- **Vocabulary.** The UI uses the engine vocabulary everywhere:
+  - validity is `real | false_positive | tolerated | needs_info`;
+  - nature (with `duplicate`) is a new filter (`?nature=fisica,holgura,duplicada,secuencia`) and a chip;
+  - severity is shown in the detail header.
+  - The `v` menu has 4 entries.
+  - URL tokens are `valida, falso_positivo, tolerable, requiere_info`.
+  - Default action per validity follows clash-taxonomy §2: real → issue; false positive → close; tolerated → mark reviewed; needs_info → stays active.
+  - The mock maps its internal patterns as follows: duplicate → false_positive + nature duplicate; by_design → tolerated; model_error → real (root cause); unknown → needs_info.
+- **CSRF.** `HttpCoordinatorApi` fetches `GET /csrf` once and sends `X-Coord-CSRF` on every non-GET call. On a 403 CSRF error it refreshes the token and retries once, because the token changes when the dev server restarts.
+- **Auth.** `CoordAuthProvider` (`src/lib/coord-auth.tsx`) uses `GET /auth/status` and `POST /auth/login`. A login opens the authorize URL in a new tab and the provider polls while `loginInProgress`. `AuthGate`, Home and the user menu use it. In fixtures mode the nav shows "Sesión de demostración".
+- **Tests.** Uncached tests (`cached:false`) show "Analizar". On the project page this button is in the test list; in the workspace it is in the header next to the test select. It calls `POST …/tests/:accTestId/ingest`. When triage returns `not_ingested`, the workspace shows the test list instead of an error.
+- **Approve and apply.** Approval is a separate step: a dialog with a checkbox and APLICAR when the server requires the word. After approval, the dry run (`POST /apply {dryRun:true}`) shows the exact ACC request bodies. The real apply sits behind a second typed APLICAR, and its status is polled. The page also shows `Batch.approval`, `BatchItem.result`, and `mcOperation:"none"` items.
+- **Smaller additions.**
+  - `Proposal.flagged` shows a "Texto marcado" chip in the row and the detail, plus a notice in the rationale.
+  - `GroupDetail.reviewReasons` is fetched for needs-review groups.
+  - The audit page handles the `engine` actor.
+  - `{untrusted}` wrappers are unwrapped to plain text in the HTTP client, and React only renders text.
+- **Placeholders hidden:**
+  - `kpis.issuesClosed` when it is 0;
+  - `counts.assignments` when it is 0;
+  - the clash count of uncached tests (always 0);
+  - `ProjectSummary.modelSetCount` when it is 0.

@@ -5,8 +5,8 @@
 import { Link } from "react-router";
 import { useI18n, useT } from "~/i18n";
 import { band } from "~/lib/api/decision-utils";
-import type { AccStatus, ConfidenceBandName, DecisionState, Delta, FieldSource, Priority, Validity } from "~/lib/api/types";
-import { DECISION_KEY, DELTA_KEY, PRIORITY_SHORT_KEY, STATUS_KEY, VALIDITY_KEY } from "~/lib/labels";
+import type { AccStatus, ConfidenceBandName, DecisionState, Delta, FieldSource, Nature, Priority, Severity, Validity } from "~/lib/api/types";
+import { DECISION_KEY, DELTA_KEY, NATURE_KEY, PRIORITY_SHORT_KEY, SEVERITY_KEY, STATUS_KEY, VALIDITY_KEY } from "~/lib/labels";
 import { useSettings } from "~/lib/settings";
 import { IconAlert, IconCheck, IconCircle, IconInherited, IconPause, IconPencil, IconX, SideASwatch, SideBSwatch } from "./icons";
 
@@ -109,18 +109,15 @@ export function DeltaBadge({ delta }: { delta: Delta }) {
 const VALIDITY_CLS: Record<Validity, string> = {
   real: "text-brand font-medium",
   false_positive: "text-gray-500",
-  tolerance: "text-gray-600",
-  duplicate: "text-gray-500",
-  unknown: "text-amber-800",
-  by_design: "text-gray-600",
-  model_error: "text-amber-800",
+  tolerated: "text-gray-600",
+  needs_info: "text-amber-800",
 };
 
 export function ValidityBadge({ value }: { value: Validity }) {
   const t = useT();
   return (
     <span className={`inline-flex items-center gap-1 ${VALIDITY_CLS[value]}`}>
-      {(value === "unknown" || value === "model_error") && <IconAlert size={12} />}
+      {value === "needs_info" && <IconAlert size={12} />}
       {t(VALIDITY_KEY[value])}
     </span>
   );
@@ -182,4 +179,26 @@ export function SpotCheckChip() {
 
 export function ReasonChip({ code }: { code: string }) {
   return <span className="rounded border border-amber-200 bg-amber-50 px-1 font-mono text-[10px] leading-4 text-amber-800">{code}</span>;
+}
+
+export function NatureBadge({ value }: { value: Nature }) {
+  const t = useT();
+  if (value === "hard") return null;
+  return <span className="rounded border border-slate-200 bg-slate-50 px-1.5 text-[10px] leading-4 text-slate-700">{t(NATURE_KEY[value])}</span>;
+}
+
+export function SeverityLabel({ value }: { value: Severity }) {
+  const t = useT();
+  return <span className={value === "critical" ? "font-medium text-brand" : value === "none" ? "text-gray-500" : ""}>{t(SEVERITY_KEY[value])}</span>;
+}
+
+/** Untrusted-text marker for flagged agent content (spec §4.2, server sanitize). */
+export function FlaggedChip() {
+  const t = useT();
+  return (
+    <span title={t("detail.flagged")} className="inline-flex items-center gap-1 rounded border border-red-200 bg-red-50 px-1.5 text-[10px] leading-4 text-red-800">
+      <IconAlert size={10} />
+      {t("detail.flaggedShort")}
+    </span>
+  );
 }

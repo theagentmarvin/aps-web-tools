@@ -334,14 +334,68 @@ export interface Batch {
 export type BatchSummary = Omit<Batch, "items">;
 export interface PreflightResult { at: string; conflicts: number; batch: Batch }
 
-/** POST /batches/:id/approve. Requires X-Coord-CSRF. `confirmWord` must be APLICAR or APPLY when the batch creates issues or has ≥ 50 changes. */
+/**
+ * POST /batches/:id/approve. Requires X-Coord-CSRF. `confirmWord` must be APLICAR or APPLY when the batch
+ * creates issues or has ≥ 50 changes. NEVER applies: apply is always a separate POST /batches/:id/apply.
+ * Live mode: `webauthn` is REQUIRED (assertion for the options of GET /webauthn/approve-options; the
+ * same `excludedItemIds` must be used in both calls). Fixtures mode: `demo: true` instead.
+ */
 export interface ApproveRequest {
   confirmWord: string;
-  staleOverride?: boolean;
   note?: string;
   excludedItemIds: string[];
-  /** Also run the apply right away (default false: approve only; UI then calls /apply). */
-  apply?: boolean;
+  webauthn?: { nonce: string; origin: string; response: AuthenticationResponseJSON };
+  demo?: boolean;
+}
+
+/** Output of `navigator.credentials.get()` serialised as by @simplewebauthn/browser `startAuthentication()`. */
+export interface AuthenticationResponseJSON {
+  id: string;
+  rawId: string;
+  type: "public-key";
+  response: { authenticatorData: string; clientDataJSON: string; signature: string; userHandle?: string };
+  clientExtensionResults: Record<string, unknown>;
+  authenticatorAttachment?: string;
+}
+
+/** Output of `navigator.credentials.create()` serialised as by @simplewebauthn/browser `startRegistration()`. */
+export interface RegistrationResponseJSON {
+  id: string;
+  rawId: string;
+  type: "public-key";
+  response: { clientDataJSON: string; attestationObject: string; transports?: string[]; [k: string]: unknown };
+  clientExtensionResults: Record<string, unknown>;
+  authenticatorAttachment?: string;
+}
+
+/** GET /webauthn/approve-options?batch=&exclude= */
+export interface ApproveOptionsResponse {
+  batchId: string;
+  nonce: string;
+  payloadHash: string;
+  testVersion: number;
+  items: number;
+  /** PublicKeyCredentialRequestOptionsJSON: pass to startAuthentication({ optionsJSON }). */
+  options: Record<string, unknown>;
+}
+
+/** GET /webauthn/register-options */
+export interface RegisterOptionsResponse {
+  requires: "enroll_code" | "step_up";
+  /** PublicKeyCredentialCreationOptionsJSON: pass to startRegistration({ optionsJSON }). */
+  registration: Record<string, unknown>;
+  /** When requires = step_up: confirm with an existing passkey first (startAuthentication). */
+  stepUp?: Record<string, unknown>;
+}
+
+/** POST /webauthn/register */
+export interface RegisterRequest {
+  response: RegistrationResponseJSON;
+  label?: string;
+  /** First passkey only: the one-time code printed by `npm run coordinator -- passkey-enroll`. */
+  enrollCode?: string;
+  /** Further passkeys: assertion of an existing passkey over `stepUp` options. */
+  stepUp?: AuthenticationResponseJSON;
 }
 
 export interface ApplyRequest { dryRun?: boolean }
@@ -508,8 +562,14 @@ export interface Endpoints {
   "PATCH /api/coord/batches/:batchId/items/:itemId/issue": { req: Partial<IssueDraft>; res: Batch };
   "POST /api/coord/batches/:batchId/return": { req: void; res: Batch };
   "POST /api/coord/batches/:batchId/discard": { req: void; res: Batch };
-  /** Human-only: signs the HMAC approval with the session user (APS profile or `approver.name`). */
+  /** Human-only. Step 1 of approval: WebAuthn options with a challenge derived from the batch payload. */
+  "GET /api/coord/webauthn/approve-options?batch&exclude": { req: void; res: ApproveOptionsResponse };
+  /** Human-only. Step 2: live = WebAuthn assertion required; fixtures = `demo: true`. Never applies. */
   "POST /api/coord/batches/:batchId/approve": { req: ApproveRequest; res: ApplyStatus };
+  /** Human-only. Passkey registration options (first passkey: enrol code; more: step-up). */
+  "GET /api/coord/webauthn/register-options": { req: void; res: RegisterOptionsResponse };
+  /** Human-only. */
+  "POST /api/coord/webauthn/register": { req: RegisterRequest; res: { credentialId: string; label: string; enrolledVia: "enroll-code" | "step-up" } };
   /** Human-only: dryRun defaults to TRUE. */
   "POST /api/coord/batches/:batchId/apply": { req: ApplyRequest; res: ApplyResponse };
   "GET /api/coord/batches/:batchId/apply-status": { req: void; res: ApplyStatus };

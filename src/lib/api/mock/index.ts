@@ -10,7 +10,7 @@ import { buildItems, recount } from "./batches";
 import { DISCIPLINES, RULES, USERS } from "./catalog";
 import { HUBS, PROJECTS, type MockModelSet, type MockProject } from "./fixtures";
 import { generateTest, rng, type GenerateOptions, type GeneratedTest } from "./generate";
-import { buildReport, seedAudit, seedCorrections, seedSuggestions } from "./reports";
+import { buildReport, fakeHash, seedAudit, seedCorrections, seedSuggestions } from "./reports";
 
 const ME = USERS[0];
 const delay = (ms = 160) => new Promise<void>((r) => setTimeout(r, ms + Math.random() * 120));
@@ -59,10 +59,18 @@ export class MockCoordinatorApi implements CoordinatorApi {
     throw new ApiError("Prueba no encontrada", 404, "not_found");
   }
 
+  /** Tests ingested during this session (fixtures with analyzed:false start uncached). */
+  private ingested = new Set<string>();
+
+  private isCached(o: GenerateOptions): boolean {
+    return o.analyzed || this.ingested.has(o.testId);
+  }
+
   private data(testId: string): GeneratedTest {
     let d = this.tests.get(testId);
     if (!d) {
-      d = generateTest(this.locateTest(testId).opts);
+      const opts = this.locateTest(testId).opts;
+      d = generateTest({ ...opts, analyzed: this.isCached(opts) });
       this.tests.set(testId, d);
     }
     return d;
@@ -100,11 +108,11 @@ export class MockCoordinatorApi implements CoordinatorApi {
 
   private modelSetSummary(p: MockProject, ms: MockModelSet): T.ModelSetSummary {
     const latest = ms.tests[0];
-    const analyzedTest = ms.tests.find((t) => t.analyzed);
+    const analyzedTest = ms.tests.find((t) => this.isCached(t));
     let reviewed = 0;
     let ready = 0;
-    const total = latest.analyzed ? latest.groups : 0;
-    if (latest.analyzed && this.tests.has(latest.testId)) {
+    const total = this.isCached(latest) ? latest.groups : 0;
+    if (this.isCached(latest) && this.tests.has(latest.testId)) {
       const latestMap = latestDecisions(this.decisionsOf(latest.testId));
       for (const d of latestMap.values()) {
         if (d.targetType !== "group") continue;
@@ -126,8 +134,9 @@ export class MockCoordinatorApi implements CoordinatorApi {
     };
   }
 
-  private log(e: Omit<T.AuditEvent, "id" | "at"> & { at?: string }) {
-    this.audit.unshift({ id: `A-${newId().slice(0, 8)}`, at: e.at ?? new Date().toISOString(), ...e });
+  private log(e: Omit<T.AuditEvent, "id" | "at" | "hash"> & { at?: string }) {
+    const id = `A-${newId().slice(0, 8)}`;
+    this.audit.unshift({ id, at: e.at ?? new Date().toISOString(), ...e, hash: fakeHash(id + (this.audit[0]?.hash ?? "")) });
   }
 
   /** Seed history: earlier decisions, three batches, audit trail. */
@@ -222,7 +231,7 @@ export class MockCoordinatorApi implements CoordinatorApi {
       stale: modelSet.latestVersion > opts.version,
       counts: { issuesCreate: 0, statusChanges: 0, assignments: 0, comments: 0 },
       origin: { accepted: 0, corrected: 0, manual: 0 },
-      review: { humanReviewedPct: 1, lowConfidence: 0, lowConfidenceViewed: 0 },
+      review: { humanReviewedPct: 100, lowConfidence: 0, lowConfidenceViewed: 0 },
       statusTransitions: [],
       issuesByDiscipline: {},
       items,
@@ -246,6 +255,30 @@ export class MockCoordinatorApi implements CoordinatorApi {
   }
 
   // ── Session / agent ─────────────────────────────────────────────
+
+  async getAuthStatus(): Promise<T.AuthStatus> {
+    await delay(30);
+    return { loggedIn: true, dataSource: "fixtures", user: { id: ME.id, name: ME.name, initials: ME.initials }, loginInProgress: false };
+  }
+
+  async login(): Promise<T.LoginStartResponse> {
+    return { alreadyLoggedIn: true };
+  }
+
+  async logout(): Promise<{ ok: true }> {
+    return { ok: true };
+  }
+
+  async getSession(): Promise<T.SessionInfo> {
+    await delay(30);
+    return {
+      autonomy: { level: 1, effectiveLevel: 1, source: "mock" },
+      dataSource: "fixtures",
+      pending: { proposals: 0, approvedNotApplied: 0, feedbackSinceLastCuration: 0 },
+      versions: { server: "mock", ruleset: "mock", engine: "mock" },
+      confidenceBands: { high: 0.85, medium: 0.6 },
+    };
+  }
 
   async getCurrentUser(): Promise<T.UserInfo> {
     await delay(40);
@@ -318,15 +351,22 @@ export class MockCoordinatorApi implements CoordinatorApi {
 
   async listTests(projectId: string, modelSetId: string) {
     await delay(60);
-    return this.findModelSet(projectId, modelSetId).tests.map((o) => ({
-      id: o.testId,
-      modelSetId: o.modelSetId,
-      modelSetVersion: o.version,
-      completedOn: o.completedOn,
-      clashCount: o.clashes,
-      analyzed: o.analyzed,
-      documents: [],
-    }));
+    return this.findModelSet(projectId, modelSetId).tests.map((o): T.TestRun => {
+      const cached = this.isCached(o);
+      // Uncached ACC tests: no counts yet (the server reports 0 too).
+      return { id: o.testId, accTestId: o.accTestId ?? o.testId, cached, modelSetId: o.modelSetId, modelSetVersion: o.version, completedOn: o.completedOn, clashCount: cached ? o.clashes : 0, analyzed: cached, documents: [] };
+    });
+  }
+
+  async ingestTest(projectId: string, modelSetId: string, accTestId: string): Promise<{ testKey: string }> {
+    const ms = this.findModelSet(projectId, modelSetId);
+    const o = ms.tests.find((t) => (t.accTestId ?? t.testId) === accTestId);
+    if (!o) throw new ApiError("Prueba no encontrada", 404, "not_found");
+    await delay(1200);
+    this.ingested.add(o.testId);
+    this.tests.delete(o.testId);
+    this.log({ actor: { type: "engine", id: "engine", name: "Motor" }, action: "classification.run", projectId, modelSetId, testId: o.testId, targetIds: [], details: { testKey: o.testId, groups: o.groups } });
+    return { testKey: o.testId };
   }
 
   // ── Triage ──────────────────────────────────────────────────────
@@ -335,8 +375,9 @@ export class MockCoordinatorApi implements CoordinatorApi {
     this.ensureSeed();
     const project = this.findProject(projectId);
     const ms = this.findModelSet(projectId, modelSetId);
-    const opts = testId ? ms.tests.find((t) => t.testId === testId) : ms.tests[0];
-    if (!opts) throw new ApiError("Prueba no encontrada", 404, "not_found");
+    const opts = testId ? ms.tests.find((t) => t.testId === testId) : ms.tests.find((t) => this.isCached(t));
+    if (!opts) throw new ApiError("No hay pruebas analizadas para este conjunto.", 409, "conflict", "not_ingested");
+    if (!this.isCached(opts)) throw new ApiError("La prueba no está descargada.", 409, "conflict", "not_ingested");
     const d = this.data(opts.testId);
     await delay(400);
     if (!this.firstLoad.has(opts.testId)) this.firstLoad.set(opts.testId, Date.now());
@@ -347,7 +388,7 @@ export class MockCoordinatorApi implements CoordinatorApi {
       test: d.test,
       tests,
       disciplines: DISCIPLINES,
-      groups: opts.analyzed ? d.groups : [],
+      groups: d.groups,
       clashes: d.clashes,
       proposals: d.proposals,
       decisions: this.decisionsOf(opts.testId),
@@ -411,7 +452,11 @@ export class MockCoordinatorApi implements CoordinatorApi {
     const history: T.HistoryEntry[] = [];
     if (proposal) history.push({ at: proposal.createdAt, kind: "agent", text: `Agente propuso (${proposal.runId})`, actor: "Agente" });
     for (const x of decisions) history.push({ at: x.decidedAt, kind: "decision", text: x.kind, actor: x.userName });
-    return clone({ group, proposal, clashes: d.clashes.filter((c) => c.groupId === groupId), decisions, history });
+    const reviewReasons: string[] = [];
+    if (group.confidence < 0.7) reviewReasons.push(`confianza ${group.confidence.toFixed(2)} < 0,70`);
+    if (group.validity === "needs_info") reviewReasons.push("validez requiere información");
+    if (group.severity === "critical") reviewReasons.push("severidad crítica");
+    return clone({ group, proposal, clashes: d.clashes.filter((c) => c.groupId === groupId), decisions, history, reviewReasons });
   }
 
   async listGroupClashes(testId: string, groupId: string, p?: { limit?: number; cursor?: string }) {
@@ -629,7 +674,6 @@ export class MockCoordinatorApi implements CoordinatorApi {
     if (b.state !== "ready") throw new ApiError("El lote no está listo para aprobar", 400, "validation");
     if (!b.lastPreflightAt || Date.now() - new Date(b.lastPreflightAt).getTime() > 10 * 60000)
       throw new ApiError("Pre-chequeo vencido", 400, "validation");
-    if (b.stale && !req.staleOverride) throw new ApiError("Base desactualizada: requiere confirmación", 400, "validation");
     const excluded = new Set(req.excludedItemIds);
     for (const i of b.items) if (excluded.has(i.id)) i.excluded = true;
     recount(b);
@@ -637,13 +681,44 @@ export class MockCoordinatorApi implements CoordinatorApi {
     b.approvedBy = ME.short;
     b.approvedAt = new Date().toISOString();
     const live = b.items.filter((i) => !i.excluded);
-    const failures = live
-      .filter((i, idx) => i.operation === "clash.setStatus" && idx % 97 === 13)
-      .slice(0, 1)
-      .map((i) => ({ itemId: i.id, label: i.label, message: "ACC respondió 409: la interferencia cambió de estado durante la aplicación." }));
-    this.applyJobs.set(id, { startedAt: Date.now(), issueTotal: b.counts.issuesCreate, statusTotal: b.counts.statusChanges, failures });
-    this.log({ actor: { type: "user", id: ME.id, name: ME.short }, action: "batch.approved", projectId: b.projectId, modelSetId: b.modelSetId, testId: b.testId, batchId: b.id, targetIds: [], details: { items: live.length, staleOverride: !!req.staleOverride, note: req.note ?? null } });
+    b.approval = { approvedBy: ME.short, approvedAt: b.approvedAt, expiresAt: new Date(Date.now() + 24 * 3600000).toISOString(), channel: "web-ui", valid: true };
+    this.log({ actor: { type: "user", id: ME.id, name: ME.short }, action: "batch.approved", projectId: b.projectId, modelSetId: b.modelSetId, testId: b.testId, batchId: b.id, targetIds: [], details: { items: live.length, note: req.note ?? null } });
     return this.applyStatus(id);
+  }
+
+  /** dryRun returns the exact bodies; a real apply starts the (simulated) job. */
+  async applyBatch(id: string, req: T.ApplyRequest): Promise<T.ApplyResponse> {
+    const b = this.getBatchOrThrow(id);
+    await delay(400);
+    const dryRun = req.dryRun ?? true;
+    if (b.state !== "approved" || !b.approval?.valid) {
+      return { dryRun, ok: false, refused: { reason: "approval_missing", message: "El lote no tiene una aprobación humana válida." }, requests: [], status: this.applyStatus(id) };
+    }
+    const live = b.items.filter((i) => !i.excluded && i.mcOperation !== "none");
+    const close = live.filter((i) => i.mcOperation === "clash.close");
+    const assign = live.filter((i) => i.mcOperation === "clash.assign");
+    const requests: T.ApplyResponse["requests"] = [];
+    const base = `/bim360/clash/v3/containers/${b.projectId}/tests/${b.testId}`;
+    const closeGroups = [...new Set(close.map((i) => i.groupId))];
+    if (close.length)
+      requests.push({
+        idempotencyKey: fakeHash(id + "close").slice(0, 16), operation: "clashes:close", path: `${base}/clashes:close`, groups: closeGroups.length, clashes: close.length, outcome: dryRun ? "would_apply" : "applied",
+        body: { groups: closeGroups.map((g) => ({ clashes: close.filter((i) => i.groupId === g).map((i) => i.targetIds[0].replace(/^C-/, "")), reason: "NOT_AN_ISSUE" })) },
+      });
+    if (assign.length)
+      requests.push({
+        idempotencyKey: fakeHash(id + "assign").slice(0, 16), operation: "clashes:assign", path: `${base}/clashes:assign`, groups: assign.length, clashes: assign.reduce((n, i) => n + (i.issue?.linkClashIds.length ?? 0), 0), outcome: dryRun ? "would_apply" : "applied",
+        body: { groups: assign.map((i) => ({ clashes: (i.issue?.linkClashIds ?? []).map((c) => c.replace(/^C-/, "")), issue: { title: i.issue?.title, description: i.issue?.description, assignedTo: i.issue?.assigneeRole, dueDate: i.issue?.dueDate } })) },
+      });
+    if (!dryRun) {
+      const failures = live
+        .filter((i, idx) => i.operation === "clash.setStatus" && idx % 97 === 13)
+        .slice(0, 1)
+        .map((i) => ({ itemId: i.id, label: i.label, message: "ACC respondió 409: la interferencia cambió de estado durante la aplicación." }));
+      this.applyJobs.set(id, { startedAt: Date.now(), issueTotal: b.counts.issuesCreate, statusTotal: b.counts.statusChanges, failures });
+      this.log({ actor: { type: "user", id: ME.id, name: ME.short }, action: "batch.apply", projectId: b.projectId, modelSetId: b.modelSetId, testId: b.testId, batchId: b.id, targetIds: [], details: { requests: requests.length } });
+    }
+    return clone({ dryRun, ok: true, requests, status: this.applyStatus(id) });
   }
 
   private applyStatus(id: string): T.ApplyStatus {

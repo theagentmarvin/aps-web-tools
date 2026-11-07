@@ -8,9 +8,10 @@
  */
 import type { TKey } from "~/i18n";
 import { band, decisionState, effectiveValues, minConfidence, pairKey, type Thresholds } from "~/lib/api/decision-utils";
-import type { AccStatus, Clash, ClashGroup, Decision, DecisionState, Delta, FieldSource, IssueState, Priority, Proposal, Validity } from "~/lib/api/types";
+import type { AccStatus, Clash, ClashGroup, Decision, DecisionState, Delta, FieldSource, IssueState, Nature, Priority, Proposal, Validity } from "~/lib/api/types";
+import { NATURE_KEY, VALIDITY_KEY } from "~/lib/labels";
 
-export const FILTER_KEYS = ["decision", "pair", "validity", "priority", "confidence", "level", "accStatus", "delta", "source", "owner", "issue"] as const;
+export const FILTER_KEYS = ["decision", "pair", "validity", "nature", "priority", "confidence", "level", "accStatus", "delta", "source", "owner", "issue"] as const;
 export type FilterKey = (typeof FILTER_KEYS)[number];
 export type Filters = Partial<Record<FilterKey, string[]>>;
 
@@ -40,12 +41,10 @@ export const DECISION_TOKEN: Record<DecisionState, string> = {
 export const VALIDITY_TOKEN: Record<Validity, string> = {
   real: "valida",
   false_positive: "falso_positivo",
-  tolerance: "tolerable",
-  duplicate: "duplicada",
-  unknown: "por_confirmar",
-  by_design: "prevista",
-  model_error: "error_modelo",
+  tolerated: "tolerable",
+  needs_info: "requiere_info",
 };
+export const NATURE_TOKEN: Record<Nature, string> = { hard: "fisica", clearance: "holgura", duplicate: "duplicada", workflow: "secuencia" };
 export const STATUS_TOKEN: Record<AccStatus, string> = { active: "activa", reviewed: "revisada", resolved: "resuelta", closed: "cerrada" };
 export const DELTA_TOKEN: Record<Delta, string> = { new: "nueva", persisting: "persistente", reappeared: "reaparecida", modified: "modificada", resolved: "resuelta" };
 export const SOURCE_TOKEN: Record<FieldSource, string> = { rule: "regla", llm: "ia", "rule+llm": "regla_ia", manual: "manual" };
@@ -56,6 +55,7 @@ const DECISION_FROM = invert(DECISION_TOKEN);
 const VALIDITY_FROM = invert(VALIDITY_TOKEN);
 const STATUS_FROM = invert(STATUS_TOKEN);
 const DELTA_FROM = invert(DELTA_TOKEN);
+const NATURE_FROM = invert(NATURE_TOKEN);
 
 /** i18n label for a filter token; null = show the raw token (codes, levels). */
 export function tokenLabelKey(key: FilterKey, token: string): TKey | null {
@@ -64,16 +64,11 @@ export function tokenLabelKey(key: FilterKey, token: string): TKey | null {
       return `decision.${DECISION_FROM[token]}` as TKey;
     case "validity": {
       const v = VALIDITY_FROM[token] as Validity | undefined;
-      const map: Record<Validity, TKey> = {
-        real: "validity.valid",
-        false_positive: "validity.falsePositive",
-        tolerance: "validity.tolerable",
-        duplicate: "validity.duplicate",
-        unknown: "validity.toConfirm",
-        by_design: "validity.byDesign",
-        model_error: "validity.modelError",
-      };
-      return v ? map[v] : null;
+      return v ? VALIDITY_KEY[v] : null;
+    }
+    case "nature": {
+      const n = NATURE_FROM[token] as Nature | undefined;
+      return n ? NATURE_KEY[n] : null;
     }
     case "priority":
       return `priority.p${token}` as TKey;
@@ -96,6 +91,7 @@ export function tokenLabelKey(key: FilterKey, token: string): TKey | null {
 export const FIXED_VALUES: Partial<Record<FilterKey, string[]>> = {
   decision: Object.values(DECISION_TOKEN),
   validity: Object.values(VALIDITY_TOKEN),
+  nature: Object.values(NATURE_TOKEN),
   priority: ["1", "2", "3", "4"],
   confidence: ["alta", "media", "baja"],
   accStatus: Object.values(STATUS_TOKEN),
@@ -170,6 +166,7 @@ export interface StaticFacts {
   search: string;
   level: string;
   deltaRank: number;
+  nature?: Nature;
 }
 
 const DELTA_RANK: Record<Delta, number> = { new: 0, reappeared: 1, modified: 2, persisting: 3, resolved: 4 };
@@ -198,6 +195,7 @@ export function groupFacts(g: ClashGroup, members: Clash[], p: Proposal | undefi
     updatedAt: p?.updatedAt ?? g.updatedAt,
     search: [g.id, g.title, ...names, ...g.clashIds, ...(p?.ruleIds ?? []), p?.issueDraft?.title ?? ""].join(" ").toLowerCase(),
     deltaRank: DELTA_RANK[g.delta],
+    nature: g.nature,
   };
 }
 
@@ -220,6 +218,7 @@ export function clashFacts(c: Clash, g: ClashGroup | undefined, p: Proposal | un
     updatedAt: p?.updatedAt ?? g?.updatedAt ?? "",
     search: [c.id, c.a.name, c.b.name, c.a.dbId, c.b.dbId, g?.title ?? ""].join(" ").toLowerCase(),
     deltaRank: DELTA_RANK[c.delta],
+    nature: c.nature,
   };
 }
 
@@ -249,6 +248,7 @@ export function filterValues(s: StaticFacts, d: DynamicFacts, t: Thresholds): Re
     decision: [DECISION_TOKEN[d.state]],
     pair: [s.pair],
     validity: d.validity ? [VALIDITY_TOKEN[d.validity]] : [],
+    nature: s.nature ? [NATURE_TOKEN[s.nature]] : [],
     priority: d.priority ? [String(d.priority)] : [],
     confidence: d.confidence === null ? [] : [band(d.confidence, t)],
     level: s.levels,

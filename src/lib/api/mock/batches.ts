@@ -27,6 +27,7 @@ export function buildItems(decisions: Decision[], src: BatchSources, reviewer: s
     const conf = proposal ? minConfidence(proposal) : undefined;
     const common = {
       decisionIds: [d.id],
+      proposalIds: proposal ? [proposal.id] : [],
       origin,
       reasonCode: d.reasonCode,
       reviewer,
@@ -47,6 +48,7 @@ export function buildItems(decisions: Decision[], src: BatchSources, reviewer: s
           targetIds: [cid],
           label: cid,
           operation: "clash.setStatus",
+          mcOperation: "clash.close",
           fields: [{ field: "Estado", accCurrent: STATUS_ES[c.status], accNew: STATUS_ES[action.setStatus] }],
           accCurrent: c.status,
           accNew: action.setStatus,
@@ -72,6 +74,7 @@ export function buildItems(decisions: Decision[], src: BatchSources, reviewer: s
         targetIds: [group.id],
         label: group.title,
         operation: "issue.create",
+        mcOperation: "clash.assign",
         fields: [
           { field: "Título", accCurrent: null, accNew: issue.title },
           { field: "Asignado a", accCurrent: null, accNew: issue.assigneeRole ?? `Modelador ${issue.ownerDiscipline}` },
@@ -121,7 +124,7 @@ export function recount(batch: Batch): Batch {
     corrected: origins.filter((o) => o === "ai_corrected").length,
     manual: origins.filter((o) => o === "manual").length,
   };
-  batch.review = { humanReviewedPct: 1, lowConfidence: low, lowConfidenceViewed: lowViewed };
+  batch.review = { humanReviewedPct: 100, lowConfidence: low, lowConfidenceViewed: lowViewed };
   batch.statusTransitions = [...transitions.values()].sort((a, b) => b.count - a.count);
   batch.issuesByDiscipline = byDisc;
   return batch;

@@ -23,6 +23,7 @@
  *
  * Every mutation runs under {@link Store.withLock}; every file write is atomic.
  */
+import { createHmac } from "node:crypto";
 import { join, resolve } from "node:path";
 import { appendJsonl, listFiles, readJsonFile, readJsonl, readTextFile, withFileLock, writeFileAtomic, writeJsonAtomic } from "./fs";
 import { assertBatchTransition, assertProposalTransition } from "./state-machine";
@@ -57,15 +58,26 @@ export interface StoreOptions {
   /** Absolute or cwd-relative path of `.coordinator`. */
   home?: string;
   now?: () => number;
+  /**
+   * Out-of-repo key for the audit hash chain (HMAC-SHA256). Without it the
+   * chain is a plain SHA-256 chain (tamper-evident only against careless edits).
+   */
+  auditKey?: () => Promise<Buffer | undefined>;
+  /** Read-only variant used by verifyAudit (never creates the key). */
+  auditKeyRead?: () => Promise<Buffer | undefined>;
 }
 
 export class Store {
   readonly home: string;
   readonly now: () => number;
+  private readonly auditKey?: () => Promise<Buffer | undefined>;
+  private readonly auditKeyRead?: () => Promise<Buffer | undefined>;
 
   constructor(opts: StoreOptions = {}) {
     this.home = resolve(opts.home ?? process.env.COORDINATOR_HOME ?? ".coordinator");
     this.now = opts.now ?? Date.now;
+    this.auditKey = opts.auditKey;
+    this.auditKeyRead = opts.auditKeyRead ?? opts.auditKey;
   }
 
   path(...parts: string[]): string {
@@ -391,7 +403,7 @@ export class Store {
         accResponseId: e.accResponseId,
         prevHash: tail?.hash ?? GENESIS_HASH,
       };
-      const rec: AuditEventRecord = { ...body, hash: auditHash(body) };
+      const rec: AuditEventRecord = { ...body, hash: auditHash(body, await this.auditKey?.()) };
       await appendJsonl(file, rec);
       return rec;
     });
@@ -418,10 +430,11 @@ export class Store {
   /** Verify the whole chain. Returns the first broken seq, if any. */
   async verifyAudit(): Promise<{ ok: boolean; events: number; brokenAt?: number }> {
     const events = await this.listAudit();
+    const key = await this.auditKeyRead?.();
     let prev = GENESIS_HASH;
     for (const ev of events) {
       const { hash, ...body } = ev;
-      if (ev.prevHash !== prev || auditHash(body) !== hash) return { ok: false, events: events.length, brokenAt: ev.seq };
+      if (ev.prevHash !== prev || auditHash(body, key) !== hash) return { ok: false, events: events.length, brokenAt: ev.seq };
       prev = hash;
     }
     return { ok: true, events: events.length };
@@ -454,9 +467,10 @@ export class Store {
   }
 }
 
-function auditHash(body: Omit<AuditEventRecord, "hash">): string {
+function auditHash(body: Omit<AuditEventRecord, "hash">, key?: Buffer): string {
   const { prevHash, ...rest } = body;
-  return sha256(prevHash + JSON.stringify(sortKeys(rest)));
+  const msg = prevHash + JSON.stringify(sortKeys(rest));
+  return key ? createHmac("sha256", key).update(msg).digest("hex") : sha256(msg);
 }
 
 function sortKeys(v: unknown): unknown {

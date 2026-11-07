@@ -133,9 +133,9 @@ describe("HTTP API /api/coord", () => {
     const pre = await req<{ conflicts: number }>("POST", `/batches/${batch.json.id}/preflight`);
     expect(pre.json.conflicts).toBe(0);
 
-    const badWord = await req<{ error: { message: string } }>("POST", `/batches/${batch.json.id}/approve`, { confirmWord: "si", excludedItemIds: [] });
+    const badWord = await req<{ error: { message: string } }>("POST", `/batches/${batch.json.id}/approve`, { confirmWord: "si", excludedItemIds: [], demo: true });
     expect(badWord.status).toBe(400);
-    const approved = await req<ApplyStatus>("POST", `/batches/${batch.json.id}/approve`, { confirmWord: "APLICAR", excludedItemIds: [] });
+    const approved = await req<ApplyStatus>("POST", `/batches/${batch.json.id}/approve`, { confirmWord: "APLICAR", excludedItemIds: [], demo: true });
     expect(approved.status).toBe(200);
     expect(approved.json.state).toBe("approved");
     const got = await req<Batch>("GET", `/batches/${batch.json.id}`);

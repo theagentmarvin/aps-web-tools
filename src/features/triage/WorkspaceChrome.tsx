@@ -2,7 +2,10 @@
  * Workspace header (breadcrumb, test selector, progress, send CTA), banners,
  * selection bar and status bar (spec §3.1–3.3, §3.9, §4.5).
  */
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { useApi } from "~/lib/api";
+import { useToast } from "~/lib/components/Toast";
+import { Spinner } from "~/lib/components/icons";
 import { useI18n, useT } from "~/i18n";
 import type { Priority, Validity } from "~/lib/api/types";
 import { Breadcrumbs } from "~/lib/components/PageHeader";
@@ -47,6 +50,23 @@ export function WorkspaceHeader({ onTestChange, onSend }: { onTestChange: (testI
   const payload = useTriage(store, (s) => s.payload);
   const progress = useProgress();
   const agent = useAgentStatus();
+  const api = useApi();
+  const toast = useToast();
+  const [ingesting, setIngesting] = useState(false);
+  const uncached = payload?.tests.find((x) => !x.cached);
+  async function analyze() {
+    if (!payload || !uncached) return;
+    setIngesting(true);
+    try {
+      const res = await api.ingestTest(payload.project.id, payload.modelSet.id, uncached.accTestId);
+      toast.show(t("modelSets.analyzed", { version: uncached.modelSetVersion }));
+      onTestChange(res.testKey);
+    } catch (err) {
+      toast.show(err instanceof Error ? err.message : String(err), { tone: "error" });
+    } finally {
+      setIngesting(false);
+    }
+  }
   const inheritedCount = useTriage(store, (s) => s.rows.filter((r) => !r.nested && !s.latest.has(r.id) && s.proposals.get(r.id)?.inherited).length);
   if (!payload) return null;
   const tip = Object.entries(progress.breakdown)
@@ -66,12 +86,20 @@ export function WorkspaceHeader({ onTestChange, onSend }: { onTestChange: (testI
         {t("workspace.test")}
         <select className={`${inputCls} py-0.5 text-xs`} value={payload.test.id} onChange={(e) => onTestChange(e.target.value)}>
           {payload.tests.map((x) => (
-            <option key={x.id} value={x.id}>
-              {t("workspace.testOption", { date: fmt.date(x.completedOn), version: x.modelSetVersion, count: x.clashCount })} {x.analyzed ? t("workspace.analyzed") : ""}
+            <option key={x.accTestId} value={x.id} disabled={!x.cached}>
+              {x.cached
+                ? `${t("workspace.testOption", { date: fmt.date(x.completedOn), version: x.modelSetVersion, count: x.clashCount })} ${x.analyzed ? t("workspace.analyzed") : ""}`
+                : `${fmt.date(x.completedOn)} · v${x.modelSetVersion} · ${t("modelSets.notCached")}`}
             </option>
           ))}
         </select>
       </label>
+      {uncached && (
+        <button type="button" disabled={ingesting} onClick={analyze} className="inline-flex items-center gap-1 rounded border border-brand-muted/30 px-2 py-1 text-xs text-gray-700 hover:text-brand disabled:opacity-50">
+          {ingesting && <Spinner />}
+          {ingesting ? t("modelSets.analyzing") : `${t("modelSets.analyze")} v${uncached.modelSetVersion}`}
+        </button>
+      )}
       {agent?.running && <span className="rounded-full bg-brand-surface px-2 py-0.5 text-xs text-brand">{t("workspace.analyzing", { task: agent.currentTask ?? "" })}</span>}
       <div className="flex min-w-[180px] flex-col gap-0.5" title={tip}>
         <span className="text-xs text-gray-500">{t("workspace.progress", { done: progress.done, total: progress.total })}</span>

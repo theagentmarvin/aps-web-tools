@@ -7,7 +7,9 @@
  *   ingest [testId] [--refresh] [--no-properties] [--project <id>] [--model-set <id>]
  *   classify [testKey] [--propose]
  *   approvals list                batches by state
- *   approve <batchId>             HUMAN approval (interactive TTY only; refused under Claude Code)
+ *   approve <batchId>             DEMO approval, fixtures mode only (interactive TTY; refused under Claude Code).
+ *                                 Live approvals need a passkey (WebAuthn) in the web UI.
+ *   passkey-enroll                one-time code to register the FIRST passkey (interactive TTY only)
  *   apply <batchId> [--no-dry-run]
  *   verify-approval <batchId> [--json]   read-only check used by the guard-apply hook
  *
@@ -46,7 +48,7 @@ function positional(args: string[]): string[] {
 
 /** True when approval must be refused: non-interactive stdin or running under Claude Code. */
 export function approvalChannelBlocked(env: NodeJS.ProcessEnv = process.env, isTTY: boolean = !!process.stdin.isTTY): string | undefined {
-  if (env.CLAUDECODE) return "La aprobación no puede ejecutarse desde Claude Code (CLAUDECODE está definido). Ejecútala tú en tu propia terminal o usa la UI web.";
+  if ("CLAUDECODE" in env) return "La aprobación no puede ejecutarse desde Claude Code (CLAUDECODE está definido). Ejecútala tú en tu propia terminal o usa la UI web.";
   if (!isTTY) return "La aprobación requiere una terminal interactiva (stdin no es TTY).";
   return undefined;
 }
@@ -65,7 +67,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     }
     try {
       const coord = new Coordinator({ root });
-      const v = await verifyBatchApproval({ store: coord.store, source: coord.source }, batchId);
+      const v = await verifyBatchApproval(coord.approvalDeps(), batchId);
       if (!v.ok) {
         out(json ? JSON.stringify({ valid: false, ok: false, reason: v.reason, message: v.message }) : `NO VÁLIDA: ${v.reason} — ${v.message}`);
         return 1;
@@ -146,6 +148,10 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
         err(blocked);
         return 2;
       }
+      if (coord.source.kind !== "fixtures") {
+        err("En modo live la aprobación exige tu passkey (WebAuthn): apruébalo en la UI web (/aprobaciones). La CLI solo aprueba lotes de demostración en modo fixtures.");
+        return 2;
+      }
       const batchId = positional(rest)[0];
       if (!batchId) throw new CoordError("validation_error", "Uso: approve <batchId>");
       const b = await ui.getBatch(batchId);
@@ -163,22 +169,33 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
         err("No coincide. Aprobación cancelada.");
         return 1;
       }
-      const deps = { store: coord.store, source: coord.source, config: coord.config, effectiveLevel: coord.effectiveLevel };
-      const r = await approveBatch(deps, batchId, { id: user.id, name: user.name, channel: "cli" });
+      const r = await approveBatch(coord.approvalDeps(), batchId, { id: user.id, name: user.name, channel: "cli" }, { demo: true });
       out(`Aprobado. Vence ${r.approval.expiresAt}. Aplica con: npm run coordinator -- apply ${batchId} (dry-run) y luego --no-dry-run.`);
+      return 0;
+    }
+    case "passkey-enroll": {
+      // First passkey only: prints a one-time code typed into the browser registration page.
+      const blocked = approvalChannelBlocked();
+      if (blocked) {
+        err(blocked);
+        return 2;
+      }
+      const { code, expiresAt } = await coord.webauthn.createEnrollCode();
+      await coord.store.audit({ actor: { type: "user", id: "cli", name: "CLI (TTY)" }, action: "webauthn.enroll_code_issued", details: { expiresAt } });
+      out(`Código de enrolamiento (un solo uso, vence ${expiresAt}): ${code}`);
+      out("Ábrelo en la UI web → Ajustes → Passkey y escríbelo para registrar tu passkey (Windows Hello).");
       return 0;
     }
     case "apply": {
       const batchId = positional(rest)[0];
       if (!batchId) throw new CoordError("validation_error", "Uso: apply <batchId> [--no-dry-run]");
       const u = await human();
-      const deps = { store: coord.store, source: coord.source, config: coord.config, effectiveLevel: coord.effectiveLevel };
-      const r = await applyApproved(deps, batchId, { dryRun: !flag(rest, "--no-dry-run"), actor: { type: "user", id: u.id, name: u.name } });
+      const r = await applyApproved(coord.approvalDeps(), batchId, { dryRun: !flag(rest, "--no-dry-run"), actor: { type: "user", id: u.id, name: u.name } });
       out(JSON.stringify(r, null, 2));
       return r.ok ? 0 : 1;
     }
     default:
-      out("Comandos: login | logout | status | ingest [testId] | classify [testKey] [--propose] | approvals list | approve <batchId> | apply <batchId> [--no-dry-run] | verify-approval <batchId> [--json]");
+      out("Comandos: login | logout | status | ingest [testId] | classify [testKey] [--propose] | approvals list | approve <batchId> (fixtures) | passkey-enroll | apply <batchId> [--no-dry-run] | verify-approval <batchId> [--json]");
       return cmd ? 1 : 0;
   }
 }

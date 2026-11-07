@@ -10,6 +10,11 @@ import { join } from "node:path";
 import { diffStateIndex, diffTestVersions } from "../core/ingest";
 import type { ElementProps, NormalizedClash } from "../core/types";
 import { ApsAuth, resolveAuthConfig } from "./aps/auth";
+import { loadEnv } from "./aps/config";
+import type { ApprovalDeps } from "./approval";
+import { loadOrCreateApprovalKey } from "./approval/hmac";
+import { WebAuthnService } from "./approval/webauthn";
+import { loadOrCreateSecret, readSecret, secureDir } from "./secure/keystore";
 import { ClashCache, type CacheKey } from "./cache/clash-cache";
 import { loadConfig, MAX_SUPPORTED_LEVEL, type AutonomyLevel, type CoordinatorConfig, type LoadedConfig } from "./config";
 import { CLOSABLE, ENGINE_NAME, ENGINE_VERSION, runEngine } from "./engine";
@@ -41,6 +46,14 @@ import type {
 import { bareProjectId, CoordError, nowIso, paginate, percentile, round, sha256, testKeyOf } from "./util";
 
 export const SERVER_VERSION = "0.1.0";
+
+/** Summary dimensions whose values come from model data (wrapped as Untrusted in outputs). */
+const MODEL_DIMS = new Set(["level", "categoryPair", "documentPair"]);
+
+/** Text of a table cell that may be Untrusted (reports). */
+export function cellText(v: unknown): string {
+  return v && typeof v === "object" && "untrusted" in (v as object) ? String((v as { untrusted: string }).untrusted) : String(v ?? "");
+}
 
 export type DataSourceKind = "live" | "fixtures";
 
@@ -120,11 +133,29 @@ export class Coordinator {
   constructor(opts: CoordinatorOptions = {}) {
     this.root = opts.root ?? process.cwd();
     this.now = opts.now ?? Date.now;
-    this.store = new Store({ home: opts.home ?? process.env.COORDINATOR_HOME ?? join(this.root, ".coordinator"), now: this.now });
+    const homeOverride = opts.home ?? process.env.COORDINATOR_HOME;
+    // Secrets (approval key, audit key, passkeys, APS token) live OUTSIDE the repo.
+    this.secureDir = secureDir({ homeOverride });
+    const sd = this.secureDir;
+    this.store = new Store({ home: homeOverride ?? join(this.root, ".coordinator"), now: this.now, auditKey: () => loadOrCreateSecret(sd, "audit-key"), auditKeyRead: () => readSecret(sd, "audit-key") });
     this.cache = new ClashCache(this.store.cacheRoot);
     this.loaded = opts.config ?? loadConfig(this.root);
     const kind: DataSourceKind = opts.dataSource ?? (process.env.COORD_DATA_SOURCE === "fixtures" ? "fixtures" : "live");
-    this.source = opts.source ?? (kind === "fixtures" ? new FixtureSource({ home: this.store.home }) : new LiveSource(() => new ApsAuth({ config: resolveAuthConfig(this.root) }), { root: this.root }));
+    this.source =
+      opts.source ??
+      (kind === "fixtures"
+        ? new FixtureSource({ home: this.store.home })
+        : new LiveSource(() => new ApsAuth({ config: resolveAuthConfig(this.root, { ...loadEnv(this.root), APS_TOKEN_PATH: join(sd, "aps-token.json") }) }), { root: this.root }));
+    const w = this.config.webauthn;
+    this.webauthn = new WebAuthnService(sd, () => loadOrCreateApprovalKey(sd), { rpID: w.rpID, rpName: w.rpName, origins: w.origins.length ? w.origins : [this.config.ui.baseUrl.replace(/\/$/, "")] }, this.now);
+  }
+
+  readonly secureDir: string;
+  readonly webauthn: WebAuthnService;
+
+  /** Dependencies for server/approval (the only ACC write path). */
+  approvalDeps(): ApprovalDeps {
+    return { store: this.store, source: this.source, config: this.config, effectiveLevel: this.effectiveLevel, secureDir: this.secureDir, webauthn: this.webauthn };
   }
 
   get config(): CoordinatorConfig {
@@ -228,7 +259,7 @@ export class Coordinator {
       },
       dataSource: this.source.kind,
       ...(ctx?.projectId
-        ? { active: { projectId: ctx.projectId, projectName: ctx.projectName ?? ctx.projectId, modelSetId: ctx.modelSetId, modelSetName: ctx.modelSetName, testKey: ctx.testKey } }
+        ? { active: { projectId: ctx.projectId, projectName: untrusted(ctx.projectName ?? ctx.projectId), modelSetId: ctx.modelSetId, ...(ctx.modelSetName ? { modelSetName: untrusted(ctx.modelSetName) } : {}), testKey: ctx.testKey } }
         : {}),
       ...(notes ? { projectNotes: notes } : {}),
       cache: { tests: tests.length, sizeMb: round(tests.reduce((n, t) => n + t.counts.clashes, 0) * 0.002, 1) },
@@ -263,7 +294,7 @@ export class Coordinator {
       modelSetName,
       testKey: input.testKey,
     });
-    return { projectId: ctx.projectId!, projectName: ctx.projectName!, modelSetId: ctx.modelSetId, modelSetName: ctx.modelSetName, testKey: ctx.testKey };
+    return { projectId: ctx.projectId!, projectName: untrusted(ctx.projectName!), modelSetId: ctx.modelSetId, ...(ctx.modelSetName ? { modelSetName: untrusted(ctx.modelSetName) } : {}), testKey: ctx.testKey };
   }
 
   private async ctxProject(projectId?: string): Promise<string> {
@@ -289,7 +320,7 @@ export class Coordinator {
     const page = paginate(projects, input.limit, input.cursor);
     return {
       columns: ["projectId", "name", "hubName", "mcEnabled"],
-      rows: page.items.map((p) => [p.id, untrusted(p.name).untrusted, untrusted(p.hubName).untrusted, true]),
+      rows: page.items.map((p) => [p.id, untrusted(p.name), untrusted(p.hubName), true]),
       total: page.total,
       nextCursor: page.nextCursor,
     };
@@ -300,7 +331,7 @@ export class Coordinator {
     const sets = await this.source.listModelSets(projectId);
     return {
       columns: ["modelSetId", "name", "latestVersion", "latestVersionAt", "documentCount"],
-      rows: sets.map((s) => [s.id, untrusted(s.name).untrusted, s.latestVersion, s.latestVersionAt ?? "", s.documentCount]),
+      rows: sets.map((s) => [s.id, untrusted(s.name), s.latestVersion, s.latestVersionAt ?? "", s.documentCount]),
       total: sets.length,
     };
   }
@@ -325,7 +356,7 @@ export class Coordinator {
     const cached = new Map((await this.store.listTests()).map((t) => [t.testId, t.testKey]));
     return {
       columns: ["testId", "viewName", "modelSetVersion", "status", "completedOn", "cachedTestKey"],
-      rows: tests.map((t) => [t.id, untrusted(t.viewName).untrusted, t.modelSetVersion, t.status, t.completedOn ?? "", cached.get(t.id) ?? null]),
+      rows: tests.map((t) => [t.id, untrusted(t.viewName), t.modelSetVersion, t.status, t.completedOn ?? "", cached.get(t.id) ?? null]),
       total: tests.length,
     };
   }
@@ -409,8 +440,8 @@ export class Coordinator {
   private ingestOutput(t: TestRecord) {
     return {
       testKey: t.testKey,
-      modelSet: { id: t.modelSetId, name: t.modelSetName, version: t.modelSetVersion },
-      viewName: t.viewName,
+      modelSet: { id: t.modelSetId, name: untrusted(t.modelSetName), version: t.modelSetVersion },
+      viewName: untrusted(t.viewName),
       documents: t.documents.map((d) => ({
         docIndex: d.documentId,
         name: untrusted(`${d.name} · ${d.viewableName}`),
@@ -731,8 +762,8 @@ export class Coordinator {
         triageState: c.triageState,
         penetrationMm: round(c.penetrationMm),
         distanceMm: round(c.distanceMm),
-        left: `${c.a.ref} ${c.a.category}`,
-        right: `${c.b.ref} ${c.b.category}`,
+        left: { ref: c.a.ref, category: untrusted(c.a.category) },
+        right: { ref: c.b.ref, category: untrusted(c.b.category) },
       }));
     let elements: unknown[] | undefined;
     if (input.includeElementProps) {
@@ -740,12 +771,12 @@ export class Coordinator {
       for (const c of members) for (const s of [c.a, c.b]) if (!seen.has(s.ref) && seen.size < 12) seen.set(s.ref, s);
       elements = [...seen.values()].map((s) => ({
         ref: s.ref,
-        doc: s.modelName,
+        doc: untrusted(s.modelName),
         discipline: s.discipline,
-        category: s.category,
+        category: untrusted(s.category),
         ...(s.family ? { family: untrusted(s.family) } : {}),
         ...(s.type ? { type: untrusted(s.type) } : {}),
-        ...(s.level ? { level: s.level } : {}),
+        ...(s.level ? { level: untrusted(s.level) } : {}),
         ...(s.system ? { system: untrusted(s.system) } : {}),
         ...(s.sizeHint ? { sizeHint: s.sizeHint } : {}),
         ...(s.externalId ? { externalId: s.externalId } : {}),
@@ -761,7 +792,7 @@ export class Coordinator {
       strategy: g.engineStrategy,
       clashCount: g.clashIds.length,
       label: untrusted(g.title),
-      location: { levels: g.levels },
+      location: { levels: g.levels.map((l) => untrusted(l)) },
       classification: {
         validity: g.validity,
         nature: g.nature,
@@ -837,7 +868,7 @@ export class Coordinator {
     const page = paginate(sorted, input.limit, input.cursor);
     return {
       columns: ["clashId", "groupId", "triageState", "validity", "penetrationMm", "leftRef", "leftCategory", "rightRef", "rightCategory", "level"],
-      rows: page.items.map((c) => [c.id, c.groupId, c.triageState, c.validity, round(c.penetrationMm), c.a.ref, c.a.category, c.b.ref, c.b.category, c.level ?? ""]),
+      rows: page.items.map((c) => [c.id, c.groupId, c.triageState, c.validity, round(c.penetrationMm), c.a.ref, untrusted(c.a.category), c.b.ref, untrusted(c.b.category), untrusted(c.level ?? "")]),
       total: page.total,
       nextCursor: page.nextCursor,
     };
@@ -919,7 +950,8 @@ export class Coordinator {
     }
     const total = rows.length;
     const sorted = [...agg.values()].sort((a, b) => b.count - a.count || a.keys.join().localeCompare(b.keys.join()));
-    const out: unknown[][] = sorted.slice(0, input.topN).map((a) => [...a.keys, a.count, round((a.count / Math.max(1, total)) * 100), round(a.max)]);
+    const cell = (d: string, v: string): unknown => (MODEL_DIMS.has(d) && v !== "otros" ? untrusted(v) : v);
+    const out: unknown[][] = sorted.slice(0, input.topN).map((a) => [...a.keys.map((k, i) => cell(input.groupBy[i]!, k)), a.count, round((a.count / Math.max(1, total)) * 100), round(a.max)]);
     const rest = sorted.slice(input.topN);
     if (rest.length) {
       const n = rest.reduce((s, a) => s + a.count, 0);
@@ -983,7 +1015,7 @@ export class Coordinator {
       },
       byDimension: {
         columns: [input.groupBy, "new", "resolved", "persisting", "elementDeleted", "reappeared"],
-        rows: [...by.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([k, v]) => [k, v.new, v.resolved, v.persisting, v.elementDeleted, v.reappeared]),
+        rows: [...by.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([k, v]) => [MODEL_DIMS.has(input.groupBy) ? untrusted(k) : k, v.new, v.resolved, v.persisting, v.elementDeleted, v.reappeared]),
         total: by.size,
       },
       topPersistingGroups: {
@@ -1046,12 +1078,12 @@ export class Coordinator {
     return {
       byDocument: {
         columns: ["doc", "discipline", "elementsInClashes", "selfClashes", "duplicates", "missingLevel", "missingSystem", "genericTypes"],
-        rows: [...perDoc.values()].map((d) => [d.doc, d.discipline, d.elements.size, d.self, d.dup, d.noLevel.size, d.noSystem.size, d.generic.size]),
+        rows: [...perDoc.values()].map((d) => [untrusted(d.doc), d.discipline, d.elements.size, d.self, d.dup, d.noLevel.size, d.noSystem.size, d.generic.size]),
         total: perDoc.size,
       },
       findings: [...findings.values()]
         .sort((a, b) => b.count - a.count)
-        .map((f) => ({ check: f.check, doc: f.doc, count: f.count, examples: f.examples, clashesAffected: [...f.clashes].filter(Boolean).length })),
+        .map((f) => ({ check: f.check, doc: untrusted(f.doc), count: f.count, examples: f.examples, clashesAffected: [...f.clashes].filter(Boolean).length })),
     };
   }
 
@@ -1536,7 +1568,7 @@ export class Coordinator {
       const page = paginate(fb, input.limit, input.cursor);
       return {
         columns: ["feedbackId", "at", "verdict", "engineValidity", "correctedValidity", "disciplinePair", "categoryPair", "rules", "statement"],
-        rows: page.items.map((f) => [f.id, f.at, f.verdict, f.snapshot?.engine?.validity ?? "", String(f.corrected?.validity ?? ""), f.snapshot?.disciplinePair ?? "", f.snapshot?.categoryPair ?? "", (f.snapshot?.ruleIds ?? []).join(" "), untrusted(f.coordinatorStatement).untrusted]),
+        rows: page.items.map((f) => [f.id, f.at, f.verdict, f.snapshot?.engine?.validity ?? "", String(f.corrected?.validity ?? ""), f.snapshot?.disciplinePair ?? "", f.snapshot?.categoryPair ?? "", (f.snapshot?.ruleIds ?? []).join(" "), untrusted(f.coordinatorStatement)]),
         total: page.total,
         nextCursor: page.nextCursor,
       };
@@ -1768,7 +1800,7 @@ export class Coordinator {
     lines.push("## Cifras", "", "| Indicador | Valor |", "|---|---|", ...Object.entries(headline).map(([k, v]) => `| ${k} | ${v} |`), "");
     const pairs = await this.summarize({ testKey: test.testKey, groupBy: ["disciplinePair", "validity"], unit: "clashes", topN: 15 });
     sections.push("Por par de disciplinas");
-    lines.push("## Por par de disciplinas", "", `| ${pairs.columns.join(" | ")} |`, `|${pairs.columns.map(() => "---").join("|")}|`, ...pairs.rows.map((r) => `| ${r.join(" | ")} |`), "");
+    lines.push("## Por par de disciplinas", "", `| ${pairs.columns.join(" | ")} |`, `|${pairs.columns.map(() => "---").join("|")}|`, ...pairs.rows.map((r) => `| ${r.map(cellText).join(" | ")} |`), "");
     if (input.compareWithTestKey || (input.kind === "weekly" && test.previousTestKey)) {
       const base = input.compareWithTestKey ?? test.previousTestKey!;
       const d = await this.diffVersions({ baseTestKey: base, targetTestKey: test.testKey, groupBy: "disciplinePair", topPersisting: 10 }).catch(() => undefined);

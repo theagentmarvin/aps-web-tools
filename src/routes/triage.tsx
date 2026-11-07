@@ -4,7 +4,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 import { useT } from "~/i18n";
-import { useApi, useAsync } from "~/lib/api";
+import { ApiError, useApi, useAsync } from "~/lib/api";
+import { TestList } from "./project";
 import type { TriagePayload } from "~/lib/api/types";
 import { Modal } from "~/lib/components/Modal";
 import { CopyCommand } from "~/lib/components/shell-widgets";
@@ -113,6 +114,15 @@ export function TriageWorkspace() {
 
   const ctx = useMemo(() => ({ store, actions }), [store, actions]);
 
+  if (error instanceof ApiError && error.serverCode === "not_ingested")
+    return (
+      <div className="mx-auto max-w-2xl p-6">
+        <EmptyState title={t("workspace.notCachedTitle")} body={error.hint} />
+        <div className="rounded-lg border border-brand-muted/20 bg-white px-4 pb-3">
+          <TestList projectId={projectId} modelSetId={modelSetId} onChanged={reload} />
+        </div>
+      </div>
+    );
   if (error) return <ErrorState error={error} onRetry={reload} />;
 
   return (
