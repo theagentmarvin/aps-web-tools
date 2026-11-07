@@ -61,6 +61,8 @@ export interface CompiledWhen {
 export interface CompiledRule {
   id: string;
   name: string;
+  /** Spanish name from the YAML (`nameEs`). */
+  nameEs?: string;
   index: number;
   when: CompiledWhen;
   then: RuleThen;
@@ -115,6 +117,10 @@ export interface CompiledRuleSet {
   scoring: ScoringModel;
   /** ISO dates (YYYY-MM-DD). */
   holidays: ReadonlySet<string>;
+  /** Non-fatal loader warnings (e.g. rules without `nameEs`). */
+  warnings: readonly string[];
+  /** ruleId -> Spanish name, from `nameEs`. */
+  ruleNamesEs: ReadonlyMap<string, string>;
   /** Every element field the DSL knows (raw + derived + flags). */
   elementFields: ReadonlySet<string>;
 }
@@ -392,6 +398,7 @@ function compile(
     return {
       id: r.id,
       name: r.name,
+      ...(r.nameEs ? { nameEs: r.nameEs } : {}),
       index: i,
       when: compileWhen(r.when, `${p}.when`),
       then: r.then,
@@ -414,6 +421,10 @@ function compile(
   });
 
   const scoringModel = compileScoring(scoring, issues);
+  const missingEs = rules.filter((r) => !r.nameEs).map((r) => r.id);
+  const warnings = missingEs.length
+    ? [`classification-rules.yaml: ${missingEs.length} rule(s) without nameEs (Spanish title falls back to core/group/labels.ts): ${missingEs.join(", ")}`]
+    : [];
 
   const hash = sha1(canonicalJson({ matrix, classification, scoring }));
   return {
@@ -443,6 +454,8 @@ function compile(
     annotations,
     scoring: scoringModel,
     holidays: new Set((holidays?.holidays ?? []).map((h) => h.date)),
+    warnings,
+    ruleNamesEs: new Map(rules.filter((r) => r.nameEs).map((r) => [r.id, r.nameEs!])),
     elementFields,
   };
 }

@@ -104,7 +104,11 @@ describe("clash facts, tolerance and who-moves", () => {
     expect(whoMoves(rs, bigDuct, tray).mover).toBe(tray); // 80 vs 65
     const p1 = E({ category: "Pipes", diameterMm: 50 });
     const p2 = E({ category: "Pipes", diameterMm: 63 });
-    expect(whoMoves(rs, p1, p2)).toMatchObject({ mover: p1, basis: "size" });
+    expect(whoMoves(rs, p1, p2)).toMatchObject({ mover: p1, basis: "section" });
+    // Resolution 6: a 300x100 tray against a 300x250 duct is not a tie (ranks 65 vs 60): the tray moves.
+    const tray3 = E({ category: "Cable Tray", widthMm: 300, heightMm: 100 });
+    const duct3 = E({ category: "Ducts", widthMm: 300, heightMm: 250 });
+    expect(whoMoves(rs, duct3, tray3)).toMatchObject({ mover: tray3, basis: "section" });
     const p3 = E({ category: "Pipes", diameterMm: 50 });
     expect(whoMoves(rs, p1, p3)).toMatchObject({ basis: "tie" });
     expect(whoMoves(rs, p1, p3).mover).toBeUndefined();
@@ -113,13 +117,17 @@ describe("clash facts, tolerance and who-moves", () => {
     expect(whoMoves(rs, g1, g2).mover).toBeUndefined(); // gravity vs gravity: no mover
   });
 
-  it("@mover resolves to COORD on a tie (MM-010)", () => {
+  it("@mover resolves to COORD on a tie (MM-010) and never renders \"mueve COORD\"", () => {
     const c = evaluatePair(rs, { distanceMm: -40 }, { category: "Pipes", diameterMm: 50, systemName: "A", documentName: "P-CLI.rvt" }, { category: "Pipes", diameterMm: 50, systemName: "B", documentName: "P-AP.rvt" });
     expect(c.classification.ruleId).toBe("MM-010");
     expect(c.classification.responsibleDiscipline).toBe("COORD");
     expect(c.classification.secondaryDiscipline).toBe("COORD");
     expect(c.classification.mover).toBeUndefined();
-    expect(c.classification.rationale).toMatch(/mueve COORD/);
+    expect(c.classification.rationale).not.toMatch(/COORD/);
+    expect(c.classification.rationale).toBe("Tubería B (50 mm) cruza tubería A (50 mm). Coordinación define quién desvía (sin jerarquía clara).");
+    // Binding no longer depends on ACC left/right: AP sorts before CLI, so a = the AP pipe either way.
+    const rev = evaluatePair(rs, { distanceMm: -40 }, { category: "Pipes", diameterMm: 50, systemName: "B", documentName: "P-AP.rvt" }, { category: "Pipes", diameterMm: 50, systemName: "A", documentName: "P-CLI.rvt" });
+    expect(rev.classification.rationale).toBe(c.classification.rationale);
   });
 });
 

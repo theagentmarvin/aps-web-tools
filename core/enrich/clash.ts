@@ -15,6 +15,8 @@ export interface ClashFactsInput {
   status?: number | string;
   /** One element nests in the other (instance tree). Missing -> false. */
   nestedRelation?: boolean;
+  /** Another clash of the test pairs a modeled sleeve with the same host around this crossing. */
+  coveredBySleeve?: boolean;
 }
 
 export interface ClashFacts {
@@ -39,6 +41,7 @@ export interface ClashFacts {
   sameDiscipline: boolean;
   sameLevel: boolean;
   nestedRelation: boolean;
+  coveredBySleeve: boolean;
 }
 
 const STATUS_CODES: Record<string, number> = { active: 1, reviewed: 2, resolved: 3, closed: 4 };
@@ -100,6 +103,7 @@ export function computeClashFacts(rs: CompiledRuleSet, input: ClashFactsInput, l
     sameDiscipline: same(left, right, "discipline"),
     sameLevel: same(left, right, "level"),
     nestedRelation: input.nestedRelation === true,
+    coveredBySleeve: input.coveredBySleeve === true,
   };
   return withNormCache(facts);
 }

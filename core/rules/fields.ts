@@ -20,7 +20,7 @@ export const ELEMENT_DERIVED_FIELDS = [
 export const CLASH_FIELDS = [
   "distanceMm", "penetrationMm", "penetrationRatio", "status", "toleranceHardMm", "clearanceMm", "withinTolerance",
   "clearanceViolation", "sameDocument", "sameModelFile", "sameExternalId", "sameSystemName", "sameFamily", "sameType",
-  "sameCategory", "sameDiscipline", "sameLevel", "nestedRelation",
+  "sameCategory", "sameDiscipline", "sameLevel", "nestedRelation", "coveredBySleeve",
 ] as const;
 
 export type ElementRawField = (typeof ELEMENT_RAW_FIELDS)[number];

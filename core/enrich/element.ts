@@ -85,6 +85,10 @@ export interface ElementFacts {
   sizeMm?: number;
   elementClass: string;
   moveRank?: number;
+  /** Bounding box in metres, when supplied (geometry facts; not a DSL field). */
+  bbox?: { min: Vec3Like; max: Vec3Like };
+  /** Level name as received, when the pipeline normalized `level`. */
+  levelRaw?: string;
 }
 
 const INSULATION_HOST: Record<string, string> = {
@@ -183,6 +187,7 @@ export function enrichElement(rs: CompiledRuleSet, input: ElementInput, depth = 
     (el as Record<string, unknown>)[f] = v;
   }
   if (input.category !== undefined && input.category !== "") el.categoryRaw = input.category;
+  if (input.bbox) el.bbox = input.bbox;
   setField(el, "category", canonicalCategory(rs, input.category));
   if (input.systemClassification) el.systemClassificationRaw = input.systemClassification;
   setField(el, "systemClassification", canonicalSystemClassification(rs, input.systemClassification));

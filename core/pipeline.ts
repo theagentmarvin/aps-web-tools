@@ -9,6 +9,8 @@ import { moverSideOf, sideA } from "./classified";
 import { classifyPair } from "./classify";
 import { computeClashFacts, type ClashFactsInput } from "./enrich/clash";
 import { enrichElement, type ElementFacts, type ElementInput } from "./enrich/element";
+import { buildLevelCanon } from "./enrich/level";
+import { invalidateNorm } from "./rules/matcher";
 import { groupClashes, type ClashGroup, type GroupingOptions } from "./group";
 import { DEFAULT_REVIEW_POLICY, type ReviewPolicy } from "./group/review";
 import type { ElementLookup } from "./ingest/pair-key";
@@ -28,6 +30,8 @@ export interface CoordinationOptions {
   daysToInstall?: (clash: ClassifiedClash) => number | undefined;
   /** Extra tags per MC clash id, e.g. `regresion` from the re-test diff. */
   extraTags?: (clash: NormalizedClash) => readonly string[] | undefined;
+  /** Project level map (raw name -> canonical), evaluated before the automatic normalization. */
+  levelMap?: Readonly<Record<string, string>>;
   /** Orientation override per element (e.g. from viewer fragments). */
   orientation?: (documentId: number, viewerDbId: number) => ElementInput["orientation"] | undefined;
   score?: ScoreOptions;
@@ -166,6 +170,30 @@ export function runCoordination(input: CoordinationInput): CoordinationResult {
     return el;
   };
   const pairs = entries.map(([key, e]) => ({ key, e, left: enrichSide(e.rep.left), right: enrichSide(e.rep.right) }));
+
+  // ── Level normalization: one display name per storey across models.
+  const levelCanon = buildLevelCanon(pairs.flatMap((p) => [p.left.level, p.right.level]), opts.levelMap);
+  for (const el of cache.values()) {
+    if (el.level === undefined) continue;
+    const canon = levelCanon(el.level);
+    if (canon !== el.level) {
+      el.levelRaw = el.level;
+      el.level = canon;
+      invalidateNorm(el, "level");
+    }
+  }
+
+  // ── Cross-clash fact: MEP crossing inside a modeled sleeve of the same host.
+  const sleevesByHost = new Map<string, ElementFacts[]>();
+  for (const { left, right } of pairs) {
+    for (const [s, host] of [[left, right], [right, left]] as const) {
+      if (s.isSleeveOrOpening !== true || host.isSleeveOrOpening === true) continue;
+      const k = String(host.elementKey);
+      const list = sleevesByHost.get(k);
+      if (!list) sleevesByHost.set(k, [s]);
+      else if (!list.includes(s)) list.push(s);
+    }
+  }
   const t2 = now();
 
   // ── Classify + score.
@@ -175,6 +203,7 @@ export function runCoordination(input: CoordinationInput): CoordinationResult {
       distanceMm: rep.distanceMm,
       status: rep.status,
       nestedRelation: opts.nestedRelation?.(rep) ?? false,
+      coveredBySleeve: coveredBySleeve(left, right, sleevesByHost) || coveredBySleeve(right, left, sleevesByHost),
     };
     const extra = new Set<string>();
     if (opts.extraTags) for (const c of e.all) for (const t of opts.extraTags(c) ?? []) extra.add(t);
@@ -320,4 +349,35 @@ function buildStats(
     topRules: Object.entries(rules).sort((x, y) => y[1] - x[1] || cmpStr(x[0], y[0])).slice(0, 10).map(([ruleId, hits]) => ({ ruleId, hits })),
     timings: { dedupeMs: 0, enrichMs: 0, classifyMs: 0, groupMs: 0, totalMs: 0 },
   };
+}
+
+/** Plan tolerance (m) when testing whether a crossing lies inside a sleeve. */
+const SLEEVE_PLAN_TOLERANCE_M = 0.025;
+
+type Box = { min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } };
+
+/**
+ * `coveredBySleeve` (engine review §1.3): true when `mep` (not itself a
+ * sleeve) crosses `host`, and another clash of the same test pairs a modeled
+ * sleeve/opening with that host whose bbox contains the crossing point in plan.
+ * The crossing point is the centre of the intersection of the two bboxes.
+ * Without bboxes it is false (conservative: the clash stays real).
+ */
+export function coveredBySleeve(mep: ElementFacts, host: ElementFacts, sleevesByHost: ReadonlyMap<string, readonly ElementFacts[]>): boolean {
+  if (mep.isSleeveOrOpening === true || !mep.bbox || !host.bbox) return false;
+  const sleeves = sleevesByHost.get(String(host.elementKey));
+  if (!sleeves?.length) return false;
+  const a = mep.bbox as Box;
+  const b = host.bbox as Box;
+  const lo = (k: "x" | "y") => Math.max(a.min[k], b.min[k]);
+  const hi = (k: "x" | "y") => Math.min(a.max[k], b.max[k]);
+  // Centre of the plan intersection; if the boxes do not overlap in plan, use the MEP centre.
+  const cx = lo("x") <= hi("x") ? (lo("x") + hi("x")) / 2 : (a.min.x + a.max.x) / 2;
+  const cy = lo("y") <= hi("y") ? (lo("y") + hi("y")) / 2 : (a.min.y + a.max.y) / 2;
+  const t = SLEEVE_PLAN_TOLERANCE_M;
+  return sleeves.some((s) => {
+    if (s === mep || !s.bbox) return false;
+    const sb = s.bbox as Box;
+    return cx >= sb.min.x - t && cx <= sb.max.x + t && cy >= sb.min.y - t && cy <= sb.max.y + t;
+  });
 }

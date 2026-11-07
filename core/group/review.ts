@@ -18,8 +18,18 @@ export interface ReviewPolicy {
   bulkClosureMax: number;
 }
 
+/**
+ * Calibration (engine review 2026-11, docs/domain/engine-review-2026-11.md §4):
+ * - real 0.75: auto-accepting "real" never closes anything; it only queues an
+ *   issue draft that a human approves. MM-010 (0.75) is reliable on validity.
+ * - false_positive 0.88 / tolerance 0.85: deterministic geometry/practice rules
+ *   (FP-003/006/010/013/014, TOL-001/003) clear; heuristics (FP-002, FP-007/009,
+ *   TOL-004/005/007/008, AE-003, DUP-004/5/6) stay in review.
+ * - Safety triggers that no threshold can bypass: critical severity, closing
+ *   with seguridad_personas, structural openings (isStructuralOpening).
+ */
 export const DEFAULT_REVIEW_POLICY: ReviewPolicy = {
-  autoAccept: { real: 0.8, false_positive: 0.92, duplicate: 0.9, tolerance: 0.92 },
+  autoAccept: { real: 0.75, false_positive: 0.88, duplicate: 0.9, tolerance: 0.85 },
   reviewFloor: 0.55,
   alwaysReview: { severity: ["critical"], minClashCount: 150, unmatched: true, rulesConflict: true },
   bulkClosureMax: 50,
@@ -40,4 +50,18 @@ export function confidenceBand(policy: ReviewPolicy, validity: Validity, nature:
   const t = autoAcceptThreshold(policy, validity, nature);
   if (t !== undefined && confidence >= t) return "alta";
   return confidence >= policy.reviewFloor ? "media" : "baja";
+}
+
+/** Tag for penetrations/embedments in structure (engine-native, see classify). */
+export const STRUCTURAL_OPENING_TAG = "pasada_estructural";
+
+/**
+ * Structural opening or embedment (tag `pasada_estructural`): closing it or
+ * asking for the opening means accepting a penetration in structure, which only
+ * the calculista can approve (methodology "always human"). Hard-coded on
+ * purpose: it is NOT part of ReviewPolicy and cannot be configured away.
+ */
+export function isStructuralOpening(validity: Validity, rootCause: string, tags: ReadonlySet<string>): boolean {
+  const closable = validity === "false_positive" || validity === "tolerated";
+  return tags.has(STRUCTURAL_OPENING_TAG) && (closable || rootCause === "missing_opening");
 }

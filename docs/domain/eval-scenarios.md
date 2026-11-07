@@ -59,9 +59,9 @@ scenarios:
     title: Agua potable Ø25 por tabique no RF
     dist: -0.025
     left:  { documentId: 3, modelFile: lin-san, documentName: P2401-SAN-TorreA.rvt, externalId: s-020, category: Revit Tuberías, family: Tubería PPR, type: PPR PN20, systemClassification: Domestic Cold Water, systemType: APF, systemName: APF 2, level: Piso 2, diameterMm: 25 }
-    right: { documentId: 2, modelFile: lin-arq, documentName: P2401_ARQ_TorreA.rvt, externalId: a-410, category: Revit Muros, family: Muro básico, type: Tabique volcometal 95, level: Piso 2, widthMm: 95 }
+    right: { documentId: 2, modelFile: lin-arq, documentName: P2401_ARQ_TorreA.rvt, externalId: a-410, category: Revit Muros, family: Muro básico, type: Tabique volcometal 95, level: Piso 2, widthMm: 95, fireRating: Sin RF }
     expected: { ruleId: TOL-008, validity: tolerated, responsibleDiscipline: COORD, severity: none, band: NONE }
-    notes: Pasada estándar en tabique; se ejecuta en obra.
+    notes: Pasada estándar en tabique sin RF declarada; se ejecuta en obra. Sin el parámetro RF el caso es EV-26.
 
   - id: EV-06
     title: Conduit Ø20 embutido en losa de 150 mm
@@ -222,6 +222,14 @@ scenarios:
     right: { documentId: 6, modelFile: lin-ele, documentName: P2401-ELE.rvt, externalId: l-1500, category: Revit Bandejas de cables, family: Escalerilla portaconductores, type: Escalerilla 300x100, level: Cubierta, widthMm: 300, heightMm: 100 }
     expected: { ruleId: CLR-002, validity: real, nature: clearance, rootCause: design_coordination, responsibleDiscipline: ELE, secondaryDiscipline: CLI, severity: medium, band: P3 }
     notes: La zona de mantención es un modelo genérico, pero se reconoce por su nombre antes de la regla NI-001.
+
+  - id: EV-26
+    title: Agua potable Ø32 por muro sin RF informada
+    dist: -0.140
+    left:  { documentId: 3, modelFile: lin-san, documentName: P2401-SAN-TorreA.rvt, externalId: s-026, category: Revit Tuberías, family: Tubería PPR, type: PPR PN20, systemClassification: Domestic Cold Water, systemType: APF, systemName: APF 4, level: Piso 5, diameterMm: 32 }
+    right: { documentId: 2, modelFile: lin-arq, documentName: P2401_ARQ_TorreA.rvt, externalId: a-426, category: Revit Muros, family: Muro básico, type: Albañilería e=140, level: Piso 5, widthMm: 140 }
+    expected: { ruleId: MA-013, validity: real, nature: hard, rootCause: model_hygiene, responsibleDiscipline: ARQ, secondaryDiscipline: AP, severity: low }
+    notes: Sin RF informada no se puede cerrar como tabique común; ARQ completa el parámetro y el caso se reclasifica en el ciclo siguiente.
 ```
 
 ## Coverage

@@ -1,9 +1,9 @@
 /**
  * Spanish labels used by generated group titles and issue drafts.
  *
- * The rule files carry English rule names and no Spanish class labels, so the
- * Spanish strings live here (resolved spec gap). Unknown ids fall back to the
- * English rule name / class id. If rules gain a `nameEs` field later, prefer it.
+ * Rule names: the rule YAML `nameEs` wins (engine review resolution 13); this
+ * table is only the fallback for rules that still lack it (the loader warns).
+ * Class labels have no YAML counterpart and live here.
  */
 
 export const RULE_NAMES_ES: Readonly<Record<string, string>> = {
@@ -32,6 +32,7 @@ export const RULE_NAMES_ES: Readonly<Record<string, string>> = {
   "FP-013": "Subcomponentes de familia anidada",
   "FP-014": "Revestimiento sobre estructura",
   "FP-015": "Topografía o terreno",
+  "FP-016": "Instalación por pasada modelada",
   "SEI-001": "Instalación cruza junta sísmica",
   "TOL-001": "Contacto sin penetración",
   "TOL-002": "Holgura insuficiente",
@@ -73,6 +74,7 @@ export const RULE_NAMES_ES: Readonly<Record<string, string>> = {
   "MA-006": "Instalación por muro resistente al fuego",
   "MA-007": "Instalación grande por tabique",
   "MA-008": "Equipo o terminal contra muro",
+  "MA-013": "Pasada por muro sin resistencia al fuego informada",
   "MA-009": "Instalación por cubierta",
   "MA-010": "Instalación contra piso no estructural",
   "MA-011": "Instalación contra mobiliario",
@@ -144,6 +146,7 @@ export function classLabel(cls: string | undefined): ClassLabel {
   return (cls && CLASS_LABELS_ES[cls]) || { one: cls ?? "elemento", many: cls ? `${cls}s` : "elementos", g: "m" };
 }
 
-export function ruleNameEs(ruleId: string, fallback?: string): string {
-  return RULE_NAMES_ES[ruleId] ?? fallback ?? ruleId;
+/** Spanish rule name: YAML `nameEs` (via the rule set), else this table, else the fallback. */
+export function ruleNameEs(ruleId: string, fallback?: string, rs?: { ruleNamesEs: ReadonlyMap<string, string> }): string {
+  return rs?.ruleNamesEs.get(ruleId) ?? RULE_NAMES_ES[ruleId] ?? fallback ?? ruleId;
 }

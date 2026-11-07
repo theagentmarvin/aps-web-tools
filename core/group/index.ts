@@ -17,7 +17,7 @@
  *   costly error, so the weakest member governs).
  */
 import type { ClassifiedClash } from "../classified";
-import { elementToken, fixedOf, moverOf, moverSideOf, sideA, sideB } from "../classified";
+import { elementToken, fixedOf, moverOf, sideA, sideB } from "../classified";
 import type { ElementFacts } from "../enrich/element";
 import type { CompiledRuleSet } from "../rules/load";
 import type { Nature, RootCause, Severity, SuggestedAction, Validity, BandName, FactorName } from "../rules/schemas";
@@ -26,7 +26,7 @@ import { scoreFromFactors, type FactorValues, type PriorityResult } from "../sco
 import { sha1 } from "../util/sha1";
 import { byFrequency, capitalize, cmpStr, dominant, norm, sanitize, sortedPair } from "../util/text";
 import { classLabel, ruleNameEs } from "./labels";
-import { autoAcceptThreshold, confidenceBand, DEFAULT_REVIEW_POLICY, type ConfidenceBand, type ReviewPolicy } from "./review";
+import { autoAcceptThreshold, confidenceBand, DEFAULT_REVIEW_POLICY, isStructuralOpening, type ConfidenceBand, type ReviewPolicy } from "./review";
 
 export * from "./review";
 export * from "./labels";
@@ -100,6 +100,8 @@ export interface GroupingOptions {
   hubMin?: number;
   /** Max clashes per group for G3–G6 (default 60). */
   maxGroupSize?: number;
+  /** G5: minimum clashes for a system run (default 3); smaller runs fall to zones. */
+  runMin?: number;
   /** G3: merge needs-info requests by family when more than this many elements share it (default 5). */
   needsInfoFamilyMerge?: number;
   /** Grid bay of a clash (e.g. "C-D/4-5"); enables coordinate-based zones. */
@@ -173,11 +175,26 @@ function responsibleSide(c: ClassifiedClash): ElementFacts | undefined {
   return undefined;
 }
 
+/**
+ * [own, other]: the side owned by the responsible discipline (else the mover,
+ * else the bound `a` side) and the other side. Runs, zones and their titles
+ * follow who must act, not whoMoves (MA-006 binds the pipe while whoMoves picks
+ * the wall; EST-009 makes EST responsible while the pipe is the mover).
+ */
+export function ownSides(c: ClassifiedClash): [ElementFacts, ElementFacts] {
+  const own = responsibleSide(c);
+  if (own) return [own, own === c.left ? c.right : c.left];
+  const m = moverOf(c);
+  if (m) return [m, m === c.left ? c.right : c.left];
+  return [sideA(c), sideB(c)];
+}
+
 /** Run G1–G7 over classified clashes. Pure and deterministic. */
 export function groupClashes(rs: CompiledRuleSet, clashes: readonly ClassifiedClash[], options: GroupingOptions = {}): ClashGroup[] {
   const hubMin = options.hubMin ?? 3;
   const max = options.maxGroupSize ?? 60;
   const famMerge = options.needsInfoFamilyMerge ?? 5;
+  const runMin = options.runMin ?? 3;
   const policy = options.reviewPolicy ?? DEFAULT_REVIEW_POLICY;
 
   const all = [...clashes].sort((x, y) => cmpStr(x.key, y.key));
@@ -289,24 +306,28 @@ export function groupClashes(rs: CompiledRuleSet, clashes: readonly ClassifiedCl
     }
   }
 
-  // G5 — system runs.
+  // G5 — system runs: something the responsible discipline moves. When it owns the
+  // fixed side (EST models openings in its slabs) the level zone below is the meeting item.
   {
-    const runs = bucket(realFree(), (c) => {
-      const [mv, other] = moverSideOf(c);
-      const sys = mv.systemName ?? mv.systemType ?? mv.family ?? "";
-      return ["run", c.classification.responsibleDiscipline, norm(String(sys)), mv.level ?? "", other.elementClass, c.classification.ruleId].join("|");
+    const runs = bucket(realFree().filter((c) => ownSides(c)[0] !== fixedOf(c)), (c) => {
+      const [own, other] = ownSides(c);
+      const sys = own.systemName ?? own.systemType ?? own.family ?? "";
+      return ["run", c.classification.responsibleDiscipline, norm(String(sys)), own.level ?? "", other.elementClass, c.classification.ruleId].join("|");
     });
-    for (const [k, ms] of sortedBuckets(runs)) if (ms.length >= 2) for (const d of capSplit("run", k, ms, max)) take(d);
+    for (const [k, ms] of sortedBuckets(runs)) if (ms.length >= runMin) for (const d of capSplit("run", k, ms, max)) take(d);
   }
 
-  // G6 — zones (grid bay when available, else level + rule).
+  // G6 — zones: one agenda line = level (+ bay) × responsible × what it crosses × severity
+  // (not split by rule). When the responsible owns the fixed side (EST-009), every
+  // crossing discipline of the level goes together: one "plano de pasadas" item.
   {
     const zones = bucket(realFree(), (c) => {
-      const [, other] = moverSideOf(c);
+      const [own, other] = ownSides(c);
       const bay = options.bayOf?.(c);
+      const crossed = own === fixedOf(c) ? `fixed:${own.elementClass}` : `${other.discipline}|${other.elementClass}`;
       return bay
-        ? ["zone", lvl(c), bay, c.classification.responsibleDiscipline, other.discipline].join("|")
-        : ["zone", lvl(c), c.classification.responsibleDiscipline, other.discipline, c.classification.ruleId].join("|");
+        ? ["zone", lvl(c), bay, c.classification.responsibleDiscipline, crossed, c.classification.severity].join("|")
+        : ["zone", lvl(c), c.classification.responsibleDiscipline, crossed, c.classification.severity].join("|");
     });
     for (const [k, ms] of sortedBuckets(zones)) if (ms.length >= 2) for (const d of capSplit("zone", k, ms, max)) take(d);
   }
@@ -422,6 +443,8 @@ function buildGroup(rs: CompiledRuleSet, d: Draft, policy: ReviewPolicy, options
   const closable = first.validity === "false_positive" || first.validity === "tolerated";
   if (closable && ms.length > policy.bulkClosureMax) reasons.push(`cierre masivo de ${ms.length} interferencias (> ${policy.bulkClosureMax})`);
   if (closable && tags.has("seguridad_personas")) reasons.push("cierre de grupo con seguridad_personas");
+  // Hard-coded, not configurable: only the calculista approves an opening in structure.
+  if (isStructuralOpening(first.validity, rootCause, tags)) reasons.push("pasada en estructura (requiere calculista)");
   for (const r of new Set(cls.flatMap((c) => c.humanReviewReasons))) {
     if (r === "low_confidence" && reasons.some((x) => x.startsWith("confianza "))) continue;
     const es = HUMAN_REASON_ES[r] ?? r;
@@ -515,11 +538,17 @@ function groupTitle(rs: CompiledRuleSet, g: ClashGroup, ms: readonly ClassifiedC
   switch (g.strategy) {
     case "nonissue": {
       const discs = [...new Set([first.left.discipline, first.right.discipline])].sort(cmpStr).join("×");
-      return `${n} × ${ruleNameEs(g.ruleIds[0]!, first.classification.ruleName)} (${discs})`;
+      return `${n} × ${ruleNameEs(g.ruleIds[0]!, first.classification.ruleName, rs)} (${discs})`;
     }
     case "hygiene": {
+      const fileName = (e: ElementFacts) => sanitize(e.documentName ?? e.modelFile ?? "archivo desconocido");
+      if (g.ruleIds[0] === "DUP-001") {
+        const [fa, fb] = [fileName(first.left), fileName(first.right)].sort(cmpStr);
+        return fa === fb ? `Higiene: ${fa} está cargado dos veces en el conjunto de modelos` : `Higiene: ${fa} y ${fb} contienen los mismos elementos (modelo copiado)`;
+      }
+      if (g.ruleIds[0] === "DUP-002") return `Higiene: ${fileName(first.left)} entra con dos vistas 3D en el conjunto de modelos`;
       const side = responsibleSide(first) ?? sideA(first);
-      return `Higiene: ${ruleNameEs(g.ruleIds[0]!, first.classification.ruleName)} en ${sanitize(side.documentName ?? side.modelFile ?? "archivo desconocido")}`;
+      return `Higiene: ${ruleNameEs(g.ruleIds[0]!, first.classification.ruleName, rs)} en ${sanitize(side.documentName ?? side.modelFile ?? "archivo desconocido")}`;
     }
     case "needsinfo": {
       const a = sideA(first);
@@ -529,13 +558,13 @@ function groupTitle(rs: CompiledRuleSet, g: ClashGroup, ms: readonly ClassifiedC
         return `¿Qué representa la familia '${fam}' (${elements} instancias, ${g.responsibleDiscipline})?`;
       }
       if (fam) return `¿Qué representa '${fam}' (${categoryLabel(rs, a.category)}, ${g.responsibleDiscipline})? — ${level}`;
-      return `${ruleNameEs(g.ruleIds[0]!, first.classification.ruleName)}: ${sanitize(a.documentName ?? a.modelFile ?? "?")} (${g.responsibleDiscipline})`;
+      return `${ruleNameEs(g.ruleIds[0]!, first.classification.ruleName, rs)}: ${sanitize(a.documentName ?? a.modelFile ?? "?")} (${g.responsibleDiscipline})`;
     }
     case "hub-mover": {
       const hub = hubEl ?? moverOf(first) ?? first.left;
       const cc = commonClass(ms.map((m) => fixedOf(m) ?? m.right));
       return join(
-        capitalize(categoryLabel(rs, hub.category)), sanitize(hub.systemName ?? hub.type, 30), sizeHint(hub),
+        capitalize(categoryLabel(rs, hub.category)), titleName(hub), sizeHint(hub),
         "vs", String(n), cc ? classLabel(cc).many : "elementos", "—", sanitize(hub.level) || level,
       );
     }
@@ -547,20 +576,21 @@ function groupTitle(rs: CompiledRuleSet, g: ClashGroup, ms: readonly ClassifiedC
       const discs = [...new Set(crossing.map((e) => e.discipline))].sort(cmpStr).join("/");
       const part = classLabel(hub.elementClass).g === "f" ? "atravesada" : "atravesado";
       const label = categoryLabel(rs, hub.category);
-      const type = sanitize(hub.type, 30);
+      const type = titleName(hub, false);
       return join(
-        capitalize(label), norm(type).startsWith(norm(label)) ? type.slice(label.length).trim() : type, part, "por", String(n),
-        cc ? classLabel(cc).many : "elementos", "de", discs, "—", sanitize(hub.level) || level,
+        capitalize(label), norm(type).startsWith(norm(label)) ? type.slice(label.length).trim() : type, part,
+        "por", String(n), cc ? classLabel(cc).many : "elementos", "de", discs, "—", sanitize(hub.level) || level,
       );
     }
     case "run": {
-      const [mv, other] = moverSideOf(first);
-      return `${g.responsibleDiscipline} ${sanitize(mv.systemName ?? mv.systemType ?? mv.family, 30)} vs ${classLabel(other.elementClass).many} — ${level} (${n})`.replace(/\s+/g, " ");
+      const [own, other] = ownSides(first);
+      const name = titleName(own) || capitalize(classLabel(own.elementClass).many);
+      return join(g.responsibleDiscipline, name, "vs", classLabel(other.elementClass).many, "—", level, `(${n})`);
     }
     case "zone": {
-      const [, other] = moverSideOf(first);
+      const sides = ms.map(ownSides);
       const bay = options.bayOf?.(first);
-      return `${capitalize(level)}${bay ? ` eje ${bay}` : ""}: ${n} ${g.responsibleDiscipline} vs ${other.discipline}`;
+      return `${capitalize(level)}${bay ? ` eje ${bay}` : ""}: ${countPhrase(sides.map((x) => x[0]))} ${g.responsibleDiscipline} vs ${countPhrase(sides.map((x) => x[1]))} de ${[...new Set(sides.map((x) => x[1].discipline))].sort(cmpStr).join("/")} (${n} interf.)`;
     }
     case "single": {
       const a = sideA(first);
@@ -568,4 +598,40 @@ function groupTitle(rs: CompiledRuleSet, g: ClashGroup, ms: readonly ClassifiedC
       return `${capitalize(categoryLabel(rs, a.category))} vs ${categoryLabel(rs, b.category)} — ${level}`;
     }
   }
+}
+
+/**
+ * Generic Revit family/type names that say nothing in a title (engine review §3,
+ * resolution 15). Compared on the normalized text.
+ */
+const GENERIC_NAMES = new Set(
+  [
+    "muro basico", "basic wall", "suelo", "floor", "losa", "tuberia", "tuberias", "pipe", "pipe types", "pipes",
+    "ducto", "ducto rectangular", "ducto redondo", "rectangular duct", "round duct", "conducto rectangular", "conducto redondo",
+    "uniones por radio / te", "radius elbows / tee", "radius elbows / taps", "cable tray with fittings", "bandeja de cables con uniones",
+    "conduit with fittings", "tubo con uniones", "viga", "pilar", "default", "estandar", "standard", "generico", "generic",
+    "tipo 1", "type 1", "cielo", "ceiling", "compound ceiling", "techo compuesto",
+  ].map(norm),
+);
+
+export function isGenericName(s: unknown): boolean {
+  if (typeof s !== "string" || !s.trim()) return true;
+  return GENERIC_NAMES.has(norm(s));
+}
+
+/** Most specific non-generic name for a title: system name, system type, type, family. */
+export function titleName(el: ElementFacts, withSystem = true): string {
+  const candidates = withSystem ? [el.systemName, el.systemType, el.type, el.family] : [el.type, el.family];
+  for (const c of candidates) if (!isGenericName(c)) return sanitize(c, 30);
+  return "";
+}
+
+/** "12 ductos" / "1 viga" / "5 elementos": distinct elements by class. */
+function countPhrase(els: readonly ElementFacts[]): string {
+  const uniq = new Map<string, ElementFacts>();
+  for (const e of els) uniq.set(elementToken(e), e);
+  const list = [...uniq.values()];
+  const cc = commonClass(list);
+  const lab = cc ? classLabel(cc) : { one: "elemento", many: "elementos" };
+  return `${list.length} ${list.length === 1 ? lab.one : lab.many}`;
 }

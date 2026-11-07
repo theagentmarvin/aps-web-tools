@@ -145,6 +145,8 @@ export const ClassificationRulesSchema = z.strictObject({
       z.strictObject({
         id: z.string().regex(/^[A-Z]{2,4}-\d{3}$/, "rule id must match [A-Z]{2,4}-\\d{3}"),
         name: z.string().min(1),
+        /** Spanish display name (titles, issues). Optional; the loader warns when missing. */
+        nameEs: z.string().min(1).optional(),
         when: When,
         then: Then,
       }),

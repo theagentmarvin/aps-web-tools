@@ -7,6 +7,8 @@ import type { ElementFacts } from "../enrich/element";
 import type { ClashFacts } from "../enrich/clash";
 import type { CompiledRuleSet, CompiledWhen, DisciplineRef, TemplatePart } from "../rules/load";
 import type { Nature, RootCause, Severity, SuggestedAction, Validity } from "../rules/schemas";
+import { STRUCTURAL_OPENING_TAG } from "../group/review";
+import { capitalize, cmpStr } from "../util/text";
 import { whoMoves } from "./who-moves";
 
 export { whoMoves } from "./who-moves";
@@ -22,6 +24,8 @@ export const UNMATCHED_RULE_ID = "NONE";
 export interface Classification {
   ruleId: string;
   ruleName: string;
+  /** Spanish rule name from the rule YAML (`nameEs`), when present. */
+  ruleNameEs?: string;
   /** `version` of classification-rules.yaml. */
   ruleVersion: number;
   validity: Validity;
@@ -64,20 +68,68 @@ export interface Binding {
   aSide: Side;
 }
 
-/** Try a `when` in orientation 1 (a=left) then 2 (a=right) when symmetric. */
-export function bindWhen(w: CompiledWhen, left: ElementFacts, right: ElementFacts, clash: ClashFacts): Binding | null {
+/**
+ * Try a `when` in orientation 1 (a = first) then 2 (a = second) when symmetric.
+ * `first`/`second` is the preferred orientation (see preferredOrder), so the
+ * binding never depends on ACC's arbitrary left/right. `left` is only used to
+ * report which raw side was bound to `a`.
+ */
+export function bindWhen(w: CompiledWhen, first: ElementFacts, second: ElementFacts, clash: ClashFacts, left: ElementFacts = first): Binding | null {
   const n = w.symmetric ? 2 : 1;
   for (let i = 0; i < n; i++) {
-    const a = i === 0 ? left : right;
-    const b = i === 0 ? right : left;
+    const a = i === 0 ? first : second;
+    const b = i === 0 ? second : first;
     const ctx = { a, b, clash };
     if (w.clash && !w.clash(clash, ctx)) continue;
     if (w.a && !w.a(a, ctx)) continue;
     if (w.b && !w.b(b, ctx)) continue;
     if (w.both && !(w.both(a, ctx) && w.both(b, ctx))) continue;
-    return { a, b, aSide: i === 0 ? "left" : "right" };
+    return { a, b, aSide: a === left ? "left" : "right" };
   }
   return null;
+}
+
+const tokenOf = (e: ElementFacts) => String(e.elementKey ?? e.externalId ?? "");
+
+/**
+ * Preferred orientation (engine review resolution 12): the mover side first;
+ * without a mover, the side whose discipline sorts first; then the element
+ * token; only then ACC's left/right.
+ */
+export function preferredOrder(rs: CompiledRuleSet, left: ElementFacts, right: ElementFacts): [ElementFacts, ElementFacts] {
+  const m = whoMoves(rs, left, right).mover;
+  if (m) return m === left ? [left, right] : [right, left];
+  const s = (e: ElementFacts, k: string) => String(e[k] ?? "");
+  const d = cmpStr(left.discipline, right.discipline) || cmpStr(tokenOf(left), tokenOf(right)) ||
+    cmpStr(s(left, "modelFile"), s(right, "modelFile")) || cmpStr(s(left, "documentName"), s(right, "documentName")) ||
+    cmpStr(s(left, "documentId"), s(right, "documentId"));
+  return d <= 0 ? [left, right] : [right, left];
+}
+
+/** Sentinel rendered for {mover.discipline}/{other.discipline} when nobody moves. */
+const NO_MOVER = "\u0000NOMOVER\u0000";
+const NO_MOVER_TEXT = "coordinación define quién desvía (sin jerarquía clara)";
+
+/** Never render "mueve COORD": rewrite the mover phrase when there is no mover. */
+export function rewriteNoMover(text: string): string {
+  if (!text.includes(NO_MOVER)) return text;
+  return text
+    .replace(/(Según jerarquía de desplazamiento\s+)?(mueve|desplaza|debe desplazarse)\s+\u0000NOMOVER\u0000/gi, (_m, _p, _v, offset: number, all: string) => {
+      const before = all.slice(0, offset).trimEnd();
+      const sentenceStart = before === "" || /[.:!?]$/.test(before);
+      return sentenceStart ? NO_MOVER_TEXT[0]!.toUpperCase() + NO_MOVER_TEXT.slice(1) : NO_MOVER_TEXT;
+    })
+    .replace(/\u0000NOMOVER\u0000/g, "coordinación");
+}
+
+/** Engine-native structural opening test (hard-coded; mirrors proposed ANN-007). */
+function isStructuralPenetration(rs: CompiledRuleSet, l: ElementFacts, r: ElementFacts, clash: ClashFacts): boolean {
+  if (!(clash.penetrationMm > 0) || clash.withinTolerance) return false;
+  const structure = rs.classSets.get("STRUCTURE");
+  const mep = rs.classSets.get("MEP_ANY");
+  const isStruct = (e: ElementFacts) => structure?.has(e.elementClass) ?? false;
+  const crosses = (e: ElementFacts) => (mep?.has(e.elementClass) ?? false) || e.isSleeveOrOpening === true;
+  return (isStruct(l) && crosses(r)) || (isStruct(r) && crosses(l));
 }
 
 function resolveRef(ref: DisciplineRef, a: ElementFacts, b: ElementFacts, mover: ElementFacts | undefined): string {
@@ -118,8 +170,8 @@ export function renderTemplate(
     }
     const el = p.side === "a" ? a : p.side === "b" ? b : p.side === "mover" ? mover : mover ? (mover === a ? b : a) : undefined;
     if (!el) {
-      // No mover (tie): the responsible party is COORD, render it the same way.
-      out += p.field === "discipline" ? "COORD" : "—";
+      // No mover (tie): rewritten by rewriteNoMover, never "mueve COORD".
+      out += p.field === "discipline" ? NO_MOVER : "—";
       continue;
     }
     if (p.field === "category") out += fmt(el.category ? rs.categoryLabelsEs.get(el.category) ?? el.category : undefined);
@@ -142,14 +194,15 @@ export function classifyPair(
 ): ClassifyResult {
   let bound: Binding | null = null;
   let ruleIdx = -1;
+  const [first, second] = preferredOrder(rs, left, right);
   for (let i = 0; i < rs.rules.length; i++) {
-    bound = bindWhen(rs.rules[i]!.when, left, right, clash);
+    bound = bindWhen(rs.rules[i]!.when, first, second, clash, left);
     if (bound) {
       ruleIdx = i;
       break;
     }
   }
-  const { a, b, aSide } = bound ?? { a: left, b: right, aSide: "left" as Side };
+  const { a, b, aSide } = bound ?? { a: first, b: second, aSide: (first === left ? "left" : "right") as Side };
   const mv = whoMoves(rs, a, b);
   const mover = mv.mover;
   const moverSide: Side | undefined = mover ? (mover === left ? "left" : "right") : undefined;
@@ -168,6 +221,7 @@ export function classifyPair(
     c = {
       ruleId: rule.id,
       ruleName: rule.name,
+      ...(rule.nameEs ? { ruleNameEs: rule.nameEs } : {}),
       ruleVersion: rs.versions.rules,
       validity: t.validity,
       nature: t.nature,
@@ -183,7 +237,7 @@ export function classifyPair(
       humanReviewReasons: t.humanReview ? ["rule"] : [],
       tags,
       notes,
-      rationale: renderTemplate(rs, rule.rationale, a, b, clash, mover),
+      rationale: capitalize(rewriteNoMover(renderTemplate(rs, rule.rationale, a, b, clash, mover))),
       source: "rule",
       binding: { a: aSide },
     };
@@ -207,17 +261,20 @@ export function classifyPair(
       notes,
       rationale: "Ninguna regla aplica a esta interferencia. Requiere revisión del coordinador.",
       source: "rule",
-      binding: { a: "left" },
+      binding: { a: aSide },
     };
   }
 
   // Annotations: all matching apply; they only add tags and notes.
   for (const an of rs.annotations) {
-    const ab = bindWhen(an.when, left, right, clash);
+    const ab = bindWhen(an.when, first, second, clash, left);
     if (!ab) continue;
     for (const tag of an.tags) addTag(tag);
-    if (an.note) notes.push(renderTemplate(rs, an.note, ab.a, ab.b, clash, mover));
+    if (an.note) notes.push(rewriteNoMover(renderTemplate(rs, an.note, ab.a, ab.b, clash, mover)));
   }
+  // Hard-coded safety tag: a penetration/embedment in structure feeds the
+  // non-configurable structural-opening review trigger (core/group/review.ts).
+  if (isStructuralPenetration(rs, left, right, clash)) addTag(STRUCTURAL_OPENING_TAG);
   for (const tag of extraTags) addTag(tag);
 
   // Post-processing (mandatory).

@@ -131,7 +131,7 @@
 #   {x.category} renders the Spanish label from categoryLabelsEs (fallback:
 #   canonical name). Other fields render their raw (non-normalized) value.
 # =============================================================================
-version: 1
+version: 2
 
 rules:
 
@@ -358,7 +358,7 @@ rules:
     when:
       clash: { distanceMm: { gte: 0 }, clearanceViolation: false }
     then: { validity: tolerated, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, severity: none, confidence: 0.9, suggestedAction: mark_reviewed,
-            rationale: "Contacto sin penetración ({clash.distanceMm} mm) y sin holgura mínima exigida para {a.discipline}/{b.discipline}." }
+            rationale: "Sin penetración (separación de {clash.distanceMm} mm) y sin infringir la holgura mínima exigida para {a.discipline}/{b.discipline}." }
 
   - id: TOL-002
     name: clearance violation
@@ -412,7 +412,7 @@ rules:
     name: small MEP through non-rated partition
     when:
       a: { elementClass: { inSet: MEP_DIST }, sizeMm: { lte: 150 } }
-      b: { elementClass: arch_wall, isFireRated: false }
+      b: { elementClass: arch_wall, isFireRated: false, fireRating: { exists: true } }
     then: { validity: tolerated, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, severity: none, confidence: 0.7, suggestedAction: mark_reviewed,
             rationale: "{a.category} de {a.sizeMm} mm atraviesa tabique no resistente al fuego '{b.type}': pasada estándar que se ejecuta en obra." }
 
@@ -490,9 +490,9 @@ rules:
             rationale: "{a.category} {a.systemName} ({a.sizeMm} mm) atraviesa el pilar '{b.type}'. Los pilares no admiten pasadas: {a.discipline} debe desviar el trazado." }
 
   - id: EST-002
-    name: gravity drainage vs structure
+    name: gravity drainage vs structure (not vertical stacks)
     when:
-      a: { elementClass: gravity_pipe }
+      a: { elementClass: gravity_pipe, not: { orientation: vertical } }
       b: { elementClass: { inSet: STRUCTURE } }
     then: { validity: real, nature: hard, rootCause: design_coordination, responsibleDiscipline: "$a", secondaryDiscipline: EST, severity: critical, confidence: 0.88, suggestedAction: create_issue,
             rationale: "Tubería gravitacional {a.systemType} Ø{a.sizeMm} mm interfiere {b.category} '{b.type}' ({clash.penetrationMm} mm). La pendiente limita el desvío: resolver con pasada aprobada por calculista o rediseño del trazado." }
@@ -679,6 +679,14 @@ rules:
       b: { elementClass: arch_wall }
     then: { validity: real, nature: hard, rootCause: missing_opening, responsibleDiscipline: "$a", secondaryDiscipline: ARQ, severity: low, confidence: 0.7, suggestedAction: create_issue,
             rationale: "{a.category} de {a.sizeMm} mm atraviesa tabique '{b.type}': requiere vano con refuerzo de perfilería. ARQ debe incorporarlo." }
+
+  - id: MA-013
+    name: small MEP through wall with unknown fire rating
+    when:
+      a: { elementClass: { inSet: MEP_DIST }, sizeMm: { lte: 150 } }
+      b: { elementClass: arch_wall, isFireRated: false, fireRating: { exists: false } }
+    then: { validity: real, nature: hard, rootCause: model_hygiene, responsibleDiscipline: "$b", secondaryDiscipline: "$a", severity: low, confidence: 0.75, suggestedAction: hygiene_issue,
+            rationale: "{a.category} de {a.sizeMm} mm atraviesa el muro '{b.type}', que no tiene resistencia al fuego informada. ARQ debe informar la RF: si el muro sectoriza (OGUC Título 4) la pasada requiere sello cortafuego certificado; si no, es pasada estándar de obra." }
 
   - id: MA-008
     name: MEP equipment/terminal vs wall
