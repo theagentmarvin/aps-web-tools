@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "coord": {
+      "command": "npx",
+      "args": ["tsx", "server/mcp/index.ts"],
+      "env": {}
+    }
+  }
+}

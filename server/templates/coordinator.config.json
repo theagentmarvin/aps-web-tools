@@ -1,0 +1,17 @@
+{
+  "autonomy": { "level": 1, "approvalExpiryDays": 7, "requireDryRunBeforeApply": true },
+  "classification": {
+    "autoAccept": {},
+    "alwaysReview": {},
+    "llmMayClose": ["close_not_issue", "mark_reviewed"],
+    "qaSampleRate": 0.05
+  },
+  "tolerances": {},
+  "ui": { "confidenceBands": { "high": 0.85, "medium": 0.6 }, "baseUrl": "http://localhost:3000" },
+  "agent": { "triageBatchSize": 20, "maxParallelTriagers": 3, "maxResponseTokens": 6000 },
+  "policies": { "lowRiskRuleAllowlist": [], "dailyApplyCap": 500 },
+  "apply": { "jobsPerHourPerOperation": 200, "maxGroupsPerRequest": 100, "jobTimeoutMs": 300000 },
+  "issues": { "urlAllowlist": ["acc.autodesk.com"], "defaultDueInDays": 7 },
+  "approver": {},
+  "language": "es"
+}

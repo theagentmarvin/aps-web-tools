@@ -91,7 +91,7 @@ APS app types (O:native, https://aps.autodesk.com/en/docs/oauth/v2/developers_gu
 Loopback flow for `server/aps/auth.ts`:
 1. Start `http.createServer` on `127.0.0.1:<fixed port>` (for example 8765), path `/callback`.
 2. Generate a `code_verifier` (43–128 chars) with `code_challenge = base64url(sha256(verifier))`, plus a random `state` (O:pkce; code-challenge guide https://aps.autodesk.com/en/docs/oauth/v2/tutorials/code-challenge/).
-3. Open the system browser (`open`/`start`) to `/authorize`. The callback receives `?code=&state=`; check `state`, exchange the code, and store tokens in `.coordinator/tokens.json` (gitignored).
+3. Open the system browser (`open`/`start`) to `/authorize`. The callback receives `?code=&state=`; check `state`, exchange the code, and store tokens in `.coordinator/auth/token.json` (gitignored; implemented in `server/aps/auth.ts`).
 4. `redirect_uri` "must match the pattern of the callback URL field of the app's registration" (O:authorize). Register exactly `http://localhost:8765/callback` and use exactly that value. **UNVERIFIED:** whether APS accepts arbitrary loopback ports (RFC 8252 style). Do not rely on it; use a fixed port and make it configurable.
 5. Optional `prompt=login` forces account choice (O:pkce).
 

@@ -1,0 +1,195 @@
+/**
+ * Coordinator CLI: `npm run coordinator -- <command>`.
+ *
+ *   login                         APS 3-legged PKCE login (browser + loopback), caches the token
+ *   logout                        forget the cached token
+ *   status                        session / autonomy / pending counts
+ *   ingest [testId] [--refresh] [--no-properties] [--project <id>] [--model-set <id>]
+ *   classify [testKey] [--propose]
+ *   approvals list                batches by state
+ *   approve <batchId>             HUMAN approval (interactive TTY only; refused under Claude Code)
+ *   apply <batchId> [--no-dry-run]
+ *   verify-approval <batchId> [--json]   read-only check used by the guard-apply hook
+ *
+ * Data source: COORD_DATA_SOURCE=fixtures for offline mode.
+ */
+import { createInterface } from "node:readline/promises";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { applyApproved, approveBatch, verifyBatchApproval } from "./approval";
+import { ApsAuth, resolveAuthConfig } from "./aps/auth";
+import { Coordinator } from "./coordinator";
+import { CoordinatorUi } from "./coordinator-ui";
+import { CoordError } from "./util";
+
+const out = (s: string) => process.stdout.write(s + "\n");
+const err = (s: string) => process.stderr.write(s + "\n");
+
+function flag(args: string[], name: string): boolean {
+  return args.includes(name);
+}
+function opt(args: string[], name: string): string | undefined {
+  const i = args.indexOf(name);
+  return i >= 0 ? args[i + 1] : undefined;
+}
+function positional(args: string[]): string[] {
+  const res: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i].startsWith("--")) {
+      if (["--project", "--model-set"].includes(args[i])) i++;
+      continue;
+    }
+    res.push(args[i]);
+  }
+  return res;
+}
+
+/** True when approval must be refused: non-interactive stdin or running under Claude Code. */
+export function approvalChannelBlocked(env: NodeJS.ProcessEnv = process.env, isTTY: boolean = !!process.stdin.isTTY): string | undefined {
+  if (env.CLAUDECODE) return "La aprobación no puede ejecutarse desde Claude Code (CLAUDECODE está definido). Ejecútala tú en tu propia terminal o usa la UI web.";
+  if (!isTTY) return "La aprobación requiere una terminal interactiva (stdin no es TTY).";
+  return undefined;
+}
+
+export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
+  const [cmd, ...rest] = argv;
+  const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
+  const json = flag(rest, "--json");
+
+  if (cmd === "verify-approval") {
+    // Read-only: never creates approvals, keys or batches.
+    const batchId = positional(rest)[0];
+    if (!batchId) {
+      out(JSON.stringify({ valid: false, ok: false, reason: "missing_batch_id" }));
+      return 1;
+    }
+    try {
+      const coord = new Coordinator({ root });
+      const v = await verifyBatchApproval({ store: coord.store, source: coord.source }, batchId);
+      if (!v.ok) {
+        out(json ? JSON.stringify({ valid: false, ok: false, reason: v.reason, message: v.message }) : `NO VÁLIDA: ${v.reason} — ${v.message}`);
+        return 1;
+      }
+      const proposalCount = v.approval.proposalIds.length;
+      out(json ? JSON.stringify({ valid: true, ok: true, batchId, approvedBy: v.approval.approvedBy.name, expiresAt: v.approval.expiresAt, testVersion: v.approval.testVersion, itemCount: v.approval.itemIds.length, proposalCount }) : `VÁLIDA: ${batchId} aprobado por ${v.approval.approvedBy.name}, vence ${v.approval.expiresAt}`);
+      return 0;
+    } catch (e) {
+      out(JSON.stringify({ valid: false, ok: false, reason: "error", message: (e as Error).message }));
+      return 1;
+    }
+  }
+
+  if (cmd === "login" || cmd === "logout") {
+    const auth = new ApsAuth({ config: resolveAuthConfig(root) });
+    if (cmd === "logout") {
+      await auth.logout();
+      out("Sesión APS cerrada.");
+      return 0;
+    }
+    const s = await auth.status();
+    if (s.loggedIn && !flag(rest, "--force")) {
+      out("Ya hay una sesión APS en caché (usa --force para iniciar otra).");
+      return 0;
+    }
+    const st = await auth.loginInteractive({ onUrl: (u) => err(`Abre en el navegador si no se abrió solo:\n${u}`) });
+    out(`Sesión iniciada. Vence: ${st.expiresAt ? new Date(st.expiresAt).toISOString() : "?"}`);
+    return 0;
+  }
+
+  const coord = new Coordinator({ root });
+  const ui = new CoordinatorUi(coord);
+  const human = async () => {
+    const u = await ui.currentUser();
+    if (!u) throw new CoordError("not_authenticated", "Inicia sesión (npm run coordinator -- login) o configura approver.name en coordinator.config.local.json.");
+    return u;
+  };
+
+  switch (cmd) {
+    case "status": {
+      out(JSON.stringify(await coord.sessionStatus(), null, 2));
+      return 0;
+    }
+    case "ingest": {
+      const project = opt(rest, "--project");
+      const modelSet = opt(rest, "--model-set");
+      let testId = positional(rest)[0];
+      if (!testId) {
+        const t = await coord.listClashTests({ projectId: project, modelSetId: modelSet });
+        testId = String(t.rows[0]?.[0] ?? "");
+        if (!testId) throw new CoordError("not_found", "No hay clash tests.");
+      }
+      const u = await ui.currentUser();
+      const r = await coord.ingest(
+        { projectId: project, modelSetId: modelSet, testId, refresh: flag(rest, "--refresh"), fetchProperties: !flag(rest, "--no-properties") },
+        { actor: { type: "user", id: u?.id ?? "cli", name: u?.name ?? "CLI" } },
+        (step, d, t) => err(`  ${step} ${d}/${t}`),
+      );
+      out(JSON.stringify(r, null, 2));
+      return 0;
+    }
+    case "classify": {
+      const u = await ui.currentUser();
+      const r = await coord.classify({ testKey: positional(rest)[0], proposeAutoAccepted: flag(rest, "--propose") }, { actor: { type: "user", id: u?.id ?? "cli", name: u?.name ?? "CLI" } });
+      out(JSON.stringify(r, null, 2));
+      return 0;
+    }
+    case "approvals": {
+      if (positional(rest)[0] !== "list") throw new CoordError("validation_error", "Uso: approvals list");
+      const list = await ui.listBatches();
+      if (!list.length) out("Sin lotes.");
+      for (const b of list) out(`${b.id}  ${b.state.padEnd(9)}  ${b.projectName} / ${b.modelSetName} v${b.modelSetVersion}  issues=${b.counts.issuesCreate} estados=${b.counts.statusChanges}${b.approval ? `  aprobado por ${b.approval.approvedBy} (${b.approval.valid ? "válida" : b.approval.reason})` : ""}`);
+      return 0;
+    }
+    case "approve": {
+      const blocked = approvalChannelBlocked();
+      if (blocked) {
+        err(blocked);
+        return 2;
+      }
+      const batchId = positional(rest)[0];
+      if (!batchId) throw new CoordError("validation_error", "Uso: approve <batchId>");
+      const b = await ui.getBatch(batchId);
+      const user = await human();
+      out(`Lote ${b.id} · ${b.projectName} / ${b.modelSetName} · prueba v${b.modelSetVersion} (vigente v${b.latestVersion})`);
+      out(`  Incidencias a crear: ${b.counts.issuesCreate} (irreversible)`);
+      out(`  Interferencias que cambian de estado: ${b.counts.statusChanges}`);
+      for (const i of b.items.filter((x) => !x.excluded).slice(0, 30)) out(`   - ${i.operation.padEnd(16)} ${i.label.slice(0, 80)} (${i.targetIds.length})`);
+      if (b.items.filter((x) => !x.excluded).length > 30) out("   …");
+      out(`Aprobador: ${user.name}`);
+      const rl = createInterface({ input: process.stdin, output: process.stderr });
+      const typed = (await rl.question(`Para aprobar, escribe el id del lote (${b.id}): `)).trim();
+      rl.close();
+      if (typed !== b.id) {
+        err("No coincide. Aprobación cancelada.");
+        return 1;
+      }
+      const deps = { store: coord.store, source: coord.source, config: coord.config, effectiveLevel: coord.effectiveLevel };
+      const r = await approveBatch(deps, batchId, { id: user.id, name: user.name, channel: "cli" });
+      out(`Aprobado. Vence ${r.approval.expiresAt}. Aplica con: npm run coordinator -- apply ${batchId} (dry-run) y luego --no-dry-run.`);
+      return 0;
+    }
+    case "apply": {
+      const batchId = positional(rest)[0];
+      if (!batchId) throw new CoordError("validation_error", "Uso: apply <batchId> [--no-dry-run]");
+      const u = await human();
+      const deps = { store: coord.store, source: coord.source, config: coord.config, effectiveLevel: coord.effectiveLevel };
+      const r = await applyApproved(deps, batchId, { dryRun: !flag(rest, "--no-dry-run"), actor: { type: "user", id: u.id, name: u.name } });
+      out(JSON.stringify(r, null, 2));
+      return r.ok ? 0 : 1;
+    }
+    default:
+      out("Comandos: login | logout | status | ingest [testId] | classify [testKey] [--propose] | approvals list | approve <batchId> | apply <batchId> [--no-dry-run] | verify-approval <batchId> [--json]");
+      return cmd ? 1 : 0;
+  }
+}
+
+const isEntry = process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
+if (isEntry) {
+  main()
+    .then((code) => process.exit(code))
+    .catch((e) => {
+      err(`Error: ${(e as Error).message}${e instanceof CoordError && e.hint ? `\n${e.hint}` : ""}`);
+      process.exit(1);
+    });
+}
+

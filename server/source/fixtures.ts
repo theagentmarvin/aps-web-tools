@@ -1,0 +1,284 @@
+/**
+ * Offline fixture mode (`COORD_DATA_SOURCE=fixtures`): serves tests/fixtures as
+ * if it were ACC, so the whole system (MCP, HTTP, CLI, evals, CI) runs without
+ * APS credentials.
+ *
+ * Project `b.demo-proyecto`, one model set, clash tests for versions 41 and 42.
+ * Writes are FAKE: they still require a valid ApprovedWriteToken (consumed
+ * here, exactly like the live clients) and are recorded under
+ * `.coordinator/fixture-acc/`, but nothing is ever sent over the network.
+ */
+import { readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { attachPairKeys, elementLookupFromTables, normalizeClashTest } from "../../core/ingest";
+import type { RawClashDocumentFile, RawClashFile, RawClashInstanceFile, RawModelSetVersion } from "../../core/ingest/raw";
+import type { ElementProps } from "../../core/types";
+import { parseNdjson } from "../aps/download";
+import { parsePropertyAliases } from "../aps/index-properties";
+import { compileMapper, FieldDictionary } from "../aps/property-mapping";
+import type { AssignedGroupCreate, ClashGroupJob, ClosedGroupCreate, IndexField, IndexRow } from "../aps/types";
+import { consumeApprovedWriteToken, type ApprovedWriteToken } from "../aps/write-guard";
+import { appendJsonl, readJsonl } from "../store/fs";
+import { sha256, uuidFromHash } from "../util";
+import type { ClashWriter, DataSource, SourceClashTest, SourceModelSet, SourceProject, SourceTestData } from "./types";
+
+export const FIXTURE_PROJECT_ID = "b.demo-proyecto";
+export const FIXTURE_HUB = { id: "b.hub-demo", name: "SalfaCorp (demo)" };
+
+const REPO_ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
+
+interface Truth {
+  containerId: string;
+  modelSetId: string;
+  tests: Record<string, string>;
+  index: Record<string, { indexId: string; seed: string; file: string; rows: number }>;
+}
+
+interface FixtureWrite {
+  at: string;
+  jobId: string;
+  operation: "clash.assign" | "clash.close";
+  projectId: string;
+  testId: string;
+  groups: Array<{ id: string; clashes: number[]; title: string }>;
+  createdIssueIds: string[];
+  approvedBy: string;
+  proposalIds: readonly string[];
+}
+
+export class FixtureSource implements DataSource {
+  readonly kind = "fixtures" as const;
+  readonly dir: string;
+  readonly writer: ClashWriter;
+  private readonly truth: Truth;
+  private readonly writesFile: string;
+  private readonly project: SourceProject = {
+    id: FIXTURE_PROJECT_ID,
+    name: "Edificio Demo Las Condes",
+    hubId: FIXTURE_HUB.id,
+    hubName: FIXTURE_HUB.name,
+  };
+
+  constructor(opts: { dir?: string; home: string }) {
+    this.dir = resolve(opts.dir ?? process.env.COORD_FIXTURE_DIR ?? join(REPO_ROOT, "tests", "fixtures"));
+    this.truth = this.json<Truth>("fixture-truth.json");
+    this.writesFile = join(opts.home, "fixture-acc", "writes.jsonl");
+    this.writer = this.makeWriter();
+  }
+
+  private json<T>(rel: string): T {
+    return JSON.parse(readFileSync(join(this.dir, rel), "utf8")) as T;
+  }
+
+  private text(rel: string): string {
+    return readFileSync(join(this.dir, rel), "utf8");
+  }
+
+  private get versions(): number[] {
+    return Object.keys(this.truth.tests)
+      .map(Number)
+      .sort((a, b) => a - b);
+  }
+
+  private modelSet(): SourceModelSet {
+    const latest = Math.max(...this.versions);
+    const msv = this.json<RawModelSetVersion>(`mc/v${latest}/modelset-version.json`);
+    return {
+      id: this.truth.modelSetId,
+      name: "Coordinación general",
+      latestVersion: latest,
+      latestVersionAt: msv.createTime,
+      documentCount: msv.documentVersions.length,
+    };
+  }
+
+  private ensureProject(projectId: string): void {
+    if (projectId.replace(/^b\./, "") !== FIXTURE_PROJECT_ID.slice(2)) throw new Error(`Proyecto ${projectId} no existe en modo fixtures`);
+  }
+
+  async authStatus() {
+    return { loggedIn: true, scopes: ["data:read", "data:write", "data:create"] };
+  }
+
+  async currentUser() {
+    return { id: "fixture-user", name: "Coordinadora Demo", email: "demo@salfacorp.example" };
+  }
+
+  async listHubs() {
+    return [FIXTURE_HUB];
+  }
+
+  async listProjects(opts: { hubId?: string; nameContains?: string } = {}) {
+    if (opts.hubId && opts.hubId !== FIXTURE_HUB.id) return [];
+    if (opts.nameContains && !this.project.name.toLowerCase().includes(opts.nameContains.toLowerCase())) return [];
+    return [this.project];
+  }
+
+  async getProject(projectId: string) {
+    return projectId.replace(/^b\./, "") === "demo-proyecto" ? this.project : undefined;
+  }
+
+  async listModelSets(projectId: string) {
+    this.ensureProject(projectId);
+    return [this.modelSet()];
+  }
+
+  async listModelSetVersions(projectId: string, modelSetId: string) {
+    this.ensureProject(projectId);
+    if (modelSetId !== this.truth.modelSetId) return [];
+    return this.versions
+      .slice()
+      .reverse()
+      .map((v) => {
+        const msv = this.json<RawModelSetVersion>(`mc/v${v}/modelset-version.json`);
+        return { version: v, createdAt: msv.createTime, status: "Successful", documentCount: msv.documentVersions.length };
+      });
+  }
+
+  async listClashTests(projectId: string, modelSetId: string, version?: number): Promise<SourceClashTest[]> {
+    this.ensureProject(projectId);
+    if (modelSetId !== this.truth.modelSetId) return [];
+    const tests = this.json<{ tests: Array<{ id: string; modelSetId: string; modelSetVersion: number; status: string; completedOn?: string }> }>("mc/clash-tests.json").tests;
+    return tests
+      .filter((t) => version === undefined || t.modelSetVersion === version)
+      .map((t) => ({ ...t, viewName: "Coordinación general" }))
+      .sort((a, b) => b.modelSetVersion - a.modelSetVersion);
+  }
+
+  async latestVersion(projectId: string, modelSetId: string) {
+    this.ensureProject(projectId);
+    if (modelSetId !== this.truth.modelSetId) throw new Error(`Model set ${modelSetId} no existe`);
+    return Math.max(...this.versions);
+  }
+
+  async fetchTest(projectId: string, modelSetId: string, testId: string, opts: { fetchProperties: boolean }): Promise<SourceTestData> {
+    const test = (await this.listClashTests(projectId, modelSetId)).find((t) => t.id === testId);
+    if (!test) throw new Error(`Clash test ${testId} no existe`);
+    const v = test.modelSetVersion;
+    const raw = {
+      clashes: this.json<RawClashFile>(`mc/v${v}/scope-version-clash.json`),
+      instances: this.json<RawClashInstanceFile>(`mc/v${v}/scope-version-clash-instance.json`),
+      documents: this.json<RawClashDocumentFile>(`mc/v${v}/scope-version-document.json`),
+    };
+    const msv = this.json<RawModelSetVersion>(`mc/v${v}/modelset-version.json`);
+    const result = normalizeClashTest(raw, { documentVersions: msv.documentVersions });
+
+    const elements: ElementProps[] = [];
+    const allKeys = new Set<string>();
+    let clashes = result.clashes;
+    if (opts.fetchProperties) {
+      const dict = new FieldDictionary(parseNdjson<IndexField>(this.text("index/fields.ndjson")));
+      const config = parsePropertyAliases(readFileSync(join(REPO_ROOT, "rules", "property-aliases.yaml"), "utf8"));
+      const wanted = new Map<number, Set<number>>();
+      for (const c of clashes) {
+        for (const s of [c.left, c.right]) {
+          const set = wanted.get(s.documentId) ?? new Set<number>();
+          set.add(s.viewerDbId);
+          wanted.set(s.documentId, set);
+        }
+      }
+      const tables = new Map<number, Map<number, ElementProps>>();
+      for (const d of result.documents) {
+        const dv = msv.documentVersions.find((x) => x.versionUrn === d.urn && x.viewableName === d.viewableName);
+        const entry = dv?.originalSeedFileVersionUrn ? this.truth.index[dv.originalSeedFileVersionUrn] : undefined;
+        if (!dv || !entry) continue;
+        const rows = parseNdjson<IndexRow>(this.text(entry.file));
+        const map = compileMapper(dict, config, {
+          documentId: d.id,
+          modelFile: dv.documentLineage?.lineageUrn,
+          documentName: dv.originalSeedFileVersionName,
+        });
+        const table = new Map<number, ElementProps>();
+        const ids = wanted.get(d.id) ?? new Set<number>();
+        for (const r of rows) {
+          if (r.externalId) allKeys.add(r.externalId);
+          if (!ids.has(r.lmvId)) continue;
+          const el = map(r);
+          table.set(r.lmvId, el);
+          elements.push(el);
+        }
+        tables.set(d.id, table);
+      }
+      clashes = attachPairKeys(clashes, result.documents, elementLookupFromTables(tables));
+    }
+    return {
+      test,
+      modelSet: this.modelSet(),
+      project: this.project,
+      clashes,
+      documents: result.documents,
+      elements,
+      propertiesStatus: opts.fetchProperties ? "ready" : "skipped",
+      warnings: result.warnings.map((w) => `${w.code}:${w.count}`),
+      allElementKeys: opts.fetchProperties ? [...allKeys] : undefined,
+    };
+  }
+
+  /** Recorded fake writes, for preflight and tests. */
+  async writes(): Promise<FixtureWrite[]> {
+    return readJsonl<FixtureWrite>(this.writesFile);
+  }
+
+  async triageState(_projectId: string, testId: string) {
+    const assigned = new Set<string>();
+    const closed = new Set<string>();
+    for (const w of await this.writes()) {
+      if (w.testId !== testId) continue;
+      for (const g of w.groups) for (const c of g.clashes) (w.operation === "clash.assign" ? assigned : closed).add(String(c));
+    }
+    return { assigned, closed };
+  }
+
+  async listAssignees() {
+    return [
+      { id: "role-cli", name: "Especialista Clima", kind: "role" as const },
+      { id: "role-san", name: "Especialista Sanitario", kind: "role" as const },
+      { id: "role-ele", name: "Especialista Eléctrico", kind: "role" as const },
+      { id: "role-est", name: "Ingeniería Estructural", kind: "role" as const },
+      { id: "co-demo-mep", name: "Instalaciones Demo Ltda.", kind: "company" as const },
+    ];
+  }
+
+  private makeWriter(): ClashWriter {
+    const record = async (
+      operation: "clash.assign" | "clash.close",
+      token: ApprovedWriteToken,
+      projectId: string,
+      testId: string,
+      groups: Array<AssignedGroupCreate | ClosedGroupCreate>,
+    ): Promise<ClashGroupJob> => {
+      const jobId = uuidFromHash(sha256(`${operation}|${testId}|${JSON.stringify(groups)}|${Date.now()}|${Math.random()}`));
+      const ids = groups.map((g, i) => g.id ?? uuidFromHash(sha256(`${jobId}|${i}`)));
+      const createdIssueIds = operation === "clash.assign" ? ids.map((id) => `ISS-${id.slice(0, 8)}`) : [];
+      const w: FixtureWrite = {
+        at: new Date().toISOString(),
+        jobId,
+        operation,
+        projectId,
+        testId,
+        groups: groups.map((g, i) => ({ id: ids[i], clashes: g.clashes, title: g.title })),
+        createdIssueIds,
+        approvedBy: token.approvedBy,
+        proposalIds: token.proposalIds,
+      };
+      await appendJsonl(this.writesFile, w);
+      return { jobId, groups: ids, status: "Running" };
+    };
+    return {
+      assign: async (token, projectId, testId, groups) => {
+        consumeApprovedWriteToken(token, "clash.assign", groups);
+        return record("clash.assign", token, projectId, testId, groups);
+      },
+      close: async (token, projectId, testId, groups) => {
+        consumeApprovedWriteToken(token, "clash.close", groups);
+        return record("clash.close", token, projectId, testId, groups);
+      },
+      waitJob: async (_projectId, jobId) => {
+        const w = (await this.writes()).find((x) => x.jobId === jobId);
+        if (!w) return { jobId, groups: [], status: "Failed" };
+        return { jobId, groups: w.groups.map((g) => g.id), createdIssueIds: w.createdIssueIds, status: "Succeeded" };
+      },
+    };
+  }
+}
