@@ -9,6 +9,8 @@ import { useI18n, useT } from "~/i18n";
 import { useApi } from "~/lib/api";
 import type { Clash } from "~/lib/api/types";
 import { useAuth } from "~/lib/auth-context";
+import { useCoordAuth } from "~/lib/coord-auth";
+import { writeString } from "~/lib/storage";
 import { ForgeViewer, type ModelHandle } from "~/lib/components/ForgeViewer";
 import { IconCube, IconFit, IconMarker, IconSection, SideASwatch, SideBSwatch } from "~/lib/components/icons";
 import {
@@ -44,14 +46,27 @@ function membersOf(cursorKey: string | null, clashes: Map<string, Clash>, byGrou
 export function ClashViewerPane() {
   const t = useT();
   const api = useApi();
-  const { isAuthenticated, getAccessToken, session } = useAuth();
+  const { getAccessToken, session, login } = useAuth();
+  const { status: coordStatus } = useCoordAuth();
   const { store } = useTriageContext();
   const payload = useTriage(store, (s) => s.payload);
   const viewer = useTriage(store, (s) => s.viewer);
   const cursorKey = useTriage(store, (s) => s.cursorKey);
   const docs = useMemo(() => payload?.test.documents ?? [], [payload]);
   const hasSdk = typeof window !== "undefined" && !!window.Autodesk?.Viewing;
-  const canView = api.mode === "http" && isAuthenticated && docs.length > 0 && hasSdk;
+  // Real models only with live ACC data: fixtures URNs are fake, so fixtures/mock keep the placeholder.
+  const live = api.mode === "http" && coordStatus?.dataSource === "live" && docs.length > 0 && hasSdk;
+  const [viewerToken, setViewerToken] = useState<"checking" | "ok" | "none">("checking");
+  useEffect(() => {
+    if (!live) return;
+    let alive = true;
+    // Downscoped viewer token from the server (POST /api/auth/refresh); null = browser login needed.
+    void getAccessToken().then((tk) => alive && setViewerToken(tk ? "ok" : "none"));
+    return () => {
+      alive = false;
+    };
+  }, [live, getAccessToken]);
+  const canView = live && viewerToken === "ok";
   const modelsRef = useRef<Map<string, ModelHandle>>(new Map());
   const [simplified, setSimplified] = useState(false);
 
@@ -181,7 +196,14 @@ export function ClashViewerPane() {
           }}
         />
       ) : (
-        <ViewerPlaceholder hasDocs={docs.length > 0} />
+        <ViewerPlaceholder
+          hasDocs={docs.length > 0}
+          needsLogin={live && viewerToken === "none"}
+          onLogin={() => {
+            writeString("coord.returnTo", window.location.pathname + window.location.search, "session");
+            login();
+          }}
+        />
       )}
       {viewer.status === "loading" && (
         <div className="absolute inset-x-0 top-12 flex justify-center">
@@ -201,7 +223,7 @@ export function ClashViewerPane() {
   );
 }
 
-function ViewerPlaceholder({ hasDocs }: { hasDocs: boolean }) {
+function ViewerPlaceholder({ hasDocs, needsLogin, onLogin }: { hasDocs: boolean; needsLogin: boolean; onLogin: () => void }) {
   const t = useT();
   const { fmt } = useI18n();
   const { store } = useTriageContext();
@@ -213,7 +235,12 @@ function ViewerPlaceholder({ hasDocs }: { hasDocs: boolean }) {
       <div className="max-w-md rounded-lg border border-brand-muted/20 bg-white/95 p-5 text-center shadow-sm">
         <IconCube size={28} className="mx-auto mb-2 text-brand-muted" />
         <p className="font-medium text-gray-800">{t("viewer.placeholderTitle")}</p>
-        <p className="mt-1 text-xs text-gray-500">{hasDocs ? t("viewer.placeholderMock") : t("viewer.placeholderNoModels")}</p>
+        <p className="mt-1 text-xs text-gray-500">{needsLogin ? t("viewer.needsLogin") : hasDocs ? t("viewer.placeholderMock") : t("viewer.placeholderNoModels")}</p>
+        {needsLogin && (
+          <button type="button" onClick={onLogin} className="mt-3 rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-light">
+            {t("viewer.connect")}
+          </button>
+        )}
         {c ? (
           <div className="mt-4 space-y-2 text-left text-sm">
             <div className="flex items-start gap-2 rounded border border-l-4 border-brand-muted/20 border-l-clash-a p-2">

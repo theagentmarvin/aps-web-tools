@@ -11,6 +11,9 @@
  *   POST   /api/coord/auth/logout  (H)                           → {ok}
  *   GET    /api/coord/session                                    → SessionInfo
  *   POST   /api/coord/projects/:p/model-sets/:m/tests/:accTestId/ingest (H) {refresh?,classify?} → {testKey}
+ *   GET    /api/coord/webauthn/approve-options?batch=&exclude= (H) → ApproveOptionsResponse
+ *   GET    /api/coord/webauthn/register-options (H)             → RegisterOptionsResponse
+ *   POST   /api/coord/webauthn/register (H) RegisterRequest     → {credentialId,label,enrolledVia}
  *   POST   /api/coord/batches/:batchId/apply (H) {dryRun?=true}  → ApplyResponse
  *   (H) = human-only: X-Coord-CSRF header + same origin. The client sends the header on every non-GET call.
  *   Types: server/api/contract.ts. Full table: docs/api.md.
@@ -115,7 +118,8 @@ export class HttpCoordinatorApi implements CoordinatorApi {
     const headers: Record<string, string> = {};
     if (body !== undefined) headers["Content-Type"] = "application/json";
     // Every mutating call carries the CSRF header (required on human-only endpoints, harmless elsewhere).
-    if (method !== "GET") headers["X-Coord-CSRF"] = await this.token();
+    // Human-only endpoints (some are GET, e.g. webauthn options) need it; it is harmless elsewhere.
+    headers["X-Coord-CSRF"] = await this.token();
     let res: Response;
     try {
       res = await fetch(`${BASE}${path}`, {
@@ -141,7 +145,7 @@ export class HttpCoordinatorApi implements CoordinatorApi {
       }
       const isCsrf = res.status === 403 && /csrf/i.test(message);
       // Token may be stale (server restarted): refresh once and retry.
-      if (isCsrf && !retried && method !== "GET") {
+      if (isCsrf && !retried) {
         await this.token(true);
         return this.req<R>(method, path, body, true);
       }
@@ -230,6 +234,13 @@ export class HttpCoordinatorApi implements CoordinatorApi {
   returnBatchToReview(id: string) { return this.req<T.Batch>("POST", `/batches/${enc(id)}/return`); }
   discardBatch(id: string) { return this.req<T.Batch>("POST", `/batches/${enc(id)}/discard`); }
   approveBatch(id: string, r: T.ApproveRequest) { return this.req<T.ApplyStatus>("POST", `/batches/${enc(id)}/approve`, r); }
+  getApproveOptions(batchId: string, excludedItemIds: string[]) {
+    return this.get<T.ApproveOptionsResponse>("/webauthn/approve-options", { batch: batchId, exclude: excludedItemIds.length ? excludedItemIds.join(",") : undefined });
+  }
+  getRegisterOptions() { return this.get<T.RegisterOptionsResponse>("/webauthn/register-options"); }
+  registerPasskey(r: T.RegisterRequest) {
+    return this.req<{ credentialId: string; label: string; enrolledVia: "enroll-code" | "step-up" }>("POST", "/webauthn/register", r);
+  }
   applyBatch(id: string, r: T.ApplyRequest) { return this.req<T.ApplyResponse>("POST", `/batches/${enc(id)}/apply`, { dryRun: r.dryRun ?? true }); }
   getApplyStatus(id: string) { return this.get<T.ApplyStatus>(`/batches/${enc(id)}/apply-status`); }
 

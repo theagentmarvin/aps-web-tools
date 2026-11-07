@@ -6,7 +6,9 @@
     "version": "v{version}",
     "demoMode": "Modo demostración · datos simulados",
     "demoModeHint": "VITE_COORD_API=mock: los datos son de ejemplo y nada se escribe en ACC.",
-    "skipToContent": "Ir al contenido"
+    "skipToContent": "Ir al contenido",
+    "wrongHost": "Estás usando 127.0.0.1. Abre la aplicación como http://localhost:{port} para que las passkeys y el inicio de sesión funcionen.",
+    "wrongHostLink": "Ir a localhost"
   },
   "nav": {
     "home": "Inicio",
@@ -404,7 +406,9 @@
     "placeholderNoModels": "Esta prueba no tiene modelos con vista 3D disponibles.",
     "placeholderSelect": "Selecciona un grupo o una interferencia en la lista.",
     "distance": "Distancia {value}",
-    "clashPoint": "Punto de choque"
+    "clashPoint": "Punto de choque",
+    "needsLogin": "Conecta tu cuenta de Autodesk para ver los modelos en 3D (solo lectura).",
+    "connect": "Conectar visor 3D"
   },
   "reasons": {
     "title": "¿Por qué corriges la propuesta?",
@@ -821,6 +825,37 @@
   "approve": {
     "title": "Aprobar lote",
     "body": "Firmarás la aprobación con tu nombre. Después podrás ver la simulación y aplicar en ACC.",
-    "button": "Aprobar {count} cambios"
+    "button": "Aprobar {count} cambios",
+    "demoLabel": "Aprobación de demostración",
+    "demoHint": "Modo fixtures: no se usa passkey y nada se escribe en ACC real.",
+    "passkeyHint": "Al confirmar, Windows Hello (o tu passkey) te pedirá PIN o biometría para firmar la aprobación.",
+    "passkeyWaiting": "Esperando la confirmación de Windows Hello…",
+    "buttonPasskey": "Aprobar con passkey ({count} cambios)"
+  },
+  "passkey": {
+    "title": "Passkey para aprobar",
+    "intro": "Las aprobaciones en ACC real se firman con una passkey (Windows Hello). Registra al menos una en este equipo.",
+    "firstTitle": "Primera passkey",
+    "firstSteps": "1. En tu propia terminal ejecuta: npm run coordinator -- passkey-enroll  ·  2. Copia el código de 10 caracteres (vale 10 minutos y una sola vez)  ·  3. Escríbelo aquí y confirma con Windows Hello.",
+    "stepUpTitle": "Agregar otra passkey",
+    "stepUpSteps": "Primero confirma con una passkey ya registrada; luego registra la nueva.",
+    "code": "Código de enrolamiento",
+    "label": "Nombre de la passkey",
+    "labelDefault": "Windows Hello · este equipo",
+    "register": "Registrar passkey",
+    "registered": "Passkey «{label}» registrada.",
+    "notInFixtures": "En modo fixtures las aprobaciones son de demostración y no requieren passkey.",
+    "link": "Gestionar passkeys",
+    "errors": {
+      "not_supported": "Este navegador no soporta passkeys (WebAuthn). Usa Edge o Chrome actualizados.",
+      "wrong_host": "Abriste la aplicación en una dirección IP. Las passkeys solo funcionan en http://localhost: cambia 127.0.0.1 por localhost en la barra de direcciones.",
+      "cancelled": "Cancelaste la confirmación de Windows Hello. No se aprobó nada; puedes intentarlo de nuevo.",
+      "timeout": "Se agotó el tiempo de la confirmación. No se aprobó nada; vuelve a intentarlo.",
+      "no_passkey": "No hay passkeys registradas. Ve a Ajustes → Passkey y registra una con el código de npm run coordinator -- passkey-enroll.",
+      "already_registered": "Esta passkey ya está registrada en este equipo.",
+      "challenge_expired": "El lote cambió o el desafío expiró. Vuelve a confirmar para pedir uno nuevo.",
+      "rejected": "El servidor rechazó la passkey: {message}",
+      "unknown": "No se pudo completar la confirmación: {message}"
+    }
   }
 }

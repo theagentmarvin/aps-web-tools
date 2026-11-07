@@ -39,6 +39,11 @@ export function SettingsPage() {
         <Row label={t("settings.autonomy")} hint={t("settings.autonomyReadOnly")}>
           <span className="rounded border border-brand-light/30 bg-brand/10 px-2 py-1 text-sm text-brand">{t("settings.autonomyValue")}</span>
         </Row>
+        <Row label={t("passkey.title")} hint={t("passkey.intro")}>
+          <Link to="/ajustes/passkey" className="text-sm text-brand hover:underline">
+            {t("passkey.link")}
+          </Link>
+        </Row>
         <Row label={t("settings.apiMode", { mode: api.mode })} hint={api.mode === "mock" ? t("app.demoModeHint") : undefined}>
           <span className="font-mono text-xs text-gray-500">VITE_COORD_API</span>
         </Row>

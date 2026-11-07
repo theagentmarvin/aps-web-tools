@@ -29,12 +29,7 @@ export function ReportKpis({ kpis }: { kpis: ReportData["kpis"] }) {
       <KpiTile label={t("reports.kpi.reviewed")} value={fmt.pct(k.groups ? k.groupsReviewed / k.groups : 0)}>
         <ProgressBar done={k.groupsReviewed} total={k.groups} className="mt-2" />
       </KpiTile>
-      {/* issuesClosed is a server placeholder (always 0) until ACC issue status is tracked: hide it rather than show 0. */}
-      {k.issuesClosed > 0 ? (
-        <KpiTile label={`${t("reports.kpi.issuesCreated")} / ${t("reports.kpi.issuesClosed")}`} value={`${fmt.number(k.issuesCreated)} / ${fmt.number(k.issuesClosed)}`} />
-      ) : (
-        <KpiTile label={t("reports.kpi.issuesCreated")} value={fmt.number(k.issuesCreated)} />
-      )}
+      <KpiTile label={t("reports.kpi.issuesCreated")} value={fmt.number(k.issuesCreated)} />
       <KpiTile label={t("reports.kpi.aiAcceptance")} value={fmt.pct(aiTotal ? k.aiAccepted / aiTotal : 0)} />
       <KpiTile label={t("reports.kpi.timeSaved")} value={t("reports.kpi.timeSavedValue", { hours: fmt.number(savedHours) })} hint={t("reports.kpi.timeSavedFormula", { baseline: settings.baselineSec })}>
         <div className="mt-0.5 text-xs text-gray-500">{t("common.estimated")}</div>

@@ -126,6 +126,8 @@ export function recount(batch: Batch): Batch {
   };
   batch.review = { humanReviewedPct: 100, lowConfidence: low, lowConfidenceViewed: lowViewed };
   batch.statusTransitions = [...transitions.values()].sort((a, b) => b.count - a.count);
+  const issues = live.filter((i) => i.operation === "issue.create");
+  batch.issueEffects = { issues: issues.length, clashesLinked: issues.reduce((n, i) => n + (i.issue?.linkClashIds.length ?? 0), 0) };
   batch.issuesByDiscipline = byDisc;
   return batch;
 }

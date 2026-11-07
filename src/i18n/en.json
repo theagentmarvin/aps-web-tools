@@ -6,7 +6,9 @@
     "version": "v{version}",
     "demoMode": "Demo mode · simulated data",
     "demoModeHint": "VITE_COORD_API=mock: data is sample data and nothing is written to ACC.",
-    "skipToContent": "Skip to content"
+    "skipToContent": "Skip to content",
+    "wrongHost": "You are on 127.0.0.1. Open the app as http://localhost:{port} so passkeys and sign-in work.",
+    "wrongHostLink": "Go to localhost"
   },
   "nav": {
     "home": "Home",
@@ -404,7 +406,9 @@
     "placeholderNoModels": "This test has no models with an available 3D view.",
     "placeholderSelect": "Select a group or a clash in the list.",
     "distance": "Distance {value}",
-    "clashPoint": "Clash point"
+    "clashPoint": "Clash point",
+    "needsLogin": "Connect your Autodesk account to see the models in 3D (read-only).",
+    "connect": "Connect 3D viewer"
   },
   "reasons": {
     "title": "Why are you correcting the proposal?",
@@ -821,6 +825,37 @@
   "approve": {
     "title": "Approve batch",
     "body": "You will sign the approval with your name. Then you can review the dry run and apply to ACC.",
-    "button": "Approve {count} changes"
+    "button": "Approve {count} changes",
+    "demoLabel": "Demo approval",
+    "demoHint": "Fixtures mode: no passkey is used and nothing is written to real ACC.",
+    "passkeyHint": "When you confirm, Windows Hello (or your passkey) will ask for your PIN or biometrics to sign the approval.",
+    "passkeyWaiting": "Waiting for Windows Hello confirmation…",
+    "buttonPasskey": "Approve with passkey ({count} changes)"
+  },
+  "passkey": {
+    "title": "Approval passkey",
+    "intro": "Approvals on real ACC are signed with a passkey (Windows Hello). Register at least one on this computer.",
+    "firstTitle": "First passkey",
+    "firstSteps": "1. In your own terminal run: npm run coordinator -- passkey-enroll  ·  2. Copy the 10-character code (valid for 10 minutes, once)  ·  3. Enter it here and confirm with Windows Hello.",
+    "stepUpTitle": "Add another passkey",
+    "stepUpSteps": "First confirm with an already registered passkey; then register the new one.",
+    "code": "Enrolment code",
+    "label": "Passkey name",
+    "labelDefault": "Windows Hello · this computer",
+    "register": "Register passkey",
+    "registered": "Passkey “{label}” registered.",
+    "notInFixtures": "In fixtures mode approvals are demo approvals and need no passkey.",
+    "link": "Manage passkeys",
+    "errors": {
+      "not_supported": "This browser does not support passkeys (WebAuthn). Use an up-to-date Edge or Chrome.",
+      "wrong_host": "You opened the app on an IP address. Passkeys only work on http://localhost: replace 127.0.0.1 with localhost in the address bar.",
+      "cancelled": "You cancelled the Windows Hello prompt. Nothing was approved; you can try again.",
+      "timeout": "The confirmation timed out. Nothing was approved; try again.",
+      "no_passkey": "No passkeys are registered. Go to Settings → Passkey and register one with the code from npm run coordinator -- passkey-enroll.",
+      "already_registered": "This passkey is already registered on this computer.",
+      "challenge_expired": "The batch changed or the challenge expired. Confirm again to request a new one.",
+      "rejected": "The server rejected the passkey: {message}",
+      "unknown": "The confirmation could not be completed: {message}"
+    }
   }
 }

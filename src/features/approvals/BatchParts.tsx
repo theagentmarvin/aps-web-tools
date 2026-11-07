@@ -33,6 +33,7 @@ export function BatchSummaryView({ batch, preflight }: { batch: Batch; preflight
           <span className="font-mono text-green-700">+</span>
           {t("batch.issuesCreate", { count: batch.counts.issuesCreate })}
           {byDisc && <span className="text-gray-500">({byDisc})</span>}
+          {batch.issueEffects?.clashesLinked ? <span className="text-gray-500">· {t("issue.linkedClashes", { count: batch.issueEffects.clashesLinked })}</span> : null}
           {batch.counts.issuesCreate > 0 && <span className={irreversibleTag}>{t("batch.irreversible")}</span>}
         </li>
         <li className="flex flex-wrap items-center gap-2">
@@ -195,7 +196,24 @@ export function changeCount(batch: Batch): number {
  * word when the batch creates issues or has ≥ 50 changes). mode "apply": real
  * write to ACC, always behind the typed word.
  */
-export function ApplyConfirmDialog({ batch, mode, onCancel, onConfirm, busy }: { batch: Batch; mode: "approve" | "apply"; onCancel: () => void; onConfirm: (word: string) => void; busy: boolean }) {
+export function ApplyConfirmDialog({
+  batch,
+  mode,
+  onCancel,
+  onConfirm,
+  busy,
+  extra,
+  confirmLabel,
+}: {
+  batch: Batch;
+  mode: "approve" | "apply";
+  onCancel: () => void;
+  onConfirm: (word: string) => void;
+  busy: boolean;
+  /** Extra content (demo label, passkey hint, error). */
+  extra?: ReactNode;
+  confirmLabel?: string;
+}) {
   const t = useT();
   const [checked, setChecked] = useState(false);
   const [typed, setTyped] = useState("");
@@ -212,12 +230,13 @@ export function ApplyConfirmDialog({ batch, mode, onCancel, onConfirm, busy }: {
         <>
           <Button onClick={onCancel}>{t("common.cancel")}</Button>
           <Button variant="primary" disabled={!ok || busy} onClick={() => onConfirm(typed.trim() || word)}>
-            {mode === "approve" ? t("approve.button", { count: total }) : t("apply.button", { count: total })}
+            {confirmLabel ?? (mode === "approve" ? t("approve.button", { count: total }) : t("apply.button", { count: total }))}
           </Button>
         </>
       }
     >
       {mode === "approve" && <p className="mb-2 font-medium">{t("approve.body")}</p>}
+      {extra}
       <p>{t("apply.intro", { project: batch.projectName })}</p>
       <ul className="mt-2 list-disc space-y-1 pl-5">
         {batch.counts.issuesCreate > 0 && <li className="text-red-700">{t("apply.issuesWarning", { count: batch.counts.issuesCreate })}</li>}

@@ -233,6 +233,7 @@ export class MockCoordinatorApi implements CoordinatorApi {
       origin: { accepted: 0, corrected: 0, manual: 0 },
       review: { humanReviewedPct: 100, lowConfidence: 0, lowConfidenceViewed: 0 },
       statusTransitions: [],
+      issueEffects: { issues: 0, clashesLinked: 0 },
       issuesByDiscipline: {},
       items,
     });
@@ -684,6 +685,19 @@ export class MockCoordinatorApi implements CoordinatorApi {
     b.approval = { approvedBy: ME.short, approvedAt: b.approvedAt, expiresAt: new Date(Date.now() + 24 * 3600000).toISOString(), channel: "web-ui", valid: true };
     this.log({ actor: { type: "user", id: ME.id, name: ME.short }, action: "batch.approved", projectId: b.projectId, modelSetId: b.modelSetId, testId: b.testId, batchId: b.id, targetIds: [], details: { items: live.length, note: req.note ?? null } });
     return this.applyStatus(id);
+  }
+
+  // Passkeys: the mock behaves like fixtures mode (demo approval), so the WebAuthn endpoints are unavailable.
+  async getApproveOptions(): Promise<T.ApproveOptionsResponse> {
+    throw new ApiError("Modo demostración: la aprobación usa demo: true, sin passkey.", 400, "validation", "validation_error");
+  }
+
+  async getRegisterOptions(): Promise<T.RegisterOptionsResponse> {
+    throw new ApiError("Modo demostración: no hay passkeys que registrar.", 400, "validation", "validation_error");
+  }
+
+  async registerPasskey(): Promise<{ credentialId: string; label: string; enrolledVia: "enroll-code" | "step-up" }> {
+    throw new ApiError("Modo demostración: no hay passkeys que registrar.", 400, "validation", "validation_error");
   }
 
   /** dryRun returns the exact bodies; a real apply starts the (simulated) job. */

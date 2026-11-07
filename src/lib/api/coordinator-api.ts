@@ -10,6 +10,9 @@
 import type {
   AgentStatus,
   ApplyRequest,
+  ApproveOptionsResponse,
+  RegisterOptionsResponse,
+  RegisterRequest,
   ApplyResponse,
   AuthStatus,
   LoginStartResponse,
@@ -102,6 +105,11 @@ export interface CoordinatorApi {
   discardBatch(batchId: string): Promise<Batch>;
   /** Signs the HMAC approval; the batch moves to `approved`. Does not write to ACC. */
   approveBatch(batchId: string, req: ApproveRequest): Promise<ApplyStatus>;
+  /** WebAuthn step 1: options whose challenge is derived from the exact batch payload (2-minute nonce). */
+  getApproveOptions(batchId: string, excludedItemIds: string[]): Promise<ApproveOptionsResponse>;
+  /** Passkey enrolment options: first passkey needs the CLI code; more need a step-up assertion. */
+  getRegisterOptions(): Promise<RegisterOptionsResponse>;
+  registerPasskey(req: RegisterRequest): Promise<{ credentialId: string; label: string; enrolledVia: "enroll-code" | "step-up" }>;
   /** dryRun (default true) returns the exact ACC request bodies; dryRun:false writes to ACC. */
   applyBatch(batchId: string, req: ApplyRequest): Promise<ApplyResponse>;
   getApplyStatus(batchId: string): Promise<ApplyStatus>;

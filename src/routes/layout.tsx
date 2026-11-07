@@ -1,6 +1,7 @@
 import { Outlet, useMatch } from "react-router";
 import { useT } from "~/i18n";
 import { Nav } from "~/lib/components/nav";
+import { isIpHost } from "~/lib/webauthn";
 
 export function Layout() {
   const t = useT();
@@ -11,6 +12,7 @@ export function Layout() {
         {t("app.skipToContent")}
       </a>
       <Nav />
+      <WrongHostBanner />
       <main id="main" className="min-h-0 flex-1">
         {workspace ? (
           <Outlet />
@@ -23,6 +25,22 @@ export function Layout() {
           </div>
         )}
       </main>
+    </div>
+  );
+}
+
+/** The WebAuthn RP ID and the APS callback are "localhost": warn when opened on an IP. */
+function WrongHostBanner() {
+  const t = useT();
+  const { hostname, port, pathname, search } = window.location;
+  if (!isIpHost(hostname)) return null;
+  const target = `http://localhost${port ? `:${port}` : ""}${pathname}${search}`;
+  return (
+    <div role="alert" className="flex flex-shrink-0 items-center gap-3 border-b border-amber-200 bg-amber-50 px-6 py-2 text-sm text-amber-900">
+      <span className="flex-1">{t("app.wrongHost", { port })}</span>
+      <a href={target} className="rounded border border-amber-300 bg-white px-2 py-0.5 text-xs">
+        {t("app.wrongHostLink")}
+      </a>
     </div>
   );
 }

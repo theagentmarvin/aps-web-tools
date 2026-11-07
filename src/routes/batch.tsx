@@ -2,16 +2,18 @@
  * /aprobaciones/:batchId — batch review, pre-flight, approve & apply (spec §5.3–5.5).
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { useI18n, useT, type TKey } from "~/i18n";
 import { useApi, useAsync } from "~/lib/api";
 import { useCoordAuth } from "~/lib/coord-auth";
+import { passkeyMessage } from "~/lib/passkey-messages";
+import { approveWithPasskey } from "~/lib/webauthn";
 import type { ApplyResponse, ApplyStatus, Batch, IssueDraft } from "~/lib/api/types";
 import { Modal } from "~/lib/components/Modal";
 import { PageHeader } from "~/lib/components/PageHeader";
 import { useToast } from "~/lib/components/Toast";
 import { Banner, Button, EmptyState, ErrorState, SkeletonRows, inputCls } from "~/lib/components/ui";
-import { ApplyConfirmDialog, ApplyProgress, BatchSummaryView, ConflictsList, DryRunPreview, IssuePreviewCard, PreflightStatus, preflightFresh } from "~/features/approvals/BatchParts";
+import { ApplyConfirmDialog, changeCount, ApplyProgress, BatchSummaryView, ConflictsList, DryRunPreview, IssuePreviewCard, PreflightStatus, preflightFresh } from "~/features/approvals/BatchParts";
 import { BatchDiffTable } from "~/features/approvals/BatchDiffTable";
 import { BatchStateLabel } from "./approvals";
 
@@ -40,6 +42,8 @@ export function BatchPage() {
   const [staleNote, setStaleNote] = useState("");
   const autoRan = useRef(false);
   const { status: authStatus } = useCoordAuth();
+  const [approveError, setApproveError] = useState<string | null>(null);
+  const demoApproval = api.mode === "mock" || authStatus?.dataSource !== "live";
 
   const runPreflight = useCallback(async () => {
     setPreflighting(true);
@@ -118,20 +122,24 @@ export function BatchPage() {
   async function approve(word: string) {
     if (!batch) return;
     setBusy(true);
+    setApproveError(null);
+    const excludedItemIds = batch.items.filter((i) => i.excluded).map((i) => i.id);
+    // The stale-base override is enforced in the UI (checkbox + note); the note travels with the approval.
+    const note = staleNote || undefined;
     try {
-      await api.approveBatch(batchId, {
-        confirmWord: word,
-        // The stale-base override is enforced in the UI (checkbox + note); the note travels with the approval.
-        note: staleNote || undefined,
-        excludedItemIds: batch.items.filter((i) => i.excluded).map((i) => i.id),
-        // Fixtures mode approves with demo:true; live mode needs a WebAuthn assertion (not wired yet).
-        demo: authStatus?.dataSource === "fixtures" ? true : undefined,
-      });
+      if (demoApproval) {
+        // Fixtures / mock: labelled demo approval, no passkey (the live source refuses it).
+        await api.approveBatch(batchId, { confirmWord: word, note, excludedItemIds, demo: true });
+      } else {
+        // Live: WebAuthn ceremony (Windows Hello) over a challenge bound to this exact payload.
+        await approveWithPasskey(api, { batchId, confirmWord: word, excludedItemIds, note });
+      }
       setConfirmMode(null);
       setDryRun(null);
       reload();
     } catch (err) {
-      toast.show(String(err instanceof Error ? err.message : err), { tone: "error" });
+      // Keep the dialog open with a clear message (cancelled, timeout, no passkey…).
+      setApproveError(passkeyMessage(t, err));
     } finally {
       setBusy(false);
     }
@@ -273,7 +281,43 @@ export function BatchPage() {
         ))}
       {tab === "conflictos" && <ConflictsList items={conflicts} readOnly={readOnly} onInclude={(id, include) => toggle([id], !include)} onReturn={(id) => toggle([id], true)} />}
 
-      {confirmMode && <ApplyConfirmDialog batch={batch} mode={confirmMode} busy={busy} onCancel={() => setConfirmMode(null)} onConfirm={confirmMode === "approve" ? approve : applyReal} />}
+      {confirmMode && (
+        <ApplyConfirmDialog
+          batch={batch}
+          mode={confirmMode}
+          busy={busy}
+          onCancel={() => {
+            setConfirmMode(null);
+            setApproveError(null);
+          }}
+          onConfirm={confirmMode === "approve" ? approve : applyReal}
+          confirmLabel={confirmMode === "approve" && !demoApproval ? t("approve.buttonPasskey", { count: changeCount(batch) }) : undefined}
+          extra={
+            confirmMode === "approve" ? (
+              <div className="mb-3 space-y-2">
+                {demoApproval ? (
+                  <p className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-900">
+                    <strong className="mr-1 uppercase">{t("approve.demoLabel")}</strong>
+                    {t("approve.demoHint")}
+                  </p>
+                ) : (
+                  <p className="rounded border border-brand-light/30 bg-brand-surface px-2 py-1 text-xs text-brand">{busy ? t("approve.passkeyWaiting") : t("approve.passkeyHint")}</p>
+                )}
+                {approveError && (
+                  <p role="alert" className="rounded border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-700">
+                    {approveError}{" "}
+                    {/passkey-enroll/.test(approveError) && (
+                      <Link to="/ajustes/passkey" className="underline">
+                        {t("passkey.link")}
+                      </Link>
+                    )}
+                  </p>
+                )}
+              </div>
+            ) : undefined
+          }
+        />
+      )}
       {discardOpen && (
         <Modal
           title={t("batch.discard")}

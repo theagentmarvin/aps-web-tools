@@ -102,6 +102,7 @@ export function ForgeViewer({
       // Pre-fetch token: getAccessToken MUST be synchronous.
       const token = await tokenRef.current();
       if (cancelled) return;
+      let latestToken = token ?? "";
       if (!token) {
         setInitError("getToken() returned null — not authenticated");
         return;
@@ -110,7 +111,14 @@ export function ForgeViewer({
       Viewing.Initializer(
         {
           env: "AutodeskProduction",
-          getAccessToken: (cb: (t: string, e: number) => void) => cb(token, expiresRef.current),
+          // Must answer synchronously: hand over the latest token, then refresh in the
+          // background (server-side refresh; the browser never holds a refresh token).
+          getAccessToken: (cb: (t: string, e: number) => void) => {
+            cb(latestToken, expiresRef.current);
+            void tokenRef.current().then((t) => {
+              if (t) latestToken = t;
+            });
+          },
           logLevel: 0,
         },
         () => {

@@ -15,6 +15,7 @@ import { RulePage } from "./routes/rule";
 import { ReportsPage } from "./routes/reports";
 import { AuditPage } from "./routes/audit";
 import { SettingsPage } from "./routes/settings";
+import { PasskeyPage } from "./routes/passkey";
 import { NotFoundPage } from "./routes/not-found";
 
 /** Wrap a route component in AuthGate (all routes except callback and 404). */
@@ -46,6 +47,7 @@ export const router = createBrowserRouter([
       { path: "reportes/:projectId", Component: gated(ReportsPage) },
       { path: "auditoria", Component: gated(AuditPage) },
       { path: "ajustes", Component: gated(SettingsPage) },
+      { path: "ajustes/passkey", Component: gated(PasskeyPage) },
       { path: "data-management", Component: DataManagement },
       { path: "*", Component: NotFoundPage },
     ],

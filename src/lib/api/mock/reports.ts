@@ -62,7 +62,6 @@ export function buildReport(i: ReportInput): T.ReportData {
       rawClashes: total,
       groupsReviewed,
       issuesCreated: 23,
-      issuesClosed: 9,
       aiAccepted: accepted + 240,
       aiCorrected: corrected + 28,
       aiRejected: rejected + 6,

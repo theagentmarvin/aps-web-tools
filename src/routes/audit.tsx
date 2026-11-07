@@ -60,8 +60,8 @@ export function AuditPage() {
 
   function exportCsv() {
     downloadCsv("auditoria.csv", [
-      ["id", "at", "actorType", "actor", "action", "projectId", "modelSetId", "testId", "batchId", "targets", "accResponseId", "details"],
-      ...items.map((e) => [e.id, e.at, e.actor.type, e.actor.name, e.action, e.projectId, e.modelSetId, e.testId, e.batchId, e.targetIds.join(" "), e.accResponseId, JSON.stringify(e.details)]),
+      ["id", "at", "actorType", "actor", "action", "projectId", "modelSetId", "testId", "accTestId", "batchId", "targets", "accResponseId", "details"],
+      ...items.map((e) => [e.id, e.at, e.actor.type, e.actor.name, e.action, e.projectId, e.modelSetId, e.testId, e.accTestId, e.batchId, e.targetIds.join(" "), e.accResponseId, JSON.stringify(e.details)]),
     ]);
   }
 
