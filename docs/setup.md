@@ -9,7 +9,7 @@ Para probar sin credenciales, usa la demo del [README](../README.md#demo-en-5-mi
 ## 0. Requisitos
 
 - Windows 10/11 con **Windows Hello** configurado (PIN, huella o rostro). Se usa para firmar las aprobaciones.
-- Node.js 20 o superior y git.
+- Node.js 22 o superior y git.
 - Claude Code instalado y con sesión iniciada en la cuenta corporativa.
 - Navegador Chrome o Edge actualizado.
 - Una cuenta Autodesk con acceso al proyecto en ACC y permisos en las carpetas de los modelos (ver: Model Set Read; para cerrar o asignar interferencias: Model Set Edit).

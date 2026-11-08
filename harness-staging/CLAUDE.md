@@ -79,8 +79,7 @@ Comandos: `/coordinar-test` (flujo completo), `/triage`, `/redactar-issues`, `/i
 ## Demo y modo fixtures (sin ACC, sin red)
 Datos sintéticos de `tests/fixtures/` ("Edificio Demo Las Condes"); escrituras simuladas, sin login.
 1. Terminal 1: `npm run demo` (UI web en modo fixtures → http://localhost:3000).
-2. Terminal 2: `claude --mcp-config .mcp.demo.json`, o bien con la variable:
-   Bash/macOS `COORD_DATA_SOURCE=fixtures claude` · PowerShell `$env:COORD_DATA_SOURCE = "fixtures"; claude`.
+2. Terminal 2: `claude --mcp-config .mcp.demo.json` (mismos datos de demostración que la UI, en `.coordinator-demo/`).
 
 En modo fixtures dilo al coordinador al inicio. Diseño del harness: `docs/ai/harness-design.md`.
 
