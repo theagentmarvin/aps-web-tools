@@ -11,11 +11,10 @@
  * about the secret is logged. Host / Origin checks for /api/auth run first in
  * vite.config.ts (anti DNS rebinding). Logic: server/api/browser-auth.ts.
  */
-import { join } from "node:path";
 import type { Plugin, ViteDevServer } from "vite";
 import { loadEnv } from "vite";
 import { createBrowserAuthHandlers } from "../../../server/api/browser-auth";
-import { secureDir } from "../../../server/secure/keystore";
+import { browserSessionPath } from "../../../server/secure/aps-paths";
 
 export function apsAuthPlugin(): Plugin {
   // Prefixes: VITE_ (client-safe) + APS_ (server-only secrets)
@@ -34,7 +33,7 @@ export function apsAuthPlugin(): Plugin {
         clientId,
         clientSecret: secret,
         callbackUrl,
-        tokenFile: join(secureDir({ homeOverride: process.env.COORDINATOR_HOME }), "browser-session.json"),
+        tokenFile: browserSessionPath(),
         browserScope: env.APS_BROWSER_SCOPE || undefined,
       });
 
