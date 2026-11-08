@@ -26,7 +26,7 @@ Agent analyzes clashes  ──writes──▶ .coordinator/ store ──read─�
 
 Three verbs, three places. **Triage** = human decides on each proposal (fast, reversible, local). **Approve** = human commits a batch of decided changes (deliberate, shows exactly what ACC will receive). **Apply** = server writes to ACC (irreversible for issues). Nothing reaches ACC from the triage screen. This separation is the core trust mechanism: coordinators can move fast in triage because triage cannot break anything.
 
-Vocabulary (UI, Spanish): clash = **interferencia**; group = **grupo**; model set = **conjunto de modelos**; clash test = **prueba de interferencias**; issue = **incidencia** (ACC's own Spanish term); proposal = **propuesta**; batch = **lote**; rule = **regla**. Disciplines come from the BIM specialist's discipline matrix in `rules/` (labels and short codes, e.g. `EST`, `ARQ`, `CLIMA`, `SAN`, `ELE`, `PCI`); the UI never hardcodes discipline names.
+Vocabulary (UI, Spanish): clash = **interferencia**; group = **grupo**; model set = **conjunto de modelos**; clash test = **prueba de interferencias**; issue = **incidencia** (ACC's own Spanish term); proposal = **propuesta**; batch = **lote**; rule = **regla**. Disciplines come from the BIM specialist's discipline matrix in `rules/` (labels and short codes, e.g. `EST`, `ARQ`, `CLI`, `SAN`, `ELE`, `INC`); the UI never hardcodes discipline names.
 
 ---
 
@@ -43,7 +43,7 @@ Vocabulary (UI, Spanish): clash = **interferencia**; group = **grupo**; model se
   5. Know what changed since last week (new, persisting, resolved, reappeared).
 - **Fears**: the AI silently hides a real clash; a bulk action spams ACC with 300 issues; losing work.
 
-### P2 — Modelador de disciplina (receiver of issues) — "Diego, modelador CLIMA (subcontratista)"
+### P2 — Modelador de disciplina (receiver of issues) — "Diego, modelador CLI (subcontratista)"
 - Does **not** necessarily use this app; consumes ACC issues. May get a read-only link to a group.
 - **Top jobs**
   1. Receive issues that are self-explanatory: what collides, where (level/grid), how much, which element IDs, a snapshot, what is expected of him.
@@ -184,10 +184,10 @@ Three resizable panes + header + status bar. Minimum supported viewport 1366×76
 ├───────────────────────────────────────────────────────────────────────────────────────────────────────────┤
 │ ⚠ Hay una versión más reciente del conjunto (v15). Las propuestas se generaron sobre v14.  [Copiar comando] [Detalles] │  ← only when stale
 ├───────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-│ 🔍 Buscar…  [Decisión: Pendiente ×] [Par: EST×CLIMA ×] [+ Filtro]  Orden: Prioridad ▾  Vista: (Grupos|Interferencias) ★Vistas ▾ │
+│ 🔍 Buscar…  [Decisión: Pendiente ×] [Par: EST×CLI ×] [+ Filtro]  Orden: Prioridad ▾  Vista: (Grupos|Interferencias) ★Vistas ▾ │
 ├──────────────────────────────┬─────────────────────────────────────────────────┬──────────────────────────┤
 │ GROUP LIST (380px)           │ VIEWER (flex-1)                                 │ DETAIL (400px)           │
-│ ☐ P1 ●●○ EST×CLIMA ×14  NUEVA│  ┌─Modo: (Aislar|Rayos X|Contexto) ⤢ ▣ ◎ A B──┐ │ Grupo 23 de 418     ◀ ▶  │
+│ ☐ P1 ●●○ EST×CLI ×14  NUEVA│  ┌─Modo: (Aislar|Rayos X|Contexto) ⤢ ▣ ◎ A B──┐ │ Grupo 23 de 418     ◀ ▶  │
 │   Ducto DR-12 vs vigas N3  ○ │  │                                             │ │ Ducto DR-12 vs vigas     │
 │▶☐ P2 ●●● EST×SAN  ×3       ✓ │  │          (A) azul     (B) naranja            │ │ ── Evidencia ──          │
 │   Tubería PVC vs losa N2     │  │              ◎ marcador 1..n                 │ │ ── Propuesta del agente ─│
@@ -195,7 +195,7 @@ Three resizable panes + header + status bar. Minimum supported viewport 1366×76
 │ …virtualized…                │  └─────────────────────────────────────────────┘ │ ── Cambios desde prueba ─│
 │                              │  ┌ Leyenda ─────────────────┐                   │ ── Borrador incidencia ──│
 │                              │  │ A ■ EST · Viga V-201      │                   │ ── Historial ──          │
-│                              │  │ B ▲ CLIMA · Ducto DR-12   │                   │                          │
+│                              │  │ B ▲ CLI · Ducto DR-12   │                   │                          │
 │ [selection bar when ≥1 ☑]    │  └───────────────────────────┘                   │ [Aceptar A][Editar E]    │
 │                              │                                                 │ [Rechazar X][Posponer S] │
 ├──────────────────────────────┴─────────────────────────────────────────────────┴──────────────────────────┤
@@ -222,7 +222,7 @@ Two view modes (`view=groups` default, `view=clashes` flat). In groups mode a gr
 
 **Group row** (fixed height 56 px):
 ```
-☐  [P1]  ●●○  [A EST × B CLIMA]  ×14   NUEVA            ○
+☐  [P1]  ●●○  [A EST × B CLI]  ×14   NUEVA            ○
     Ducto DR-12 cruza vigas V-201..V-214 · Nivel 3
 ```
 - Line 1: checkbox (visible on hover, always when any row is checked), `PriorityChip`, `ConfidenceDots`, `DisciplinePairChip` (A/B swatches), clash count `×14` (`font-mono text-xs text-gray-500`), `DeltaBadge` (only if not "persistente"), `DecisionStateIcon` right-aligned.
@@ -303,7 +303,7 @@ Filter bar = chips; each chip opens a `MultiSelectPopover` with counts per value
 | Filter (query key) | Values | Default |
 |---|---|---|
 | Decisión (`decision`) | pendiente, aceptada, corregida, rechazada, pospuesta, heredada | `pendiente` |
-| Par de disciplinas (`pair`) | from discipline matrix, e.g. `EST:CLIMA` (unordered pair) | all |
+| Par de disciplinas (`pair`) | from discipline matrix, e.g. `EST:CLI` (unordered pair) | all |
 | Validez propuesta (`validity`) | valida, falso_positivo, tolerable, duplicada, por_confirmar | all |
 | Prioridad (`priority`) | 1,2,3,4 | all |
 | Confianza (`confidence`) | alta, media, baja | all |
@@ -314,7 +314,7 @@ Filter bar = chips; each chip opens a `MultiSelectPopover` with counts per value
 | Responsable (`owner`) | discipline codes | all |
 | Con incidencia (`issue`) | borrador, existente, ninguna | all |
 
-Filter values serialize to the URL as comma lists (`?decision=pendiente&pair=EST:CLIMA,EST:SAN`); `replaceState`, not push, for filter edits.
+Filter values serialize to the URL as comma lists (`?decision=pendiente&pair=EST:CLI,EST:SAN`); `replaceState`, not push, for filter edits.
 
 **Sort** (`sort`): `priority` (P1 first, then clash count desc — default), `confidence_asc` ("Baja confianza primero"), `count_desc`, `distance` (deepest penetration first), `level`, `pair`, `delta` (nuevas primero), `updated` (most recent agent update).
 
@@ -336,7 +336,7 @@ Order is deliberate: **evidence before verdict** (anti-anchoring, §4.5).
 ├─ Evidencia ──────────────────────────────┤
 │ Penetración máx. 120 mm · mín. 35 mm     │
 │ Ejes C–D / 4–6 · Nivel 3 (+9,60)         │
-│ ┌ A ■ ESTRUCTURA ───────┐┌ B ▲ CLIMA ───┐│
+│ ┌ A ■ ESTRUCTURA ───────┐┌ B ▲ CLI ───┐│
 │ │ Viga V-203            ││ Ducto DR-12   ││
 │ │ Viga H.A. 30x70       ││ Rect. 600x400 ││
 │ │ EST_TorreB.rvt        ││ CLIMA_TB.rvt  ││
@@ -344,9 +344,9 @@ Order is deliberate: **evidence before verdict** (anti-anchoring, §4.5).
 │ └───────────────────────┘└───────────────┘│
 │ Interferencias (14) ▾  [mini table]      │
 ├─ Propuesta del agente ───────────────────┤
-│ Validez     Válida            ●●● Alta  [Regla R-EST-CLIMA-004] │
+│ Validez     Válida            ●●● Alta  [Regla EST-004] │
 │ Prioridad   P1 Crítica        ●●○ Media [IA]                    │
-│ Responsable CLIMA             ●●● Alta  [Regla R-OWN-002]       │
+│ Responsable CLI             ●●● Alta  [Matriz quién mueve]     │
 │ Acción      Crear incidencia + estado → Revisada               │
 ├─ Razonamiento ───────────────────── (r) ─┤
 │ "El ducto principal de retorno atraviesa │
@@ -356,7 +356,7 @@ Order is deliberate: **evidence before verdict** (anti-anchoring, §4.5).
 │  modeladas…"                             │
 │ Señales: penetración 120 mm > 25 mm ·    │
 │  categoría Vigas × Ductos · sin pasada   │
-│ Reglas aplicadas: R-EST-CLIMA-004 ↗      │
+│ Reglas aplicadas: EST-004 ↗      │
 ├─ Cambios desde la prueba anterior ───────┤
 │ NUEVA en v14 · 0 decisiones previas      │
 ├─ Borrador de incidencia ─────────── (i) ─┤
@@ -558,7 +558,7 @@ Tabs/filter chips by state. Empty state `approvals.empty`.
 ├ [Resumen] [Cambios 410] [Incidencias 23] [Conflictos 2] ─────────────────────────────────────┤
 │ RESUMEN                                                                                       │
 │  Se escribirá en ACC:                                                                         │
-│   + 23 incidencias nuevas (asignadas: CLIMA 12, SAN 6, ELE 5)          [irreversible]         │
+│   + 23 incidencias nuevas (asignadas: CLI 12, SAN 6, ELE 5)          [irreversible]         │
 │   ~ 410 interferencias cambian de estado: Activa → Revisada 372 · Activa → Cerrada 38         │
 │   = 0 asignaciones                                                                            │
 │  Origen: 381 propuestas aceptadas · 44 corregidas · 8 manuales                                │
