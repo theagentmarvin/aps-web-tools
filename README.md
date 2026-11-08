@@ -37,22 +37,18 @@ Sin una aprobación firmada con tu passkey (verificación de usuario: PIN o biom
 
 Usa el proyecto sintético `tests/fixtures/` ("Edificio Demo Las Condes", pruebas v41 y v42, ~300 interferencias). No hay red ni ACC; las "escrituras" se registran en un archivo local y nunca se envían.
 
-Requisitos: Node.js 20+ y Claude Code instalados.
+Requisitos: Node.js 22+ y Claude Code instalados. No necesita `npm run setup` ni credenciales.
 
 ```bash
 npm install
 npm run demo            # terminal 1: UI web en modo fixtures → http://localhost:3000
+                        # si el puerto 3000 está ocupado: npm run demo -- --port 3005
 ```
 
-En una **segunda terminal**, en la carpeta del repo, inicia Claude Code en modo fixtures:
+`npm run demo` también genera `.mcp.demo.json` (ignorado por git), que conecta al agente con los **mismos** datos de demostración (`.coordinator-demo/`). En una **segunda terminal**, en la carpeta del repo:
 
 ```bash
-# Git Bash / macOS / Linux
-COORD_DATA_SOURCE=fixtures claude
-```
-```powershell
-# PowerShell
-$env:COORD_DATA_SOURCE = "fixtures"; claude
+claude --mcp-config .mcp.demo.json
 ```
 
 Dentro de Claude Code:
@@ -213,7 +209,7 @@ El modo desarrollo nunca relaja la protección de tokens, secretos ni aprobacion
 
 **BIM Coordinator** is a Claude Code agent harness plus a local web app for SalfaCorp BIM coordinators. The agent ingests ACC Model Coordination clash tests, groups, de-duplicates, classifies (deterministic YAML rules plus LLM review of uncertain groups) and prioritizes clashes, and drafts ACC issues as **proposals**. It never writes to ACC: a human reviews proposals in the web UI (`/coordinacion/...`, keyboard-first), sends them to a batch, approves it with a passkey (Windows Hello, user-verified WebAuthn), checks a dry run and only then does the server apply the batch to ACC. Corrections with reason codes feed `/curar-reglas`, which proposes evaluated rule patches that a human merges.
 
-- Demo without credentials: `npm install`, `npm run demo`, then `COORD_DATA_SOURCE=fixtures claude` and `/triage`.
+- Demo without credentials: `npm install`, `npm run demo`, then `claude --mcp-config .mcp.demo.json` and `/triage`.
 - First install: `docs/setup.md`. Pilot checklist: `docs/pilot-checklist.md`.
 - Status: pilot. Validated on synthetic fixtures only. Rules still need calibration with real data, and several ACC API details are unverified on a live tenant. Run a read-only shadow week before applying anything.
 - Usage must follow SalfaCorp's *AI Tools Access Procedure*. Secrets are never committed. ACC data stays local in `.coordinator/`.
