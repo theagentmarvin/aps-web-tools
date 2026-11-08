@@ -65,6 +65,17 @@ export function unifiedDiff(a: string, b: string, nameA: string, nameB: string, 
   return lines.join("\n") + "\n";
 }
 
+/**
+ * `harness-staging/` mirrors the REPO ROOT (e.g. `harness-staging/.claude/hooks/x.mjs`,
+ * `harness-staging/CLAUDE.md`). Only `.claude/**` and `CLAUDE.md` may be installed;
+ * anything else in staging is refused (returns null).
+ */
+export function stagedTarget(root: string, rel: string): string | null {
+  if (rel.split("/").some((seg) => seg === ".." || seg === "")) return null;
+  if (rel === "CLAUDE.md" || rel.startsWith(".claude/")) return join(root, ...rel.split("/"));
+  return null;
+}
+
 function listFiles(dir: string): string[] {
   if (!existsSync(dir)) return [];
   const out: string[] = [];
@@ -81,7 +92,7 @@ function listFiles(dir: string): string[] {
 
 export interface InstallStatus {
   templates: Array<{ target: string; state: "missing" | "identical" | "differs" }>;
-  staging: Array<{ file: string; state: "new" | "identical" | "differs" }> | null;
+  staging: Array<{ file: string; state: "new" | "identical" | "differs" | "refused" }> | null;
   env: { file: boolean; missing: string[] };
   harnessDev: boolean;
   ok: boolean;
@@ -97,7 +108,8 @@ export function installStatus(root: string, home = join(root, ".coordinator")): 
   const stagingDir = join(root, "harness-staging");
   const staging = existsSync(stagingDir)
     ? listFiles(stagingDir).map((f) => {
-        const dst = join(root, ".claude", f);
+        const dst = stagedTarget(root, f);
+        if (!dst) return { file: f, state: "refused" as const };
         if (!existsSync(dst)) return { file: f, state: "new" as const };
         return { file: f, state: sha(readFileSync(join(stagingDir, f))) === sha(readFileSync(dst)) ? ("identical" as const) : ("differs" as const) };
       })
@@ -115,7 +127,7 @@ export function printStatus(s: InstallStatus, io: Pick<SetupIO, "out">): void {
   for (const t of s.templates) io.out(`  ${t.target.padEnd(26)} ${t.state === "identical" ? "OK" : t.state === "differs" ? "difiere de la plantilla (personalizado)" : "FALTA"}`);
   if (s.staging) {
     const pending = s.staging.filter((x) => x.state !== "identical");
-    io.out(`  harness-staging/ → .claude/ ${pending.length ? `${pending.length} archivo(s) sin instalar` : "OK"}`);
+    io.out(`  harness-staging/ → .claude/, CLAUDE.md ${pending.length ? `${pending.length} archivo(s) sin instalar` : "OK"}`);
   }
   io.out(`  .env.local                 ${!s.env.file ? "FALTA" : s.env.missing.length ? `faltan variables: ${s.env.missing.join(", ")}` : "OK (valores no mostrados)"}`);
   io.out(`  .coordinator/harness-dev   ${s.harnessDev ? "PRESENTE: modo desarrollo del harness activo (las guardas están relajadas)" : "no existe (OK)"}`);
@@ -177,23 +189,35 @@ export async function runSetup(deps: SetupDeps): Promise<number> {
   const stagingDir = join(root, "harness-staging");
   if (existsSync(stagingDir)) {
     const files = listFiles(stagingDir);
+    const refused = files.filter((f) => !stagedTarget(root, f));
+    for (const f of refused) io.err(`harness-staging/${f}: fuera de .claude/ o CLAUDE.md; no se instala.`);
+    if (refused.length) failures++;
     const changes = files.filter((f) => {
-      const dst = join(root, ".claude", f);
-      return !existsSync(dst) || sha(readFileSync(join(stagingDir, f))) !== sha(readFileSync(dst));
+      const dst = stagedTarget(root, f);
+      return dst !== null && (!existsSync(dst) || sha(readFileSync(join(stagingDir, f))) !== sha(readFileSync(dst)));
     });
-    if (!changes.length) io.out("harness-staging/: .claude/ ya está al día.");
-    else {
+    // Test the STAGED hooks before installing them.
+    const stagedHooks = join(stagingDir, ".claude", "hooks");
+    let stagedOk = true;
+    if (changes.length && existsSync(stagedHooks) && existsSync(join(root, "tests", "hooks.test.ts"))) {
+      io.out("Probando los hooks en harness-staging/ antes de instalar…");
+      const pre = deps.runHookTests ?? (() => spawnSync(process.platform === "win32" ? "npx.cmd" : "npx", ["vitest", "run", "tests/hooks.test.ts"], { cwd: root, stdio: "inherit", shell: process.platform === "win32", env: { ...process.env, HOOKS_DIR: "harness-staging/.claude/hooks" } }).status ?? 1);
+      stagedOk = pre() === 0;
+      if (!stagedOk) { io.out("Las pruebas de los hooks en staging FALLARON: no se instala el harness."); failures++; }
+    }
+    if (!changes.length) io.out("harness-staging/: .claude/ y CLAUDE.md ya están al día.");
+    else if (stagedOk) {
       for (const f of changes) {
-        const dst = join(root, ".claude", f);
-        io.out(unifiedDiff(existsSync(dst) ? readFileSync(dst, "utf8") : "", readFileSync(join(stagingDir, f), "utf8"), `.claude/${f}`, `harness-staging/${f}`));
+        const dst = stagedTarget(root, f)!;
+        io.out(unifiedDiff(existsSync(dst) ? readFileSync(dst, "utf8") : "", readFileSync(join(stagingDir, f), "utf8"), f, `harness-staging/${f}`));
       }
-      const typed = (await io.ask(`Se instalarán ${changes.length} archivo(s) en .claude/. Escribe INSTALAR para confirmar: `)).trim();
+      const typed = (await io.ask(`Se instalarán ${changes.length} archivo(s) en .claude/ y CLAUDE.md. Escribe INSTALAR para confirmar: `)).trim();
       if (typed !== "INSTALAR") io.out("Instalación del harness cancelada.");
       else {
         const hashes: Record<string, string> = {};
         for (const f of changes) {
           const data = readFileSync(join(stagingDir, f));
-          const dst = join(root, ".claude", f);
+          const dst = stagedTarget(root, f)!;
           mkdirSync(dirname(dst), { recursive: true });
           writeFileSync(dst, data);
           hashes[f] = sha(data);

@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { main } from "../../server/cli";
-import { installStatus, runSetup, setupCheck, unifiedDiff } from "../../server/setup";
+import { installStatus, runSetup, setupCheck, stagedTarget, unifiedDiff } from "../../server/setup";
 import { ROOT, tempHome } from "./helpers";
 
 let root: string;
@@ -66,8 +66,10 @@ describe("setup", () => {
 
   it("installs templates, asks before replacing, installs harness-staging only after INSTALAR and audits hashes", async () => {
     writeFileSync(join(root, "coordinator.config.json"), '{"language":"en"}\n');
-    mkdirSync(join(root, "harness-staging", "hooks"), { recursive: true });
-    writeFileSync(join(root, "harness-staging", "hooks", "guard.mjs"), "export default 1;\n");
+    // harness-staging mirrors the repo root
+    mkdirSync(join(root, "harness-staging", ".claude", "hooks"), { recursive: true });
+    writeFileSync(join(root, "harness-staging", ".claude", "hooks", "guard.mjs"), "export default 1;\n");
+    writeFileSync(join(root, "harness-staging", "CLAUDE.md"), "# v2\n");
     mkdirSync(join(root, "tests"), { recursive: true });
     writeFileSync(join(root, "tests", "hooks.test.ts"), "");
     const audits: Array<Record<string, unknown>> = [];
@@ -82,11 +84,31 @@ describe("setup", () => {
     const second = io(["s", "INSTALAR"]);
     const code = await runSetup({ root, io: second.io, audit: async (d) => void audits.push(d), runHookTests: () => 0 });
     expect(readFileSync(join(root, ".claude", "hooks", "guard.mjs"), "utf8")).toBe("export default 1;\n");
+    expect(readFileSync(join(root, "CLAUDE.md"), "utf8")).toBe("# v2\n");
+    expect(existsSync(join(root, ".claude", ".claude"))).toBe(false);
+    expect(existsSync(join(root, ".claude", "CLAUDE.md"))).toBe(false);
     expect(readFileSync(join(root, "coordinator.config.json"), "utf8")).toBe(readFileSync(join(root, "server", "templates", "coordinator.config.json"), "utf8"));
     expect(audits).toHaveLength(1);
     expect(String(audits[0]!.hashes)).toContain("hooks/guard.mjs");
     expect(code).toBe(1); // no env file yet → manual steps pending
     expect(second.lines.join("\n")).toContain("passkey-enroll");
+  });
+
+  it("refuses staged files outside .claude/ and CLAUDE.md, and does not install when staged hook tests fail", async () => {
+    expect(stagedTarget(root, "server/approval/index.ts")).toBeNull();
+    expect(stagedTarget(root, ".claude/../server/x.ts")).toBeNull();
+    expect(stagedTarget(root, "CLAUDE.md")).toBe(join(root, "CLAUDE.md"));
+    mkdirSync(join(root, "harness-staging", ".claude", "hooks"), { recursive: true });
+    writeFileSync(join(root, "harness-staging", ".claude", "hooks", "g.mjs"), "x\n");
+    mkdirSync(join(root, "harness-staging", "server"), { recursive: true });
+    writeFileSync(join(root, "harness-staging", "server", "evil.ts"), "x\n");
+    mkdirSync(join(root, "tests"), { recursive: true });
+    writeFileSync(join(root, "tests", "hooks.test.ts"), "");
+    const r = io(["n", "INSTALAR"]);
+    const code = await runSetup({ root, io: r.io, audit: async () => {}, runHookTests: () => 1 });
+    expect(existsSync(join(root, "server", "evil.ts"))).toBe(false);
+    expect(existsSync(join(root, ".claude", "hooks", "g.mjs"))).toBe(false); // staged tests failed
+    expect(code).toBe(1);
   });
 
   it("unifiedDiff marks additions and removals", () => {
