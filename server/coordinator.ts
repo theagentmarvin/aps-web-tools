@@ -8,9 +8,10 @@
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { diffStateIndex, diffTestVersions } from "../core/ingest";
+import { historyBefore as historyBeforeLedger } from "../core/ingest/ledger";
 import type { ElementProps, NormalizedClash } from "../core/types";
-import { ApsAuth, resolveAuthConfig } from "./aps/auth";
-import { loadEnv } from "./aps/config";
+import { ApsAuth } from "./aps/auth";
+import { coordinatorAuthConfig } from "./secure/aps-paths";
 import type { ApprovalDeps } from "./approval";
 import { loadOrCreateApprovalKey } from "./approval/hmac";
 import { WebAuthnService } from "./approval/webauthn";
@@ -18,12 +19,13 @@ import { loadOrCreateSecret, readSecret, secureDir } from "./secure/keystore";
 import { ClashCache, type CacheKey } from "./cache/clash-cache";
 import { loadConfig, MAX_SUPPORTED_LEVEL, type AutonomyLevel, type CoordinatorConfig, type LoadedConfig } from "./config";
 import { CLOSABLE, ENGINE_NAME, ENGINE_VERSION, runEngine } from "./engine";
-import { DEFAULT_LEDGER_UPDATER, FileLedgerStore, type LedgerStore, type LedgerUpdater } from "./ledger";
+import { fixtureLedgerSeed, LedgerService } from "./ledger";
+import type { ClashDiff } from "../core/types";
 import { checkAgentText, referencedIds, untrusted, type Untrusted } from "./sanitize";
 import { FixtureSource } from "./source/fixtures";
 import { LiveSource } from "./source/live";
 import type { DataSource } from "./source/types";
-import { readJsonFile } from "./store/fs";
+import { readJsonFile, writeJsonAtomic } from "./store/fs";
 import { Store } from "./store";
 import type {
   AccStatus,
@@ -66,8 +68,6 @@ export interface CoordinatorOptions {
   /** Default: COORD_DATA_SOURCE env, else "live". */
   dataSource?: DataSourceKind;
   source?: DataSource;
-  /** Override the reappeared-ledger updater (tests); default server/ledger.ts DEFAULT_LEDGER_UPDATER. */
-  ledgerUpdater?: LedgerUpdater;
   config?: LoadedConfig;
   now?: () => number;
 }
@@ -136,7 +136,6 @@ export class Coordinator {
   constructor(opts: CoordinatorOptions = {}) {
     this.root = opts.root ?? process.cwd();
     this.now = opts.now ?? Date.now;
-    this.ledgerUpdaterOpt = opts.ledgerUpdater;
     const homeOverride = opts.home ?? process.env.COORDINATOR_HOME;
     // Secrets (approval key, audit key, passkeys, APS token) live OUTSIDE the repo.
     this.secureDir = secureDir({ homeOverride });
@@ -149,19 +148,33 @@ export class Coordinator {
       opts.source ??
       (kind === "fixtures"
         ? new FixtureSource({ home: this.store.home })
-        : new LiveSource(() => new ApsAuth({ config: resolveAuthConfig(this.root, { ...loadEnv(this.root), APS_TOKEN_PATH: join(sd, "aps-token.json") }) }), { root: this.root }));
+        : new LiveSource(() => new ApsAuth({ config: coordinatorAuthConfig(this.root, { homeOverride }) }), { root: this.root }));
     const w = this.config.webauthn;
     this.webauthn = new WebAuthnService(sd, () => loadOrCreateApprovalKey(sd), { rpID: w.rpID, rpName: w.rpName, origins: w.origins.length ? w.origins : [this.config.ui.baseUrl.replace(/\/$/, "")] }, this.now);
   }
 
   readonly secureDir: string;
   readonly webauthn: WebAuthnService;
-  /** Per-model-set reappeared ledger (store side; logic in core, see server/ledger.ts). */
-  get ledger(): LedgerStore {
-    return (this.ledgerStore ??= new FileLedgerStore(this.store, this.ledgerUpdaterOpt ?? DEFAULT_LEDGER_UPDATER));
+  /** Per-model-set clash ledger (core/ingest/ledger.ts), seeded from the fixture history in fixtures mode. */
+  get ledger(): LedgerService {
+    return (this.ledgerSvc ??= new LedgerService(this.store, this.source instanceof FixtureSource ? fixtureLedgerSeed(this.source.dir) : undefined));
   }
-  private ledgerStore?: LedgerStore;
-  private ledgerUpdaterOpt?: LedgerUpdater;
+  private ledgerSvc?: LedgerService;
+
+  /** Diff of a test against its previous cached version (ledger-based, persisted at ingest). */
+  async diffForTest(test: TestRecord): Promise<ClashDiff | undefined> {
+    if (!test.previousTestKey) return undefined;
+    const file = this.store.path("tests", test.testKey, "diff.json");
+    const stored = await readJsonFile<{ prevTestKey: string; diff: ClashDiff }>(file);
+    if (stored && stored.prevTestKey === test.previousTestKey) return stored.diff;
+    const prev = await this.store.getTest(test.previousTestKey);
+    if (!prev) return undefined;
+    const [prevRaw, raw] = await Promise.all([this.loadRaw(prev).catch(() => undefined), this.loadRaw(test).catch(() => undefined)]);
+    if (!prevRaw || !raw) return undefined;
+    const diff = await this.ledger.diffAndRecord(test.projectId, test.modelSetId, { version: prev.modelSetVersion, clashes: prevRaw.clashes }, { version: test.modelSetVersion, clashes: raw.clashes });
+    await this.store.withLock(() => writeJsonAtomic(file, { prevTestKey: prev.testKey, diff }));
+    return diff;
+  }
 
   /** Dependencies for server/approval (the only ACC write path). */
   approvalDeps(): ApprovalDeps {
@@ -434,12 +447,16 @@ export class Coordinator {
       warnings: data.warnings,
     };
     await this.store.putTest(rec);
-    // Reappeared ledger: diff against the previous cached version, then persist (no-op until core's updater lands).
+    // Clash ledger: diff against the previous cached version using every older recorded version as history.
     if (previous) {
       const prevRaw = await this.loadRaw(previous).catch(() => undefined);
       if (prevRaw) {
-        const diff = diffTestVersions(prevRaw.clashes, data.clashes, { history: await this.historyBefore(previous) });
-        await this.ledger.apply(projectId, modelSetId, rec.modelSetVersion, testKey, diff).catch((err) => log.warn("ledger.update_failed", { message: (err as Error).message }));
+        try {
+          const diff = await this.ledger.diffAndRecord(projectId, modelSetId, { version: previous.modelSetVersion, clashes: prevRaw.clashes }, { version: rec.modelSetVersion, clashes: data.clashes }, data.allElementKeys);
+          await this.store.withLock(() => writeJsonAtomic(this.store.path("tests", testKey, "diff.json"), { prevTestKey: previous.testKey, diff }));
+        } catch (err) {
+          log.warn("ledger.update_failed", { message: (err as Error).message });
+        }
       }
     }
     const ctx = await this.store.getContext();
@@ -491,7 +508,11 @@ export class Coordinator {
       rulesDir = await this.candidateRulesDir((await import("node:fs/promises")).readFile(p.payload.patchFile, "utf8"));
     }
     const { loadRules } = await import("./engine");
+    const testDiff = await this.diffForTest(test);
+    const reappeared = new Set(testDiff?.reappeared ?? []);
     const out = runEngine({
+      ...(reappeared.size ? { extraTags: (c: NormalizedClash) => (reappeared.has(c.id) ? ["regresion"] : undefined) } : {}),
+      levelMap: this.config.levelMap,
       clashes: raw.clashes,
       elements: raw.elements,
       documents: raw.documents,
@@ -511,7 +532,7 @@ export class Coordinator {
       if (prevTest) {
         const prevRaw = await this.loadRaw(prevTest).catch(() => undefined);
         if (prevRaw) {
-          const diff = diffTestVersions(prevRaw.clashes, raw.clashes, { history: await this.historyBefore(prevTest) });
+          const diff = testDiff ?? diffTestVersions(prevRaw.clashes, raw.clashes, { history: await this.historyBefore(prevTest) });
           const idx = diffStateIndex(diff);
           const prevById = new Map(prevRaw.clashes.map((c) => [c.id, c]));
           const pairMap = new Map(diff.matchedByPairKey.map((m) => [m.nextId, m.prevId]));
@@ -986,7 +1007,11 @@ export class Coordinator {
     if (base.test.modelSetId !== target.test.modelSetId) throw new CoordError("validation_error", "Los tests deben ser del mismo model set.");
     const baseRaw = await this.loadRaw(base.test);
     const targetRaw = await this.loadRaw(target.test);
-    const diff = diffTestVersions(baseRaw.clashes, targetRaw.clashes, { history: await this.historyBefore(base.test) });
+    const ledgerDiff = target.test.previousTestKey === base.test.testKey ? await this.diffForTest(target.test) : undefined;
+    const ledger = await this.ledger.load(target.test.projectId, target.test.modelSetId).catch(() => undefined);
+    const history = new Set(await this.historyBefore(base.test));
+    if (ledger) for (const h of historyBeforeLedger(ledger, base.test.modelSetVersion)) history.add(h);
+    const diff = ledgerDiff ?? diffTestVersions(baseRaw.clashes, targetRaw.clashes, { history });
     const tById = new Map(target.cls.clashes.map((c) => [c.id, c]));
     const bById = new Map(base.cls.clashes.map((c) => [c.id, c]));
     const tG = new Map(target.cls.groups.map((g) => [g.id, g]));

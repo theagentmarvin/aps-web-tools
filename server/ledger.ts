@@ -1,73 +1,74 @@
 /**
- * Persistence for the per-model-set "reappeared" ledger (store side).
+ * Persistence of the per-model-set clash ledger (core/ingest/ledger.ts, pure).
  *
- * The ledger logic is pure and lives in core (coder B: `core/ingest/ledger.ts`,
- * `updateLedger(ledger, diff)`). This module only stores it:
- *   .coordinator/ledgers/<projectId>/<modelSetId>.json
- *     { meta: { appliedVersions: number[], updatedAt, lastTestKey }, ledger: <B's shape> }
- * and is called by Coordinator.ingest after each diff against the previous
- * cached version. Re-ingesting a version already applied is a no-op.
+ *   .coordinator/ledgers/<projectId>/<modelSetId>.json   ClashLedger (schema 1)
  *
- * WIRING: once core/ingest/ledger.ts exists, replace the body of
- * {@link DEFAULT_LEDGER_UPDATER} with one line:
- *     export const DEFAULT_LEDGER_UPDATER: LedgerUpdater | undefined = (l, d) => updateLedger(l as never, d);
- * (plus the import). Until then no ledger is written.
+ * Coordinator.ingest calls {@link LedgerService.diffAndRecord} for every ingest
+ * that has a previous cached version: `diffWithLedger` uses ALL recorded older
+ * versions as history (reappeared detection), records both versions and the
+ * result is persisted. Re-ingesting the same versions is idempotent (the core
+ * strips and re-records a version).
+ *
+ * Fixtures mode seeds a new ledger once with tests/fixtures/mc/history-v40-clash-ids.json
+ * (version 40), so v41 → v42 shows the regressions the fixtures were built with.
  */
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { diffWithLedger, emptyLedger, parseLedger, updateLedger, type ClashLedger } from "../core/ingest/ledger";
+import type { DiffableClash } from "../core/ingest/diff";
 import type { ClashDiff } from "../core/types";
 import { readJsonFile, writeJsonAtomic } from "./store/fs";
 import type { Store } from "./store";
-import { bareProjectId, nowIso } from "./util";
+import { bareProjectId } from "./util";
 
-export interface LedgerMeta {
-  appliedVersions: number[];
-  lastTestKey: string;
-  updatedAt: string;
-}
+const seg = (s: string) => s.replace(/[^A-Za-z0-9._-]/g, "_");
 
-export interface LedgerFile<L = unknown> {
-  meta: LedgerMeta;
-  ledger: L;
-}
-
-/** Pure update step (B's `updateLedger`). `ledger` is undefined for the first diff of a model set. */
-export type LedgerUpdater<L = unknown> = (ledger: L | undefined, diff: ClashDiff, ctx: { version: number; testKey: string }) => L;
-
-/** The updater used in production. Undefined until core/ingest/ledger.ts lands (see header). */
-export const DEFAULT_LEDGER_UPDATER: LedgerUpdater | undefined = undefined;
-
-export interface LedgerStore {
-  load<L = unknown>(projectId: string, modelSetId: string): Promise<LedgerFile<L> | undefined>;
-  /** Apply `diff` for `version` (idempotent per version). Returns false when skipped. */
-  apply(projectId: string, modelSetId: string, version: number, testKey: string, diff: ClashDiff): Promise<boolean>;
-}
-
-export class FileLedgerStore implements LedgerStore {
+export class LedgerService {
   constructor(
     private readonly store: Store,
-    private readonly updater: LedgerUpdater | undefined = DEFAULT_LEDGER_UPDATER,
+    /** Optional seed for a brand-new ledger (fixtures mode). */
+    private readonly seed?: (modelSetId: string) => Promise<ClashLedger | undefined>,
   ) {}
 
   path(projectId: string, modelSetId: string): string {
-    return this.store.path("ledgers", bareProjectId(projectId).replace(/[^A-Za-z0-9._-]/g, "_"), `${modelSetId.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
+    return this.store.path("ledgers", seg(bareProjectId(projectId)), `${seg(modelSetId)}.json`);
   }
 
-  async load<L = unknown>(projectId: string, modelSetId: string): Promise<LedgerFile<L> | undefined> {
-    return readJsonFile<LedgerFile<L>>(this.path(projectId, modelSetId));
+  async load(projectId: string, modelSetId: string): Promise<ClashLedger | undefined> {
+    const raw = await readJsonFile<unknown>(this.path(projectId, modelSetId));
+    return raw === undefined ? undefined : parseLedger(raw);
   }
 
-  async apply(projectId: string, modelSetId: string, version: number, testKey: string, diff: ClashDiff): Promise<boolean> {
-    if (!this.updater) return false;
-    const updater = this.updater;
+  async save(projectId: string, ledger: ClashLedger): Promise<void> {
+    await this.store.withLock(() => writeJsonAtomic(this.path(projectId, ledger.modelSetId), ledger));
+  }
+
+  /** Diff prev → next with the ledger as history, persist the updated ledger, return the diff. */
+  async diffAndRecord<T extends DiffableClash>(
+    projectId: string,
+    modelSetId: string,
+    prev: { version: number; clashes: readonly T[] },
+    next: { version: number; clashes: readonly T[] },
+    nextElementKeys?: Iterable<string>,
+  ): Promise<ClashDiff> {
     return this.store.withLock(async () => {
-      const cur = await this.load(projectId, modelSetId);
-      if (cur?.meta.appliedVersions.includes(version)) return false;
-      const ledger = updater(cur?.ledger, diff, { version, testKey });
-      const next: LedgerFile = {
-        meta: { appliedVersions: [...(cur?.meta.appliedVersions ?? []), version].sort((a, b) => a - b), lastTestKey: testKey, updatedAt: nowIso(this.store.now()) },
-        ledger,
-      };
-      await writeJsonAtomic(this.path(projectId, modelSetId), next);
-      return true;
+      const current = (await this.load(projectId, modelSetId)) ?? (await this.seed?.(modelSetId)) ?? emptyLedger(modelSetId);
+      const { diff, ledger } = diffWithLedger(current, prev, next, nextElementKeys ? { nextElementKeys } : {});
+      await writeJsonAtomic(this.path(projectId, modelSetId), ledger);
+      return diff;
     });
   }
+}
+
+/** Fixtures-only seed: version 40 from tests/fixtures/mc/history-v40-clash-ids.json. */
+export function fixtureLedgerSeed(fixtureDir: string): (modelSetId: string) => Promise<ClashLedger | undefined> {
+  return async (modelSetId) => {
+    let ids: string[];
+    try {
+      ids = JSON.parse(await readFile(join(fixtureDir, "mc", "history-v40-clash-ids.json"), "utf8")) as string[];
+    } catch {
+      return undefined;
+    }
+    return updateLedger(emptyLedger(modelSetId), { version: 40, clashes: ids.map((id) => ({ id: String(id) })) });
+  };
 }

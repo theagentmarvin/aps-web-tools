@@ -56,6 +56,8 @@ export default defineConfig({
   },
   server: {
     port: 3000,
+    // Fixed port: the APS callback, the WebAuthn origin and the Host allowlist all assume 3000.
+    strictPort: true,
     proxy: {
       // Read-only, allowlisted APS proxy for the viewer / data browser (GET only).
       "/api/aps": {

@@ -8,8 +8,10 @@
  * code_verifier; fixed registered redirect `http://localhost:<port>/callback`),
  * §8.11 (legacy had no PKCE, no state check, did not persist rotated tokens).
  *
- * Secrets: never logged, never returned. Token cache at
- * `.coordinator/auth/token.json` (gitignored), file mode 0600 best effort.
+ * Secrets: never logged, never returned. The coordinator always passes the
+ * token path from server/secure/aps-paths.ts (`<secure dir>/aps-token.json`,
+ * outside the repo); DEFAULT_TOKEN_PATH is only the fallback for direct use of
+ * this module without that config. File mode 0600 best effort.
  */
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
@@ -22,6 +24,7 @@ import { APS_BASE_URL, realSleep, silentLogger, type FetchFn, type Logger, type 
 
 export const APS_SCOPES = ["data:read", "data:write", "data:create"] as const;
 export const DEFAULT_CALLBACK_PORT = 8765;
+/** Fallback only; the coordinator uses server/secure/aps-paths.ts apsTokenPath(). */
 export const DEFAULT_TOKEN_PATH = ".coordinator/auth/token.json";
 
 const AUTHORIZE_PATH = "/authentication/v2/authorize";

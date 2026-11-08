@@ -54,12 +54,18 @@ export function mapStrategy(s: string): GroupStrategy {
 export const CLOSABLE: readonly Validity[] = ["false_positive", "tolerated"];
 
 let rulesCache: { rs: CompiledRuleSet; at: number } | undefined;
+/** CompiledRuleSet.warnings are logged once per process (stderr). */
+let warnedRules = false;
 
 /** Compile rules/ (cached for 5 s so repeated calls in one request are cheap; edits are picked up). */
 export function loadRules(dir?: string): CompiledRuleSet {
   if (!dir && rulesCache && Date.now() - rulesCache.at < 5000) return rulesCache.rs;
   const rs = loadRulesFromDisk(dir ? { dir } : {});
   if (!dir) rulesCache = { rs, at: Date.now() };
+  if (!dir && !warnedRules && rs.warnings?.length) {
+    warnedRules = true;
+    process.stderr.write(`[coord] reglas: ${rs.warnings.length} advertencias\n${rs.warnings.map((w) => `  - ${w}`).join("\n")}\n`);
+  }
   return rs;
 }
 
@@ -81,6 +87,8 @@ export interface EngineInput {
   documents: readonly ModelDocument[];
   config: CoordinatorConfig;
   rules?: CompiledRuleSet;
+  /** Project level aliases (config levelMap) → CoordinationOptions.levelMap. */
+  levelMap?: Readonly<Record<string, string>>;
   /** Extra tags per MC clash id (e.g. `regresion`). */
   extraTags?: (c: NormalizedClash) => readonly string[] | undefined;
   /** For engine-built issue skeletons (due dates). */
@@ -152,6 +160,7 @@ export function runEngine(input: EngineInput): EngineOutput {
     options: {
       review: reviewPolicyFrom(input.config),
       ...(input.extraTags ? { extraTags: input.extraTags } : {}),
+      ...(input.levelMap && Object.keys(input.levelMap).length ? { levelMap: input.levelMap } : {}),
     },
   });
 
@@ -241,7 +250,9 @@ export function runEngine(input: EngineInput): EngineOutput {
     const pens = members.map((m) => m.penetrationMm);
     const validity = g.validity;
     const [p0, p1] = g.disciplinePair.split("×");
-    if (validity === "real") {
+    // Engine issue skeletons: coordination issues for real groups and hygiene issues
+    // (one per responsible file and rule); never for needs_info (it is a question, not an issue).
+    if (validity !== "needs_info" && (validity === "real" || g.strategy === "hygiene")) {
       try {
         const d = buildIssueDraft(rs, g, res.classified, {
           publishDate: input.publishDate ?? new Date().toISOString().slice(0, 10),

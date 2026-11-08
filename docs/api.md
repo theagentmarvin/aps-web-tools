@@ -8,11 +8,13 @@ One service layer (`server/coordinator.ts` + `server/coordinator-ui.ts`) backs t
 
 | What | Command |
 |---|---|
-| Web UI + API (dev) | `npm run dev` (Vite mounts `/api/coord/*`) |
+| Install (human, once) | `npm run setup`. Interactive TTY only, refused under Claude Code. Installs `.mcp.json` and `coordinator.config.json` from `server/templates/`, installs `harness-staging/` into `.claude/` after you type INSTALAR (writes an audit event), runs the hook tests, checks the APS variables and prints the manual steps. `npm run setup -- --check` is read-only and fails while the harness dev marker exists. |
+| Offline demo | `npm run demo`. Runs Vite and the API with `COORD_DATA_SOURCE=fixtures`, `COORDINATOR_HOME=.coordinator-demo` and `VITE_COORD_API=http`, and writes `.mcp.demo.json`. Start the agent with `claude --mcp-config .mcp.demo.json`. No setup needed. |
+| Web UI + API (dev) | `npm run dev` (Vite on port 3000 with `strictPort`, mounts `/api/coord/*`) |
 | API only | `npm run api` (127.0.0.1:3001, `COORD_API_PORT` to change) |
 | MCP server | `npx tsx server/mcp/index.ts` (stdio; registered as `coord` in `.mcp.json`) |
 | MCP smoke test | `npx tsx scripts/mcp-smoke.ts` (fixtures, temp home) or `--live` |
-| CLI | `npm run coordinator -- <login\|logout\|status\|ingest\|classify\|approvals list\|approve <id>\|apply <id> [--no-dry-run]\|verify-approval <id> --json>` |
+| CLI | `npm run coordinator -- <login\|logout\|status [--json]\|ingest\|classify\|approvals list\|approve <id> (fixtures)\|passkey-enroll\|apply <id> [--no-dry-run]\|verify-approval <id> --json\|setup [--check]>`. `status --json` is offline and prints `{loggedIn, dataSource, expiresAt?, autonomyLevel}`, never tokens or paths. |
 
 Environment:
 
@@ -38,10 +40,14 @@ Writes are atomic: a temp file plus a rename, retried on Windows sharing violati
 | `audit-key.json` | Audit-chain key. Same protection as the approval key. |
 | `webauthn-credentials.json` | Passkeys (MAC'd). |
 | `webauthn-enroll.json` | One-time enrolment code (hashed). |
-| `aps-token.json` | Coordinator APS token cache. |
+| `aps-token.json` | Coordinator APS token cache. The single source for this path is `server/secure/aps-paths.ts`, shared by CLI login, MCP and API. |
 | `browser-session.json` | Server-held refresh token for the browser session. |
 
 **Limits:** DPAPI protects against other OS users and offline copies, not against processes of the same user (see Threat model).
+
+### Clash ledger
+
+`.coordinator/ledgers/<project>/<modelSet>.json` holds the per-model-set ledger (`core/ingest/ledger.ts`). Every ingest diffs against the previous cached version through `diffWithLedger`, which uses every older recorded version as history. The diff is stored in `tests/<testKey>/diff.json` and drives the UI delta chips and `diff_test_versions`. Clashes that reappeared are tagged `regresion` in the engine (`extraTags`). In fixtures mode the ledger is seeded once with version 40 from `tests/fixtures/mc/history-v40-clash-ids.json`.
 
 ## Lifecycles
 

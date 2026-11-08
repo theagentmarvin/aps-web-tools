@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.server.json --noEmit && vite build",
@@ -14,7 +17,10 @@
     "mcp": "tsx server/mcp/index.ts",
     "api": "tsx server/api/standalone.ts",
     "coordinator": "tsx server/cli.ts",
-    "eval": "tsx scripts/eval.ts"
+    "eval": "tsx scripts/eval.ts",
+    "eval:agent": "tsx scripts/eval-agent.ts",
+    "setup": "tsx server/cli.ts setup",
+    "demo": "tsx scripts/demo.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",

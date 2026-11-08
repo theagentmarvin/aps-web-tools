@@ -1,7 +1,6 @@
 /**
  * File-based store under `.coordinator/` (git-ignored).
  *
- *   auth/token.json                 APS token cache (server/aps/auth.ts; never read here)
  *   secret/approval.key             HMAC key (server/approval only)
  *   cache/…                         normalized clash tests (server/cache/clash-cache.ts)
  *   state/context.json              active context (project / model set / test)

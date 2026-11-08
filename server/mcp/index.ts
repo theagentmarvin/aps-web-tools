@@ -10,6 +10,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Coordinator } from "../coordinator";
+import { loadRules } from "../engine";
 import { log } from "../util";
 import { createCoordServer } from "./server";
 
@@ -20,6 +21,11 @@ console.info = console.log;
 async function main(): Promise<void> {
   const root = process.env.CLAUDE_PROJECT_DIR ?? resolve(fileURLToPath(new URL("../..", import.meta.url)));
   const coord = new Coordinator({ root });
+  try {
+    loadRules(); // logs CompiledRuleSet.warnings once (stderr)
+  } catch (e) {
+    log.warn("rules.invalid", { message: (e as Error).message.slice(0, 500) });
+  }
   const server = createCoordServer(coord);
   await server.connect(new StdioServerTransport());
   log.info("mcp.started", { dataSource: coord.source.kind, level: coord.effectiveLevel, home: coord.store.home });

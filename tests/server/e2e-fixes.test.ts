@@ -1,11 +1,11 @@
 /** Regressions for the server bugs found by the UI end-to-end run. */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Coordinator } from "../../server/coordinator";
 import { CoordinatorUi } from "../../server/coordinator-ui";
 import { runEngine } from "../../server/engine";
-import type { ClashDiff } from "../../core/types";
-import { FixtureSource } from "../../server/source/fixtures";
-import { acceptGroups, HUMAN, ingest, makeCoord, MODEL_SET_ID, ROOT, tempHome, testConfig, TEST_V41, TEST_V42 } from "./helpers";
+import { acceptGroups, HUMAN, ingest, makeCoord, MODEL_SET_ID, ROOT, tempHome, testConfig, TEST_V42 } from "./helpers";
 
 let home: string;
 let cleanup: () => void;
@@ -87,36 +87,65 @@ describe("UI e2e regressions", () => {
     expect("issuesClosed" in r.kpis).toBe(false);
   });
 
-  it("7. the reappeared ledger is persisted per model set after each ingest diff (idempotent per version)", async () => {
-    const seen: Array<{ version: number; counts: ClashDiff["counts"] }> = [];
-    const c = new Coordinator({
-      root: ROOT,
-      home,
-      source: new FixtureSource({ home }),
-      config: testConfig(),
-      ledgerUpdater: (ledger, diff, ctx) => {
-        seen.push({ version: ctx.version, counts: diff.counts });
-        const l = (ledger as { seen: string[] } | undefined) ?? { seen: [] };
-        return { seen: [...new Set([...l.seen, ...diff.resolved])] };
-      },
-    });
-    await c.ingest({ projectId: "b.demo-proyecto", modelSetId: MODEL_SET_ID, testId: TEST_V41 });
-    expect(await c.ledger.load("b.demo-proyecto", MODEL_SET_ID)).toBeUndefined(); // no previous version yet
-    await c.ingest({ projectId: "b.demo-proyecto", modelSetId: MODEL_SET_ID, testId: TEST_V42 });
-    await c.ingest({ projectId: "b.demo-proyecto", modelSetId: MODEL_SET_ID, testId: TEST_V42, refresh: true });
-    const f = await c.ledger.load<{ seen: string[] }>("b.demo-proyecto", MODEL_SET_ID);
-    expect(f?.meta.appliedVersions).toEqual([42]);
-    expect(f!.ledger.seen.length).toBeGreaterThan(0);
-    expect(seen).toHaveLength(1);
-    // Without an updater (core module not landed yet) nothing is written.
-    const t2 = tempHome();
-    try {
-      const c2 = makeCoord(t2.home);
-      await ingest(c2, 41, false);
-      await ingest(c2, 42, false);
-      expect(await c2.ledger.load("b.demo-proyecto", MODEL_SET_ID)).toBeUndefined();
-    } finally {
-      t2.cleanup();
-    }
+  it("7. ledger: fixtures v41→v42 yields exactly the 13 reappeared clashes, tagged regresion end to end", async () => {
+    const truth = JSON.parse(readFileSync(join(ROOT, "tests", "fixtures", "fixture-truth.json"), "utf8")) as { expectedDiff: Record<string, string[]> };
+    const expected = [...truth.expectedDiff.reappeared!].sort();
+    expect(expected).toHaveLength(13);
+    const k41 = await ingest(coord, 41);
+    const k42 = await ingest(coord, 42);
+    const test42 = (await coord.loadTest(k42)).test;
+    const diff = (await coord.diffForTest(test42))!;
+    expect([...diff.reappeared].sort()).toEqual(expected);
+    expect([...diff.element_deleted].sort()).toEqual([...truth.expectedDiff.element_deleted!].sort());
+    expect([...diff.new].sort()).toEqual([...truth.expectedDiff.new!].sort());
+
+    // Persisted ledger (seeded with v40 in fixtures mode), idempotent on re-ingest.
+    await coord.ingest({ projectId: "b.demo-proyecto", modelSetId: MODEL_SET_ID, testId: TEST_V42, refresh: true });
+    const ledger = (await coord.ledger.load("b.demo-proyecto", MODEL_SET_ID))!;
+    expect(ledger.versions).toEqual([40, 41, 42]);
+
+    // Engine tag + UI delta chips.
+    const { cls } = await coord.requireClassified(k42);
+    const tagged = cls.clashes.filter((c) => (c.tags ?? []).includes("regresion")).map((c) => c.id).sort();
+    expect(tagged).toEqual(expected.filter((id) => cls.clashes.some((c) => c.id === id)));
+    const ui42 = await ui.triage("demo-proyecto", MODEL_SET_ID, k42);
+    expect(ui42.clashes.filter((c) => c.delta === "reappeared").map((c) => c.id.replace(/^C-/, "")).sort()).toEqual(tagged);
+
+    // MCP diff_test_versions reports the same numbers.
+    const d = await coord.diffVersions({ baseTestKey: k41, targetTestKey: k42, groupBy: "disciplinePair", topPersisting: 5 });
+    expect(d.totals.reappeared).toBe(13);
+    expect(d.totals.new).toBe(truth.expectedDiff.new!.length);
+    expect(d.totals.elementDeleted).toBe(truth.expectedDiff.element_deleted!.length);
+  });
+
+  it("8. hygiene groups get engine issue drafts; needs_info groups never do", async () => {
+    const key = await ingest(coord, 42);
+    const { cls } = await coord.requireClassified(key);
+    const drafts = (cls as typeof cls & { issueDrafts?: Record<string, unknown> }).issueDrafts ?? {};
+    const hygiene = cls.groups.filter((g) => g.engineStrategy === "hygiene" && g.validity !== "needs_info");
+    for (const g of hygiene) expect(drafts[g.id]).toBeDefined();
+    for (const g of cls.groups.filter((x) => x.validity === "needs_info")) expect(drafts[g.id]).toBeUndefined();
+  });
+
+  it("9. config levelMap reaches the engine", async () => {
+    const key = await ingest(coord, 42);
+    const { cls } = await coord.requireClassified(key);
+    const lvl = cls.clashes.find((c) => c.level)!.level!;
+    const c2 = new Coordinator({ root: ROOT, home, source: coord.source, config: testConfig({ levelMap: { [lvl]: "NIVEL-MAPEADO" } }) });
+    await c2.classify({ testKey: key });
+    const { cls: cls2 } = await c2.requireClassified(key);
+    expect(cls2.clashes.some((c) => c.level === "NIVEL-MAPEADO")).toBe(true);
+  });
+
+  it("10. /api/auth/refresh without APS credentials answers 503 aps_not_configured", async () => {
+    const { createBrowserAuthHandlers } = await import("../../server/api/browser-auth");
+    const h = createBrowserAuthHandlers({ tokenFile: join(home, "secret", "b.json") });
+    let status = 0;
+    let body = "";
+    const { Readable } = await import("node:stream");
+    const rq = Object.assign(Readable.from([Buffer.from("")]), { method: "POST", headers: {} });
+    await h.refresh(rq as never, { writeHead: (s: number) => (status = s), end: (b: string) => (body = b) } as never);
+    expect(status).toBe(503);
+    expect(JSON.parse(body).error).toBe("aps_not_configured");
   });
 });

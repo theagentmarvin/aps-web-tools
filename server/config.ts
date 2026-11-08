@@ -60,6 +60,8 @@ export const ConfigSchema = z.object({
       qaSampleRate: z.number().min(0).max(1).default(0.05),
     })
     .prefault({}),
+  /** Project level overrides: model level name → canonical level (CoordinationOptions.levelMap). */
+  levelMap: z.record(z.string(), z.string()).default({}),
   /** Per discipline-pair tolerance overrides in mm, e.g. {"CLI×EST": {"hardMm": 10}}. Passed to the engine. */
   tolerances: z.record(z.string(), z.object({ hardMm: z.number().optional(), clearanceMm: z.number().optional() })).default({}),
   ui: z

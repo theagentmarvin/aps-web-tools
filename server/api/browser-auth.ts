@@ -99,7 +99,7 @@ export function createBrowserAuthHandlers(opts: BrowserAuthOptions) {
   return {
     async callback(req: IncomingMessage, res: ServerResponse): Promise<void> {
       if (req.method !== "POST") return json(res, 405, { error: "method_not_allowed" });
-      if (!opts.clientId || !opts.clientSecret) return json(res, 500, { error: "server_misconfigured" });
+      if (!opts.clientId || !opts.clientSecret) return json(res, 503, { error: "aps_not_configured" });
       const code = (await readForm(req)).get("code");
       if (!code) return json(res, 400, { error: "missing_code" });
       try {
@@ -119,7 +119,7 @@ export function createBrowserAuthHandlers(opts: BrowserAuthOptions) {
 
     async refresh(req: IncomingMessage, res: ServerResponse): Promise<void> {
       if (req.method !== "POST") return json(res, 405, { error: "method_not_allowed" });
-      if (!opts.clientId || !opts.clientSecret) return json(res, 500, { error: "server_misconfigured" });
+      if (!opts.clientId || !opts.clientSecret) return json(res, 503, { error: "aps_not_configured" });
       await readForm(req); // any client refresh_token is ignored
       const s = await load(opts.tokenFile);
       if (!s) return json(res, 401, { error: "login_required" });

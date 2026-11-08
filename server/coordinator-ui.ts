@@ -308,7 +308,7 @@ export class CoordinatorUi {
     }
     if (cl && cl.payload.kind === "classification" && cl.payload.responsibleDiscipline) owner = cl.payload.responsibleDiscipline;
     const effValidity = validity.value;
-    const createIssue = !!iss || (effValidity === "real" && (g.suggestedAction === "create_issue" || !!engineIssue));
+    const createIssue = !!iss || (effValidity === "real" && (g.suggestedAction === "create_issue" || !!engineIssue)) || (g.engineStrategy === "hygiene" && g.suggestedAction === "hygiene_issue" && !!engineIssue);
     let setStatus: C.AccStatus | null = null;
     if (st && st.payload.kind === "status_change") setStatus = st.payload.action === "close_not_issue" ? "closed" : st.payload.action === "mark_reviewed" ? "reviewed" : "active";
     else if ((CLOSABLE as string[]).includes(effValidity) && g.suggestedAction === "close_not_issue") setStatus = "closed";

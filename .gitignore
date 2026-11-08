@@ -10,3 +10,5 @@ tsconfig.tsbuildinfo
 .coordinator/
 !.coordinator/.gitkeep
 coordinator.config.local.json
+.coordinator-demo/
+.mcp.demo.json

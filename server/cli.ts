@@ -12,16 +12,21 @@
  *   passkey-enroll                one-time code to register the FIRST passkey (interactive TTY only)
  *   apply <batchId> [--no-dry-run]
  *   verify-approval <batchId> [--json]   read-only check used by the guard-apply hook
+ *   setup [--check]               single human install step (TTY only, refused under Claude Code);
+ *                                 --check is read-only and fails if the harness dev marker exists
  *
  * Data source: COORD_DATA_SOURCE=fixtures for offline mode.
  */
+import { userInfo } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { applyApproved, approveBatch, verifyBatchApproval } from "./approval";
-import { ApsAuth, resolveAuthConfig } from "./aps/auth";
+import { ApsAuth } from "./aps/auth";
+import { coordinatorAuthConfig } from "./secure/aps-paths";
 import { Coordinator } from "./coordinator";
 import { CoordinatorUi } from "./coordinator-ui";
+import { runSetup, setupCheck } from "./setup";
 import { CoordError } from "./util";
 
 const out = (s: string) => process.stdout.write(s + "\n");
@@ -81,8 +86,34 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     }
   }
 
+  if (cmd === "setup") {
+    const home = process.env.COORDINATOR_HOME;
+    // --check: non-interactive and read-only (allowed anywhere, including under Claude Code).
+    if (flag(rest, "--check")) return setupCheck(root, { out }, home);
+    const blocked = approvalChannelBlocked();
+    if (blocked) {
+      err(blocked.replace("La aprobación", "La instalación (setup)"));
+      return 2;
+    }
+    const rl = createInterface({ input: process.stdin, output: process.stderr });
+    try {
+      return await runSetup({
+        root,
+        ...(home ? { home } : {}),
+        io: { out, err, ask: (q) => rl.question(q) },
+        audit: async (details) => {
+          const c = new Coordinator({ root });
+          await c.store.audit({ actor: { type: "user", id: `os:${userInfo().username}`, name: userInfo().username }, action: "harness.installed", details });
+        },
+      });
+    } finally {
+      rl.close();
+    }
+  }
+
   if (cmd === "login" || cmd === "logout") {
-    const auth = new ApsAuth({ config: resolveAuthConfig(root) });
+    // Same token file as the MCP server and the HTTP API (server/secure/aps-paths.ts).
+    const auth = new ApsAuth({ config: coordinatorAuthConfig(root) });
     if (cmd === "logout") {
       await auth.logout();
       out("Sesión APS cerrada.");
@@ -108,6 +139,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 
   switch (cmd) {
     case "status": {
+      if (flag(rest, "--json")) {
+        // Cheap, offline (reads the token cache only), for hooks. Never prints tokens or paths.
+        const s = await coord.source.authStatus().catch(() => ({ loggedIn: false }));
+        out(JSON.stringify({ loggedIn: s.loggedIn, dataSource: coord.source.kind, ...("expiresAt" in s && s.expiresAt ? { expiresAt: new Date(s.expiresAt).toISOString() } : {}), autonomyLevel: coord.effectiveLevel }));
+        return 0;
+      }
       out(JSON.stringify(await coord.sessionStatus(), null, 2));
       return 0;
     }

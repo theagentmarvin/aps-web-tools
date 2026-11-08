@@ -17,6 +17,7 @@ import { z } from "zod";
 import { ApsAuth } from "../aps/auth";
 import { Coordinator, type CoordinatorOptions } from "../coordinator";
 import { CoordinatorUi, type HumanUser } from "../coordinator-ui";
+import { loadRules } from "../engine";
 import { LiveSource } from "../source/live";
 import { CoordError, httpStatusFor, log } from "../util";
 import { fetchSiteOk, hostAllowed, originMatches } from "./host-guard";
@@ -224,6 +225,11 @@ export interface CoordApi {
 /** Create the API (one Coordinator per process). */
 export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
   const coord = opts.coordinator ?? new Coordinator(opts);
+  try {
+    loadRules(); // logs CompiledRuleSet.warnings once (stderr)
+  } catch (e) {
+    log.warn("rules.invalid", { message: (e as Error).message.slice(0, 500) });
+  }
   const ui = new CoordinatorUi(coord);
   const csrfToken = randomBytes(24).toString("base64url");
   const routes: Route[] = [];
