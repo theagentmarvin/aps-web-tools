@@ -122,6 +122,20 @@ describe("group titles and linked twins (anonymised extract)", () => {
     }
   });
 
+  it("a merged twin listed in the opposite left/right order keeps each element's own facts", () => {
+    // ACC lists the twin through the link as beam (left) × duct (right): reversed vs the representative.
+    const reversed = clashes.map((c) => (c.right.documentId === 1 ? { ...c, left: c.right, right: c.left } : c));
+    const res = run(elements, reversed);
+    expect(res.clashes.length).toBe(reversed.length);
+    for (const c of res.clashes) {
+      for (const s of [c.a, c.b]) {
+        const isDuct = s.documentId === 1 && s.dbId >= 1000; // ducts are doc 1, dbIds 1000+ in this extract
+        expect(s.category).toBe(isDuct ? "Ducts" : "Structural Framing");
+        expect(s.discipline).toBe(isDuct ? "CLI" : "EST");
+      }
+    }
+  });
+
   it("legitimate per-element splits get the element identity in the title", () => {
     const direct = run(elements.filter((e) => !String(e.externalId).startsWith(LINK)), clashes.filter((c) => c.right.documentId === 0));
     const titles = direct.groups.map((g) => g.title);

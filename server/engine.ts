@@ -229,13 +229,38 @@ export function runEngine(input: EngineInput): EngineOutput {
     };
   };
 
+  /** Element uid without a linked-model prefix (`<linkUid>-<8hex>/<elementUid>` → `<elementUid>`). */
+  const uid = (x: string | undefined) => (x ? (x.split("/").pop() ?? x) : undefined);
+  const factsForSides = (c: NormalizedClash, cc: ClassifiedClash): [ClassifiedClash["left"], ClassifiedClash["right"]] => {
+    const elL = els.get(`${c.left.documentId}:${c.left.viewerDbId}`);
+    const elR = els.get(`${c.right.documentId}:${c.right.viewerDbId}`);
+    const same = (el: typeof elL, f: ClassifiedClash["left"]) => {
+      const k = uid(el?.externalId);
+      return !!k && uid(f.externalId) === k;
+    };
+    // 1. Identity (externalId, link prefix ignored).
+    if (same(elL, cc.left) || same(elR, cc.right)) return [cc.left, cc.right];
+    if (same(elL, cc.right) || same(elR, cc.left)) return [cc.right, cc.left];
+    // 2. Category, only when it tells the sides apart.
+    const cat = (el: typeof elL, f: ClassifiedClash["left"]) => !!el?.category && (f.categoryRaw === el.category || f.category === el.category);
+    const straight = Number(cat(elL, cc.left)) + Number(cat(elR, cc.right));
+    const swapped = Number(cat(elL, cc.right)) + Number(cat(elR, cc.left));
+    if (swapped > straight) return [cc.right, cc.left];
+    // 3. Same order as the representative (also the case for non-merged clashes).
+    return [cc.left, cc.right];
+  };
+
   const clashes: ClashRecord[] = [];
   for (const c of input.clashes) {
     const cc = byMcId.get(c.id);
     const g = groupOf.get(c.id);
     if (!cc || !g) continue;
-    const a = side(c.left, cc.left);
-    const b = side(c.right, cc.right);
+    // A merged (deduplicated) clash keeps its REPRESENTATIVE's left/right order, and ACC may
+    // order a twin the other way round (e.g. slab left/pipe right vs pipe left/slab right).
+    // Pair each of this clash's elements with its own facts by identity, never by position.
+    const [fl, fr] = factsForSides(c, cc);
+    const a = side(c.left, fl);
+    const b = side(c.right, fr);
     const cl = cc.classification;
     const pair = [a.discipline, b.discipline].sort();
     const cats = [a.category, b.category].sort();

@@ -19,6 +19,7 @@
  * navigation.fitBounds(immediate, box), Autodesk.Section setSectionBox.
  */
 import { addObjectMarker, addSonarMarker, clearAllMarkers, setMarkerClickHandler } from "./marker-service";
+import { clearClashSprites, setClashSprites } from "./clash-sprites";
 import type { ApsViewerAPI } from "./types";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -527,7 +528,16 @@ export function toggleSectionBox(): boolean {
 export function setClashMarkers(specs: ClashMarkerSpec[], onClick?: (id: string) => void): void {
   clearAllMarkers();
   markerIdMap.clear();
-  if (!getViewer()) return;
+  setMarkerClickHandler(null);
+  const viewer = getViewer();
+  if (!viewer) return;
+  // Preferred: fixed-size DataVisualization sprites. Fallback: legacy 3D markers.
+  void setClashSprites(viewer, specs, onClick).then((ok) => {
+    if (!ok) setLegacyMarkers(specs, onClick);
+  });
+}
+
+function setLegacyMarkers(specs: ClashMarkerSpec[], onClick?: (id: string) => void): void {
   for (const s of specs) {
     const mid = s.active
       ? addSonarMarker({ position: s.position, label: s.label, radius: 0.3, ringColor: "#A32428" })
@@ -547,6 +557,7 @@ export function setClashMarkers(specs: ClashMarkerSpec[], onClick?: (id: string)
 }
 
 export function clearClashMarkers(): void {
+  clearClashSprites();
   clearAllMarkers();
   markerIdMap.clear();
   setMarkerClickHandler(null);
