@@ -65,7 +65,7 @@ export function SignInCard({ title, body }: { title?: string; body?: string }) {
           <div role="alert" className="mt-4 rounded border border-red-200 bg-red-50 p-3 text-left text-xs text-red-700">
             <p className="font-medium">{t("auth.loginFailed")}</p>
             <p className="mt-1">{loginError}</p>
-            <p className="mt-1 text-red-600">{t("auth.loginFailedHint")}</p>
+            {/no está configurado|not configured|client id/i.test(loginError) && <p className="mt-1 text-red-600">{t("auth.loginFailedHint")}</p>}
           </div>
         )}
       </div>

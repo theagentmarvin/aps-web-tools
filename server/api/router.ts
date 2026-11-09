@@ -234,6 +234,8 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
   const csrfToken = randomBytes(24).toString("base64url");
   const routes: Route[] = [];
   let loginInProgress = false;
+  /** Authorize URL of the login in progress: re-clicking "sign in" reopens it instead of failing. */
+  let pendingAuthorizeUrl: string | undefined;
 
   const add = (method: string, path: string, handler: Handler, human = false) => {
     const keys: string[] = [];
@@ -274,7 +276,12 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
           /* refresh failed: fall through to a new login */
         }
       }
-      if (loginInProgress) throw new CoordError("conflict", "Ya hay un inicio de sesión en curso.");
+      // A login is already waiting for its callback (e.g. the Autodesk tab was closed):
+      // hand back the same authorize URL; its state/PKCE pair is still the one being awaited.
+      if (loginInProgress) {
+        if (pendingAuthorizeUrl) return { authorizeUrl: pendingAuthorizeUrl, alreadyLoggedIn: false };
+        throw new CoordError("conflict", "Ya hay un inicio de sesión en curso; inténtalo de nuevo en unos segundos.");
+      }
       loginInProgress = true;
       let resolveUrl!: (u: string) => void;
       const urlP = new Promise<string>((r) => (resolveUrl = r));
@@ -283,8 +290,12 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
         .loginInteractive({ timeoutMs: 5 * 60_000 })
         .then(() => log.info("api.login_ok"))
         .catch((e) => log.warn("api.login_failed", { message: (e as Error).message }))
-        .finally(() => (loginInProgress = false));
+        .finally(() => {
+          loginInProgress = false;
+          pendingAuthorizeUrl = undefined;
+        });
       const authorizeUrl = await Promise.race([urlP, new Promise<string>((_, rej) => setTimeout(() => rej(new CoordError("internal", "No se pudo iniciar el login")), 10_000))]);
+      pendingAuthorizeUrl = authorizeUrl;
       return { authorizeUrl, alreadyLoggedIn: false };
     },
     true,
