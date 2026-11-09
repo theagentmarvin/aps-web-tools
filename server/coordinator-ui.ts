@@ -12,6 +12,8 @@ import { AGENT_ACTOR, type Coordinator, proposalSummary, type ReviewState } from
 import { CLOSABLE, loadRules } from "./engine";
 import { assertCode, modelLevelDiscipline, outCode, ruleMatches, SIN, suggestedToken, validCodes, type DisciplineRule } from "./disciplines";
 import { sanitizeModelText } from "./sanitize";
+import { PROBLEM_TYPES } from "../core/families";
+import { assertFamilyInTest, familyIssueDescription, familyViews, type FamilyDecisionFields, type FamilyView } from "./families";
 import type {
   Actor,
   BatchItemRecord,
@@ -313,6 +315,8 @@ export class CoordinatorUi {
       reviewState: state,
       ruleId: g.ruleIds[0] ?? null,
       ruleIds: g.ruleIds,
+      ...(g.familyId ? { familyId: g.familyId, problemType: g.problemType as C.ProblemTypeCode, signature: g.signature ?? "", uniqueClashCount: g.uniqueClashCount ?? g.clashIds.length } : {}),
+      ...(g.hostLevelLabel ? { hostLevelLabel: g.hostLevelLabel } : {}),
     };
   }
 
@@ -442,7 +446,19 @@ export class CoordinatorUi {
     const groups = cls.groups.map((g, i) => this.groupUi(g, test, states.get(g.id) ?? g.reviewState, !!proposals[i].issueDraft, proposals[i].updatedAt));
     const rs = loadRules();
     const decisions = (await this.store.listDecisions()).filter((d) => d.testId === test.testKey).map((d) => this.decisionUi(d));
+    let families: C.TriageFamily[] | undefined;
+    if (cls.families) {
+      const views = familyViews(cls.families, cls.groups, await this.core.families.load(test.projectId, test.modelSetId));
+      const props = await this.familyProposals(test.testKey);
+      families = views.map((v) => this.familyUi(v, props));
+      const inh = new Map(views.flatMap((v) => v.instances.map((i) => [i.groupId, i.inheritance] as const)));
+      for (const g of groups) {
+        const x = inh.get(g.id);
+        if (x) g.inheritance = x;
+      }
+    }
     return {
+      ...(families ? { families, problemTypes: PROBLEM_TYPES.map((p) => ({ ...p, options: [...p.options] })) } : {}),
       project,
       modelSet,
       test: this.testRun(test, true),
@@ -758,7 +774,11 @@ export class CoordinatorUi {
     const batchId = await this.store.newBatchId();
     const items: BatchItemRecord[] = [];
     const usedDecisions: string[] = [];
+    // Family decisions first: one assign / one close per family; their instances skip the group flow.
+    const fam = await this.familyBatchItems(batchId, test, cls, user);
+    items.push(...fam.items);
     for (const g of cls.groups) {
+      if (fam.covered.has(g.id)) continue;
       const d = decided.get(g.id);
       if (!d || d.batchId || (d.kind !== "accept" && d.kind !== "correct")) continue;
       const view = this.proposalView(g, test, cls, byGroup.get(g.id) ?? []);
@@ -872,6 +892,8 @@ export class CoordinatorUi {
         ...(i.conflict ? { conflict: i.conflict } : {}),
         ...(i.issue ? { issue: i.issue as unknown as C.IssueDraft } : {}),
         ...(i.result ? { result: i.result } : {}),
+        ...(i.familyId ? { familyId: i.familyId, familyDecisionVersion: i.familyDecisionVersion, groupIds: i.groupIds ?? [] } : {}),
+        ...(i.validityChanges?.length ? { validityChanges: i.validityChanges } : {}),
       })),
     };
   }
@@ -1168,13 +1190,15 @@ export class CoordinatorUi {
       out.push({
         id: p.id,
         title: p.payload.title,
-        count: p.payload.feedbackIds.length,
+        count: p.payload.feedbackIds.length || (p.payload.evidence?.metrics.changedUnique ?? 0),
         reasonCode: "R99",
         pair: "",
         summary: p.rationale,
         patch,
-        affected: p.payload.feedbackIds.length,
+        affected: p.payload.evidence?.metrics.changedUnique ?? p.payload.feedbackIds.length,
         evaluation: ev,
+        feedbackCount: p.payload.feedbackIds.length,
+        ...(p.payload.evidence ? { evidence: p.payload.evidence } : {}),
         state: p.state === "approved" || p.state === "applied" ? "approved" : p.state === "rejected" || p.state === "withdrawn" ? "rejected" : "pending",
         createdAt: p.createdAt,
       });
@@ -1510,6 +1534,362 @@ export class CoordinatorUi {
   }
 
   // ── disciplines (human-only writes) ─────────────────────────────────────────
+
+// ── solution families (docs/domain/solution-families-proposal.md) ───────
+
+  private familyUi(v: FamilyView, proposals: readonly ProposalRecord[]): C.TriageFamily {
+    const pending = proposals.filter((p) => p.payload.kind === "family_decision" && p.payload.familyId === v.id && PENDING.has(p.state));
+    return {
+      ...(v as unknown as Omit<C.TriageFamily, "pendingProposals">),
+      pendingProposals: pending.map((p) => ({ id: p.id, createdAt: p.createdAt, rationale: p.rationale, payload: p.payload as unknown as Record<string, unknown> })),
+    };
+  }
+
+  private async familyProposals(testKey: string): Promise<ProposalRecord[]> {
+    return this.store.listProposals((p) => p.kind === "family_decision" && p.testKey === testKey);
+  }
+
+  async families(testKey: string): Promise<C.FamiliesPayload> {
+    const { test, views } = await this.core.familyViewsFor(testKey);
+    const props = await this.familyProposals(test.testKey);
+    return { testId: test.testKey, families: views.map((v) => this.familyUi(v, props)), problemTypes: PROBLEM_TYPES.map((p) => ({ ...p, options: [...p.options] })) };
+  }
+
+  async family(testKey: string, familyId: string): Promise<C.TriageFamily> {
+    const { test, views } = await this.core.familyViewsFor(testKey);
+    return this.familyUi(assertFamilyInTest(views, familyId), await this.familyProposals(test.testKey));
+  }
+
+  private decisionFields(v: FamilyView, req: Partial<C.FamilyDecisionRequest>): FamilyDecisionFields {
+    const rs = loadRules();
+    const validity = req.validity ?? v.proposed.validity;
+    const action = req.action ?? v.proposed.action;
+    if (validity === "real" && (action === "close" || action === "mark_reviewed")) throw new CoordError("validation_error", "Una familia 'real' no se cierra: usa create_issue o escalate.");
+    const responsibleDiscipline = assertCode(rs, req.responsibleDiscipline ?? v.proposed.responsibleDiscipline);
+    const secondary = req.secondaryDiscipline ?? v.proposed.secondaryDiscipline;
+    return {
+      validity,
+      action,
+      responsibleDiscipline,
+      ...(secondary ? { secondaryDiscipline: assertCode(rs, secondary) } : {}),
+      ...(req.solutionOption ?? v.proposed.solutionOption ? { solutionOption: sanitizeModelText(req.solutionOption ?? v.proposed.solutionOption!, 300) } : {}),
+      ...(req.typicalDetail ? { typicalDetail: { name: sanitizeModelText(req.typicalDetail.name, 120), ...(req.typicalDetail.note ? { note: sanitizeModelText(req.typicalDetail.note, 400) } : {}) } } : {}),
+      issueMode: req.issueMode ?? "family",
+    };
+  }
+
+  private validityChanges(v: FamilyView, validity: C.Validity) {
+    return v.instances
+      .filter((i) => i.inheritance.state !== "exception" && i.inheritance.state !== "detached" && i.validity !== validity)
+      .map((i) => ({ groupId: i.groupId, title: i.title, from: i.validity, to: validity }));
+  }
+
+  private spotCheckRequired(v: FamilyView): number {
+    return Math.min(v.instanceCount, v.uniqueClashCount > 50 ? 3 : 1);
+  }
+
+  async familyDecisionPreview(familyId: string, req: Partial<C.FamilyDecisionRequest> & { testId: string }): Promise<C.FamilyDecisionPreview> {
+    const { views } = await this.core.familyViewsFor(req.testId);
+    const v = assertFamilyInTest(views, familyId);
+    const f = this.decisionFields(v, req);
+    const live = v.instances.filter((i) => i.inheritance.state !== "exception" && i.inheritance.state !== "detached");
+    const raw = live.reduce((n, i) => n + i.rawClashCount, 0);
+    const issueAction = f.action === "create_issue" || f.action === "hygiene_issue";
+    return {
+      familyId: v.id,
+      instances: live.length,
+      uniqueClashCount: live.reduce((n, i) => n + i.uniqueClashCount, 0),
+      rawClashCount: raw,
+      exceptions: v.counts.exceptions,
+      pendingInherited: v.counts.pendingInherited,
+      spotCheckRequired: this.spotCheckRequired(v),
+      validityChanges: this.validityChanges(v, f.validity),
+      issues: !issueAction ? 0 : f.issueMode === "family" ? Math.ceil(raw / 1000) : live.reduce((n, i) => n + Math.ceil(i.rawClashCount / 1000), 0),
+    };
+  }
+
+  /** Approve / edit (new version) / reject a family. Human-only, audited, versioned. */
+  async decideFamily(familyId: string, req: C.FamilyDecisionRequest, user: HumanUser): Promise<C.TriageFamily> {
+    const { test, views } = await this.core.familyViewsFor(req.testId);
+    const v = assertFamilyInTest(views, familyId);
+    const prop = req.proposalId ? await this.store.getProposal(req.proposalId) : undefined;
+    if (req.proposalId && (!prop || prop.payload.kind !== "family_decision" || prop.payload.familyId !== v.id)) throw new CoordError("not_found", `Propuesta ${req.proposalId} no es de la familia ${v.id}`);
+    const now = nowIso(this.core.now());
+    const note = req.note ? sanitizeModelText(req.note, 1000) : undefined;
+    let fields: FamilyDecisionFields;
+    let changes: Array<{ groupId: string; title: string; from: C.Validity; to: C.Validity }> = [];
+    let spot: string[] = [];
+    if (req.decision === "approve") {
+      fields = this.decisionFields(v, req);
+      spot = [...new Set(req.spotChecked ?? [])];
+      const bad = spot.filter((g) => !v.groupIds.includes(g));
+      if (bad.length) throw new CoordError("validation_error", `spotChecked fuera de la familia: ${bad.slice(0, 5).join(", ")}`);
+      const need = this.spotCheckRequired(v);
+      if (spot.length < need) throw new CoordError("validation_error", `Abre al menos ${need} ubicación(es) antes de aprobar la familia (spotChecked).`);
+      changes = this.validityChanges(v, fields.validity);
+      if (changes.length && !req.acknowledgeValidityChanges) {
+        throw new CoordError(
+          "conflict",
+          `${changes.length} ubicación(es) cambiarían de validez (${changes.slice(0, 5).map((c) => `${c.groupId}: ${c.from}→${c.to}`).join(", ")}${changes.length > 5 ? ", …" : ""}).`,
+          "Revisa la lista (POST /families/:id/decision-preview) y confirma con acknowledgeValidityChanges=true.",
+        );
+      }
+    } else {
+      const cur = v.decision;
+      fields = cur ? { validity: cur.validity, action: cur.action, responsibleDiscipline: cur.responsibleDiscipline, issueMode: cur.issueMode } : { validity: v.proposed.validity, action: v.proposed.action, responsibleDiscipline: v.proposed.responsibleDiscipline, issueMode: "family" };
+    }
+    const covered = v.instances.filter((i) => i.inheritance.state !== "exception" && i.inheritance.state !== "detached").map((i) => i.groupId);
+    await this.core.families.update(
+      test.projectId,
+      test.modelSetId,
+      user,
+      (st) => {
+        const fs = (st.families[v.id] ??= { versions: [], exceptions: [], confirmed: [] });
+        fs.versions.push({
+          ...fields,
+          familyId: v.id,
+          version: fs.versions.length + 1,
+          status: req.decision === "approve" ? "approved" : "rejected",
+          decidedBy: user.name,
+          decidedAt: now,
+          spotChecked: spot,
+          coveredGroupIds: req.decision === "approve" ? covered : [],
+          testKey: test.testKey,
+          ...(note ? { note } : {}),
+          ...(changes.length ? { acknowledgedValidityChanges: changes.map((c) => c.groupId) } : {}),
+        });
+      },
+      {
+        action: req.decision === "approve" ? "family.decided" : "family.rejected",
+        testKey: test.testKey,
+        targetIds: [v.id, ...(req.proposalId ? [req.proposalId] : [])],
+        details: { validity: fields.validity, action: fields.action, issueMode: fields.issueMode, instances: covered.length, validityChanges: changes.length, spotChecked: spot.length },
+      },
+    );
+    if (prop && PENDING.has(prop.state)) {
+      if (req.decision === "approve") {
+        await this.store.transitionProposal(prop.id, "approved", user.name);
+        await this.store.transitionProposal(prop.id, "applied", user.name, "decisión de familia registrada (local)");
+      } else await this.store.transitionProposal(prop.id, "rejected", user.name);
+    }
+    return this.family(test.testKey, v.id);
+  }
+
+  async addFamilyException(familyId: string, body: { testId: string; groupId: string; fields: Partial<C.FamilyDecisionFields>; reason: string }, user: HumanUser): Promise<C.TriageFamily> {
+    const { test, views } = await this.core.familyViewsFor(body.testId);
+    const v = assertFamilyInTest(views, familyId);
+    if (!v.groupIds.includes(body.groupId)) throw new CoordError("not_found", `La ubicación ${body.groupId} no pertenece a ${v.id}`);
+    const reason = sanitizeModelText(body.reason, 300).trim();
+    if (!reason) throw new CoordError("validation_error", "La excepción requiere un motivo.");
+    const rs = loadRules();
+    const f = body.fields;
+    if (f.validity === "real" && (f.action === "close" || f.action === "mark_reviewed")) throw new CoordError("validation_error", "Una ubicación 'real' no se cierra.");
+    const fields: Partial<FamilyDecisionFields> = {
+      ...(f.validity ? { validity: f.validity } : {}),
+      ...(f.action ? { action: f.action } : {}),
+      ...(f.responsibleDiscipline ? { responsibleDiscipline: assertCode(rs, f.responsibleDiscipline) } : {}),
+      ...(f.secondaryDiscipline ? { secondaryDiscipline: assertCode(rs, f.secondaryDiscipline) } : {}),
+      ...(f.solutionOption ? { solutionOption: sanitizeModelText(f.solutionOption, 300) } : {}),
+      ...(f.issueMode ? { issueMode: f.issueMode } : {}),
+    };
+    await this.core.families.update(
+      test.projectId,
+      test.modelSetId,
+      user,
+      (st) => {
+        const fs = (st.families[v.id] ??= { versions: [], exceptions: [], confirmed: [] });
+        fs.exceptions = fs.exceptions.filter((e) => e.groupId !== body.groupId);
+        const cur = fs.versions.filter((x) => x.status === "approved").pop();
+        fs.exceptions.push({ groupId: body.groupId, fields, reason, by: user.name, at: nowIso(this.core.now()), ...(cur ? { decisionVersion: cur.version } : {}) });
+      },
+      { action: "family.exception", testKey: test.testKey, targetIds: [v.id, body.groupId], details: { reason: reason.slice(0, 80), validity: fields.validity ?? null, action: fields.action ?? null } },
+    );
+    return this.family(test.testKey, v.id);
+  }
+
+  async removeFamilyException(familyId: string, testId: string, groupId: string, user: HumanUser): Promise<C.TriageFamily> {
+    const { test, views } = await this.core.familyViewsFor(testId);
+    const v = assertFamilyInTest(views, familyId);
+    await this.core.families.update(test.projectId, test.modelSetId, user, (st) => {
+      const fs = st.families[v.id];
+      if (!fs?.exceptions.some((e) => e.groupId === groupId)) throw new CoordError("not_found", `Sin excepción para ${groupId}`);
+      fs.exceptions = fs.exceptions.filter((e) => e.groupId !== groupId);
+    }, { action: "family.exception_removed", testKey: test.testKey, targetIds: [v.id, groupId] });
+    return this.family(test.testKey, v.id);
+  }
+
+  /** "Confirmar N nuevas ubicaciones": inherited-pending instances become inherited (never automatic). */
+  async confirmInherited(familyId: string, body: { testId: string; groupIds?: string[] }, user: HumanUser): Promise<C.TriageFamily> {
+    const { test, views } = await this.core.familyViewsFor(body.testId);
+    const v = assertFamilyInTest(views, familyId);
+    const pending = v.instances.filter((i) => i.inheritance.state === "inherited_pending").map((i) => i.groupId);
+    const ids = body.groupIds?.length ? body.groupIds : pending;
+    const bad = ids.filter((g) => !pending.includes(g));
+    if (bad.length) throw new CoordError("validation_error", `No están pendientes de confirmación: ${bad.slice(0, 5).join(", ")}`);
+    if (!ids.length) throw new CoordError("validation_error", "No hay ubicaciones pendientes de confirmación.");
+    const version = v.decision!.version;
+    await this.core.families.update(test.projectId, test.modelSetId, user, (st) => {
+      const fs = st.families[v.id]!;
+      for (const g of ids) fs.confirmed.push({ groupId: g, version, by: user.name, at: nowIso(this.core.now()) });
+    }, { action: "family.inherited_confirmed", testKey: test.testKey, targetIds: [v.id, ...ids.slice(0, 20)], details: { confirmed: ids.length, version } });
+    return this.family(test.testKey, v.id);
+  }
+
+  async detachInstance(familyId: string, body: { testId: string; groupId: string }, user: HumanUser): Promise<C.FamiliesPayload> {
+    const { test, views } = await this.core.familyViewsFor(body.testId);
+    const v = assertFamilyInTest(views, familyId);
+    if (!v.groupIds.includes(body.groupId)) throw new CoordError("not_found", `La ubicación ${body.groupId} no pertenece a ${v.id}`);
+    if (v.groupIds.length < 2) throw new CoordError("validation_error", "La familia tiene una sola ubicación.");
+    const manual = `F-M${sha256(`${v.id}|${body.groupId}`).slice(0, 9)}`;
+    await this.core.families.update(test.projectId, test.modelSetId, user, (st) => {
+      st.detached[body.groupId] = { familyId: manual, by: user.name, at: nowIso(this.core.now()) };
+    }, { action: "family.detached", testKey: test.testKey, targetIds: [v.id, body.groupId, manual] });
+    return this.families(test.testKey);
+  }
+
+  async mergeFamilies(body: { testId: string; from: string; into: string }, user: HumanUser): Promise<C.FamiliesPayload> {
+    const { test, views } = await this.core.familyViewsFor(body.testId);
+    const from = assertFamilyInTest(views, body.from);
+    const into = assertFamilyInTest(views, body.into);
+    if (from.id === into.id) throw new CoordError("validation_error", "No se puede fusionar una familia consigo misma.");
+    if (from.decision?.status === "approved") throw new CoordError("invalid_state", `${from.id} ya tiene una decisión; recházala antes de fusionarla.`);
+    await this.core.families.update(test.projectId, test.modelSetId, user, (st) => {
+      st.aliases[from.id] = into.id;
+    }, { action: "family.merged", testKey: test.testKey, targetIds: [from.id, into.id] });
+    return this.families(test.testKey);
+  }
+
+  /** Assign body for a set of clashes (shared by family issue items). */
+  private assignBody(seed: string, test: TestRecord, chunk: readonly ClashRecord[], issue: { title: string; description: string; dueDate: string }, preferredRepId?: string): { body: AssignedGroupCreate; conflict?: { reason: string; accValueNow: null } } {
+    const rep = chunk.find((c) => c.id === preferredRepId) ?? [...chunk].sort((a, b) => b.penetrationMm - a.penetrationMm || (a.id < b.id ? -1 : 1))[0]!;
+    const doc = test.documents.find((x) => x.documentId === rep.a.documentId);
+    const typeId = this.core.config.issues.issueTypeId ?? (this.core.source.kind === "fixtures" ? "00000000-0000-4000-a000-00000000f1a7" : undefined);
+    const subId = this.core.config.issues.issueSubtypeId ?? (this.core.source.kind === "fixtures" ? "00000000-0000-4000-a000-00000000f1a8" : undefined);
+    const body: AssignedGroupCreate = {
+      id: uuidFromHash(sha256(`${seed}|assign`)),
+      title: issue.title.slice(0, 100),
+      description: issue.description.slice(0, 1000),
+      dueDate: issue.dueDate,
+      status: "Open",
+      pushpin: { location: rep.a.bboxCenterM ?? { x: 0, y: 0, z: 0 }, objectId: rep.a.dbId, ...(rep.a.externalId ? { externalId: rep.a.externalId } : {}), type: "TwoDVectorPushpin" },
+      clashes: chunk.map((c) => Number(c.id)),
+      issueTypeId: typeId ?? "",
+      issueSubTypeId: subId ?? "",
+      documentVersionUrn: doc?.urn ?? "",
+      ...(doc ? { viewableName: doc.viewableName } : {}),
+    };
+    const conflict = !typeId || !subId
+      ? { reason: "Falta el tipo/subtipo de incidencia ACC (issues.issueTypeId / issueSubtypeId en coordinator.config.local.json)", accValueNow: null }
+      : !doc || doc.urn.length > 80
+        ? { reason: "documentVersionUrn ausente o > 80 caracteres", accValueNow: null }
+        : undefined;
+    return { body, ...(conflict ? { conflict } : {}) };
+  }
+
+  /**
+   * Batch items of decided families: ONE assign (issue) per family (chunks of 1,000 clashes) or one
+   * per instance (issueMode per_instance), or ONE close per family. Only inherited instances: pending
+   * (new since the decision) and exceptions are never included automatically.
+   */
+  private async familyBatchItems(batchId: string, test: TestRecord, cls: ClassificationRecord, user: HumanUser): Promise<{ items: BatchItemRecord[]; covered: Set<string> }> {
+    const items: BatchItemRecord[] = [];
+    const covered = new Set<string>();
+    if (!cls.families) return { items, covered };
+    const st = await this.core.families.load(test.projectId, test.modelSetId);
+    const views = familyViews(cls.families, cls.groups, st);
+    const batches = (await this.store.listBatches()).filter((b) => b.modelSetId === test.modelSetId && b.state !== "discarded");
+    const done = new Set<string>();
+    const issuedFamilies = new Set<string>();
+    for (const b of batches) for (const i of b.items) if (i.familyId && !i.excluded) {
+      for (const g of i.groupIds ?? []) done.add(`${i.familyId}|${g}|${i.mcOperation}`);
+      if (i.mcOperation === "clash.assign" && b.testKey !== test.testKey) issuedFamilies.add(i.familyId);
+    }
+    const byGroup = new Map<string, ClashRecord[]>();
+    for (const c of cls.clashes) byGroup.set(c.groupId, [...(byGroup.get(c.groupId) ?? []), c]);
+    const gById = new Map(cls.groups.map((g) => [g.id, g]));
+    const due = new Date(this.core.now() + this.core.config.issues.defaultDueInDays * 86_400_000).toISOString().slice(0, 10);
+    for (const v of views) {
+      const dec = v.decision;
+      if (!dec || dec.status !== "approved" || dec.action === "escalate") continue;
+      const issue = dec.action === "create_issue" || dec.action === "hygiene_issue";
+      const op = issue ? "clash.assign" : "clash.close";
+      const inherited = v.instances.filter((i) => i.inheritance.state === "inherited");
+      for (const i of inherited) covered.add(i.groupId);
+      const todo = inherited.filter((i) => !done.has(`${v.id}|${i.groupId}|${op}`));
+      if (!todo.length) continue;
+      const changes = this.validityChanges(v, dec.validity).filter((c) => todo.some((t) => t.groupId === c.groupId));
+      const common = {
+        proposalIds: [] as string[],
+        decisionIds: [`FD-${v.id}-v${dec.version}`],
+        origin: "manual" as const,
+        reviewer: dec.decidedBy,
+        viewedInViewer: dec.spotChecked.length > 0,
+        familyId: v.id,
+        familyDecisionVersion: dec.version,
+        ...(changes.length ? { validityChanges: changes } : {}),
+      };
+      const cycle = issuedFamilies.has(v.id) ? `[${v.id} · ciclo v${test.modelSetVersion}]` : `[${v.id}]`;
+      const units: Array<{ key: string; instances: typeof todo; label: string }> =
+        issue && dec.issueMode === "per_instance" ? todo.map((i) => ({ key: i.groupId, instances: [i], label: `${cycle} ${i.title}` })) : [{ key: "family", instances: todo, label: `${cycle} ${v.title}` }];
+      for (const u of units) {
+        const clashes = u.instances.flatMap((i) => byGroup.get(i.groupId) ?? []);
+        const chunks: ClashRecord[][] = [];
+        for (let k = 0; k < clashes.length; k += 1000) chunks.push(clashes.slice(k, k + 1000));
+        chunks.forEach((chunk, ci) => {
+          const suffix = chunks.length > 1 ? ` (${ci + 1}/${chunks.length})` : "";
+          const seed = `${batchId}|${v.id}|${u.key}|${ci}`;
+          const groupIds = [...new Set(chunk.map((c) => c.groupId))];
+          const id = `I-${sha256(seed).slice(0, 10)}`;
+          const label = sanitizeModelText(`${u.label}${suffix}`, 160);
+          if (issue) {
+            const description = familyIssueDescription(v, dec, u.instances.filter((i) => groupIds.includes(i.groupId)));
+            const worst = groupIds.map((g) => gById.get(g)).filter((g): g is GroupRecord => !!g).sort((a, b) => a.band - b.band || b.maxPenetrationMm - a.maxPenetrationMm)[0];
+            const { body, conflict } = this.assignBody(seed, test, chunk, { title: `${u.label}${suffix}`, description, dueDate: due }, worst?.representativeClashId);
+            items.push({
+              ...common,
+              id,
+              targetType: "group",
+              targetIds: chunk.map((c) => `C-${c.id}`),
+              groupIds,
+              label,
+              operation: "issue.create",
+              mcOperation: "clash.assign",
+              fields: [{ field: "issue", accCurrent: null, accNew: body.title }, { field: "status", accCurrent: "active", accNew: "assigned" }],
+              accNew: body,
+              excluded: !!conflict,
+              ...(conflict ? { conflict } : {}),
+              issue: { title: body.title, description: body.description, ownerDiscipline: dec.responsibleDiscipline, dueDate: due, includeView: true, linkClashIds: [], priorityLabel: `P${v.proposed.band}` },
+            });
+          } else {
+            const body: ClosedGroupCreate = {
+              id: uuidFromHash(sha256(`${seed}|close`)),
+              title: label.slice(0, 128),
+              description: `${v.title}. ${dec.solutionOption ?? ""} Decisión de familia v${dec.version} (${dec.decidedBy}).`.slice(0, 1024),
+              reason: dec.action === "mark_reviewed" || dec.validity === "tolerated" ? "MINIMAL_OVERLAP" : this.closeReason(dec.validity, v.parts.problemType === "PT12" ? "duplicate" : "", undefined),
+              clashes: chunk.map((c) => Number(c.id)),
+            };
+            const real = dec.validity === "real";
+            items.push({
+              ...common,
+              id,
+              targetType: "group",
+              targetIds: chunk.map((c) => `C-${c.id}`),
+              groupIds,
+              label,
+              operation: "clash.setStatus",
+              mcOperation: "clash.close",
+              fields: [{ field: "status", accCurrent: "active", accNew: "closed" }],
+              accNew: body,
+              excluded: real,
+              ...(real ? { conflict: { reason: "Cierre de una familia de validez 'real': revisar antes de incluir", accValueNow: "active" } } : {}),
+            });
+          }
+        });
+      }
+    }
+    void user;
+    return { items, covered };
+  }
 
   async disciplineConfig(projectId: string): Promise<C.DisciplineConfig> {
     const cfg = await this.core.disciplines.load(withB(projectId));

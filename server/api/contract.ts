@@ -252,7 +252,148 @@ export interface ClashGroup {
   /** Dominant engine rule of the group (most member clashes). */
   ruleId: string | null;
   ruleIds: string[];
+  /** Solution family (one group = one family). Absent on classifications made before families existed. */
+  familyId?: string;
+  problemType?: ProblemTypeCode;
+  /** Human-readable signature (debug + tooltip; contains model type names). */
+  signature?: string;
+  /** Unique physical conflicts (after G0 by element pair); raw ids stay in clashIds. */
+  uniqueClashCount?: number;
+  /** "Entretecho P1 (viga nivel 201)". */
+  hostLevelLabel?: string;
+  inheritance?: InstanceInheritance;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Solution families (docs/domain/solution-families-proposal.md §5.3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type ProblemTypeCode = "PT00" | "PT01" | "PT02" | "PT03" | "PT04" | "PT05" | "PT06" | "PT07" | "PT08" | "PT09" | "PT10" | "PT11" | "PT12" | "PT13" | "PT14";
+export type FamilyAction = "create_issue" | "close" | "mark_reviewed" | "hygiene_issue" | "escalate";
+export type FamilyTag = "tipico" | "validez_mixta" | "orientacion_por_confirmar" | "sin_sistema";
+export interface ProblemTypeInfo { code: ProblemTypeCode; nameEs: string; responsibility: string; options: string[] }
+
+export interface FamilyDecisionFields {
+  validity: Validity;
+  action: FamilyAction;
+  responsibleDiscipline: string;
+  secondaryDiscipline?: string;
+  solutionOption?: string;
+  typicalDetail?: { name: string; note?: string };
+  issueMode: "family" | "per_instance";
+}
+/** Versioned human decision (§4.1). */
+export interface FamilyDecision extends FamilyDecisionFields {
+  familyId: string;
+  version: number;
+  status: "approved" | "rejected";
+  decidedBy: string;
+  decidedAt: string;
+  /** Instances the coordinator opened (≥1; ≥3 when the family has > 50 unique conflicts). */
+  spotChecked: string[];
+  /** Instances present when this version was decided. */
+  coveredGroupIds: string[];
+  testKey: string;
+  note?: string;
+  acknowledgedValidityChanges?: string[];
+}
+export interface FamilyException {
+  groupId: string;
+  fields: Partial<FamilyDecisionFields>;
+  reason: string;
+  by: string;
+  at: string;
+  decisionVersion?: number;
+}
+export interface InstanceInheritance {
+  state: "none" | "inherited" | "inherited_pending" | "exception" | "detached";
+  decisionVersion?: number;
+  exceptionReason?: string;
+  /** Exception made under an older decision version ("familia cambió"). */
+  familyChanged?: boolean;
+}
+/** Instance = today's group (group ∩ family). */
+export interface FamilyInstance {
+  groupId: string;
+  title: string;
+  levels: string[];
+  hostLevelLabel?: string;
+  validity: Validity;
+  band: Priority;
+  uniqueClashCount: number;
+  rawClashCount: number;
+  delta: Delta;
+  inheritance: InstanceInheritance;
+}
+export interface TriageFamily {
+  /** F-xxxxxxxxxx (merge aliases resolved server-side). */
+  id: string;
+  signature: string;
+  parts: { problemType: ProblemTypeCode; hostClass: string; hostType?: string; moverClass: string; systemClass: string; sizeBand: string; relation: string };
+  /** Spanish, generated. */
+  title: string;
+  problemTypeName: string;
+  bucket: "pair" | "model_set" | "non_issue";
+  /** responsible × other (bucket "pair"). */
+  pair?: [string, string];
+  groupIds: string[];
+  instanceCount: number;
+  uniqueClashCount: number;
+  rawClashCount: number;
+  levels: string[];
+  /** Unique conflicts per current validity. */
+  validityMix: Partial<Record<Validity, number>>;
+  proposed: { validity: Validity; action: FamilyAction; responsibleDiscipline: string; secondaryDiscipline?: string; solutionOption?: string; band: Priority };
+  decision?: FamilyDecision;
+  exceptions: FamilyException[];
+  tags: FamilyTag[];
+  issue?: { mode: "family" | "per_instance"; draftId?: string; accIssueIds?: string[] };
+  state: "sin_decidir" | "decidida" | "rechazada";
+  counts: { exceptions: number; pendingInherited: number; inherited: number };
+  /** Mixed-validity guard: instances whose current validity differs from the decision. */
+  validityConflicts: Array<{ groupId: string; title: string; from: Validity; to: Validity }>;
+  /** Family ids merged into this one. */
+  mergedFrom: string[];
+  evidence: { moverSizeMm?: { min: number; max: number }; penetrationMm: { min: number; max: number }; hostDepthMm?: number; sizeHistogram: Array<{ size: string; count: number }> };
+  instances: FamilyInstance[];
+  /** Agent suggestions (propose_family_decision) waiting for a human. */
+  pendingProposals: Array<{ id: string; createdAt: string; rationale: string; payload: Record<string, unknown> }>;
+}
+/** GET /tests/:testId/families */
+export interface FamiliesPayload { testId: string; families: TriageFamily[]; problemTypes: ProblemTypeInfo[] }
+/** POST /families/:familyId/decision */
+export interface FamilyDecisionRequest {
+  testId: string;
+  decision: "approve" | "reject";
+  validity?: Validity;
+  action?: FamilyAction;
+  responsibleDiscipline?: string;
+  secondaryDiscipline?: string;
+  solutionOption?: string;
+  typicalDetail?: { name: string; note?: string };
+  issueMode?: "family" | "per_instance";
+  spotChecked?: string[];
+  /** Required (true) when the requested validity differs from some instances' current validity. */
+  acknowledgeValidityChanges?: boolean;
+  note?: string;
+  /** Agent proposal this decision answers (marked applied / rejected). */
+  proposalId?: string;
+}
+/** POST /families/:familyId/decision-preview */
+export interface FamilyDecisionPreview {
+  familyId: string;
+  instances: number;
+  uniqueClashCount: number;
+  rawClashCount: number;
+  exceptions: number;
+  pendingInherited: number;
+  spotCheckRequired: number;
+  /** Instances whose validity would change: they must be acknowledged. */
+  validityChanges: Array<{ groupId: string; title: string; from: Validity; to: Validity }>;
+  /** ACC issues a batch would create (family mode: ceil(clashes / 1000); per_instance: one per instance). */
+  issues: number;
+}
+
 
 export interface ElementProperties { ref: string; found: boolean; props: Record<string, string | number | boolean | null> }
 
@@ -352,6 +493,8 @@ export interface TriagePayload {
   proposals: Proposal[];
   decisions: Decision[];
   changesCursor: string;
+  families?: TriageFamily[];
+  problemTypes?: ProblemTypeInfo[];
 }
 export interface TriageChanges { cursor: string; proposals: Proposal[] }
 
@@ -398,6 +541,12 @@ export interface BatchItem {
   conflict?: { reason: string; accValueNow: unknown };
   issue?: IssueDraft & { priorityLabel?: string };
   result?: { status: "applied" | "failed" | "skipped"; at: string; accRefs?: string[]; message?: string };
+  /** Family item: one assign (issue) or one close for the whole family. */
+  familyId?: string;
+  familyDecisionVersion?: number;
+  groupIds?: string[];
+  /** Approval preview: instances whose current validity differs from the family decision. */
+  validityChanges?: Array<{ groupId: string; title: string; from: Validity; to: Validity }>;
 }
 
 export interface Batch {
@@ -554,6 +703,27 @@ export interface RuleSuggestion {
   patch: string;
   affected: number;
   evaluation?: { baselineMacroF1: number; candidateMacroF1: number; unsafeClosureRate: number };
+  /** Real-data evaluation backing the proposal (shown on the Reglas page). */
+  evidence?: {
+    kind: "real_data_evaluation";
+    testKey: string;
+    summary: string;
+    metrics: {
+      changedUnique: number;
+      changedMc: number;
+      validityBefore: Partial<Record<Validity, number>>;
+      validityAfter: Partial<Record<Validity, number>>;
+      groupsBefore: number;
+      groupsAfter: number;
+      needsReviewBefore: number;
+      needsReviewAfter: number;
+      unsafeClosures: number;
+      scenariosPassed: number;
+      scenariosTotal: number;
+    };
+  };
+  /** Number of coordinator feedback records backing the proposal (0 when backed by evidence only). */
+  feedbackCount?: number;
   state: "pending" | "approved" | "rejected";
   createdAt: string;
 }

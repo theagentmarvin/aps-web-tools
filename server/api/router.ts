@@ -359,6 +359,53 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
   add("GET", "/projects/:projectId/model-sets/:modelSetId/clash-grid", async ({ params, query }) => ui.clashGrid(params.projectId, params.modelSetId, query.get("test") ?? undefined));
   add("GET", "/projects/:projectId/model-sets/:modelSetId/views", async ({ params }) => ui.modelSetViews(params.projectId, params.modelSetId));
 
+  // ── solution families (writes are human-only, audited, versioned) ─────
+  const ValidityZ = z.enum(["real", "false_positive", "tolerated", "needs_info"]);
+  const FamilyActionZ = z.enum(["create_issue", "close", "mark_reviewed", "hygiene_issue", "escalate"]);
+  const DecisionFieldsZ = z.object({
+    validity: ValidityZ.optional(),
+    action: FamilyActionZ.optional(),
+    responsibleDiscipline: z.string().min(2).max(6).optional(),
+    secondaryDiscipline: z.string().min(2).max(6).optional(),
+    solutionOption: z.string().max(300).optional(),
+    typicalDetail: z.object({ name: z.string().min(1).max(120), note: z.string().max(400).optional() }).optional(),
+    issueMode: z.enum(["family", "per_instance"]).optional(),
+  });
+  const TestIdZ = z.string().min(1).max(64);
+  const GroupIdZ = z.string().regex(/^G-[0-9a-f]{6,16}$/);
+  const FamilyIdZ = z.string().regex(/^F-[0-9A-Za-z]{6,16}$/);
+  add("GET", "/tests/:testId/families", async ({ params }) => ui.families(params.testId));
+  add("GET", "/tests/:testId/families/:familyId", async ({ params }) => ui.family(params.testId, params.familyId));
+  add("POST", "/families/merge", async ({ body, user }) => ui.mergeFamilies(z.strictObject({ testId: TestIdZ, from: FamilyIdZ, into: FamilyIdZ }).parse(body), await user()), true);
+  add("POST", "/families/:familyId/decision-preview", async ({ params, body }) => ui.familyDecisionPreview(params.familyId, DecisionFieldsZ.extend({ testId: TestIdZ }).parse(body)), true);
+  add(
+    "POST",
+    "/families/:familyId/decision",
+    async ({ params, body, user }) =>
+      ui.decideFamily(
+        params.familyId,
+        DecisionFieldsZ.extend({
+          testId: TestIdZ,
+          decision: z.enum(["approve", "reject"]),
+          spotChecked: z.array(GroupIdZ).max(200).optional(),
+          acknowledgeValidityChanges: z.boolean().optional(),
+          note: z.string().max(1000).optional(),
+          proposalId: z.string().max(40).optional(),
+        }).strict().parse(body),
+        await user(),
+      ),
+    true,
+  );
+  add(
+    "POST",
+    "/families/:familyId/exceptions",
+    async ({ params, body, user }) => ui.addFamilyException(params.familyId, z.strictObject({ testId: TestIdZ, groupId: GroupIdZ, fields: DecisionFieldsZ.omit({ typicalDetail: true }), reason: z.string().min(1).max(300) }).parse(body), await user()),
+    true,
+  );
+  add("DELETE", "/families/:familyId/exceptions/:groupId", async ({ params, query, user }) => ui.removeFamilyException(params.familyId, TestIdZ.parse(query.get("testId")), params.groupId, await user()), true);
+  add("POST", "/families/:familyId/detach", async ({ params, body, user }) => ui.detachInstance(params.familyId, z.strictObject({ testId: TestIdZ, groupId: GroupIdZ }).parse(body), await user()), true);
+  add("POST", "/families/:familyId/confirm-inherited", async ({ params, body, user }) => ui.confirmInherited(params.familyId, z.strictObject({ testId: TestIdZ, groupIds: z.array(GroupIdZ).max(500).optional() }).parse(body), await user()), true);
+
   // ── disciplines (writes are human-only, audited) ───────────────────────
   const RuleIn = z.object({
     id: z.string().max(20).optional(),

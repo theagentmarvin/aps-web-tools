@@ -111,6 +111,15 @@ export interface GroupRecord {
   accStatus: AccStatus;
   deltaSummary: { new: number; persisting: number; reappeared: number; modified: number };
   delta: Delta;
+  /** Solution family (docs/domain/solution-families-proposal.md). One group = one family (invariant 8). */
+  familyId?: string;
+  problemType?: string;
+  /** Human-readable signature (contains model type names: untrusted). */
+  signature?: string;
+  /** Unique physical conflicts (after G0 by element pair); raw ids stay in clashIds. */
+  uniqueClashCount?: number;
+  /** "Entretecho P1 (viga nivel 201)" when host and mover levels differ. */
+  hostLevelLabel?: string;
 }
 
 export interface ElementSideRecord {
@@ -157,7 +166,52 @@ export interface ClashRecord {
   delta: Delta;
   previousDistanceMm?: number;
   pairKey?: string;
+  familyId?: string;
+  problemType?: string;
+  signature?: string;
 }
+
+/** Engine-computed family of one test (no human state; decisions live in FamilyDecisionStore). */
+export interface FamilyRecord {
+  id: string;
+  signature: string;
+  parts: { problemType: string; hostClass: string; hostType?: string; moverClass: string; systemClass: string; sizeBand: string; relation: string };
+  title: string;
+  bucket: "pair" | "model_set" | "non_issue";
+  /** responsible × other (bucket "pair"). */
+  pair?: [string, string];
+  groupIds: string[];
+  instanceCount: number;
+  uniqueClashCount: number;
+  rawClashCount: number;
+  levels: string[];
+  /** Unique conflicts per validity. */
+  validityMix: Partial<Record<Validity, number>>;
+  proposed: { validity: Validity; action: FamilyAction; responsibleDiscipline: string; secondaryDiscipline?: string; solutionOption?: string; band: 1 | 2 | 3 | 4 };
+  tags: Array<"tipico" | "validez_mixta" | "orientacion_por_confirmar" | "sin_sistema">;
+  evidence: { moverSizeMm?: { min: number; max: number }; penetrationMm: { min: number; max: number }; hostDepthMm?: number; sizeHistogram: Array<{ size: string; count: number }> };
+}
+
+export interface RuleChangeEvidence {
+  kind: "real_data_evaluation";
+  testKey: string;
+  summary: string;
+  metrics: {
+    changedUnique: number;
+    changedMc: number;
+    validityBefore: Partial<Record<Validity, number>>;
+    validityAfter: Partial<Record<Validity, number>>;
+    groupsBefore: number;
+    groupsAfter: number;
+    needsReviewBefore: number;
+    needsReviewAfter: number;
+    unsafeClosures: number;
+    scenariosPassed: number;
+    scenariosTotal: number;
+  };
+}
+
+export type FamilyAction = "create_issue" | "close" | "mark_reviewed" | "hygiene_issue" | "escalate";
 
 /** `.coordinator/store/tests/<testKey>/classification.json` */
 export interface ClassificationRecord {
@@ -169,6 +223,8 @@ export interface ClassificationRecord {
   clashes: ClashRecord[];
   /** clashes resolved since the previous test (diff), ids of the previous test. */
   resolvedSincePrevious: string[];
+  /** Solution families (F1), sorted by instances desc, unique desc, id. */
+  families?: FamilyRecord[];
   stats: {
     unmatchedClashes: number;
     topRules: Array<{ ruleId: string; hits: number }>;
@@ -179,8 +235,8 @@ export interface ClassificationRecord {
 
 // ── Proposals ──────────────────────────────────────────────────────────────
 
-export type ProposalKind = "classification" | "group_action" | "issue_draft" | "status_change" | "rule_change" | "discipline_mapping";
-export const PROPOSAL_KINDS: readonly ProposalKind[] = ["classification", "group_action", "issue_draft", "status_change", "rule_change", "discipline_mapping"];
+export type ProposalKind = "classification" | "group_action" | "issue_draft" | "status_change" | "rule_change" | "discipline_mapping" | "family_decision";
+export const PROPOSAL_KINDS: readonly ProposalKind[] = ["classification", "group_action", "issue_draft", "status_change", "rule_change", "discipline_mapping", "family_decision"];
 export type ProposalState = "draft" | "pending_review" | "approved" | "rejected" | "withdrawn" | "applied" | "failed";
 export const PROPOSAL_STATES: readonly ProposalState[] = ["draft", "pending_review", "approved", "rejected", "withdrawn", "applied", "failed"];
 export type Risk = "low" | "medium" | "high";
@@ -229,6 +285,17 @@ export type ProposalPayload =
   | { kind: "status_change"; action: StatusAction; accReason?: string; closedGroupIds?: string[] }
   | {
       /** Agent suggestion only: a human accepts it in the UI (the agent never sets mappings). */
+      kind: "family_decision";
+      familyId: string;
+      modelSetId: string;
+      validity: Validity;
+      action: FamilyAction;
+      responsibleDiscipline?: string;
+      secondaryDiscipline?: string;
+      solutionOption?: string;
+      issueMode: "family" | "per_instance";
+    }
+  | {
       kind: "discipline_mapping";
       discipline: string;
       modelSetId?: string;
@@ -236,7 +303,17 @@ export type ProposalPayload =
       fileName?: string;
       rule?: { match: "contains" | "startsWith" | "regex"; value: string; field: "fileName" | "folder" | "viewName" };
     }
-  | { kind: "rule_change"; title: string; patchFile: string; patchHash: string; feedbackIds: string[]; evaluation: Record<string, number>; scope: string }
+  | {
+      kind: "rule_change";
+      title: string;
+      patchFile: string;
+      patchHash: string;
+      feedbackIds: string[];
+      evaluation: Record<string, number>;
+      scope: string;
+      /** Real-data evaluation backing the change (when there is no coordinator feedback). */
+      evidence?: RuleChangeEvidence;
+    }
   | {
       kind: "engine_batch";
       /** Engine auto-accepted groups: closable → status_change closed; real → classification. */
@@ -326,6 +403,13 @@ export interface BatchItemRecord {
   conflict?: { reason: string; accValueNow: unknown };
   issue?: Record<string, unknown>;
   result?: { status: "applied" | "failed" | "skipped"; at: string; accRefs?: string[]; message?: string };
+  /** Family items: one assign (issue) or one close per family (chunked at 1,000 clashes). */
+  familyId?: string;
+  familyDecisionVersion?: number;
+  /** Instances (groups) covered by this item. */
+  groupIds?: string[];
+  /** Mixed-validity guard: instances whose current validity differs from the family decision. */
+  validityChanges?: Array<{ groupId: string; title: string; from: Validity; to: Validity }>;
 }
 
 export interface ApprovalRecord {

@@ -18,12 +18,14 @@ import type { CoordinatorConfig } from "./config";
 import { loadRulesFromDisk } from "./rules-loader";
 import { sanitizeModelText } from "./sanitize";
 import { disambiguateTitles, normalizeLinkedExternalIds } from "./group-titles";
+import { attachFamilies } from "./families";
 import { modelLevelDiscipline, outCode, resolveDocument, SIN, type DocDiscipline, type DocInfo, type ProjectDisciplines } from "./disciplines";
 import type {
   AccStatus,
   ClashRecord,
   ConfidenceBand,
   ElementSideRecord,
+  FamilyRecord,
   GroupRecord,
   GroupStrategy,
   TestDocumentRecord,
@@ -109,6 +111,8 @@ export interface EngineOutput {
   unmatchedClashes: number;
   topRules: Array<{ ruleId: string; hits: number }>;
   byStrategy: Record<string, number>;
+  /** Solution families (F1) of this test. */
+  families: FamilyRecord[];
   /** Engine issue skeletons for `real` groups (groupId → draft). */
   issueDrafts: Record<string, { title: string; description: string; responsibleDiscipline: string; dueDate: string; viewpointClashId?: string }>;
 }
@@ -292,16 +296,19 @@ export function runEngine(input: EngineInput): EngineOutput {
 
   const issueDrafts: EngineOutput["issueDrafts"] = {};
   const byKey = new Map(res.classified.map((c) => [c.key, c]));
-  const groups: GroupRecord[] = res.groups.map((g) => {
+  const groups0: GroupRecord[] = res.groups.map((g) => {
     const members = g.mcClashIds.map((id) => clashById.get(id)).filter((c): c is ClashRecord => !!c);
     // ONE deterministic representative per group, shared by the rationale, the issue
     // draft (core/issues uses the same "worst member" order) and the pushpin.
     const rep = representativeOf(g.memberKeys.map((k) => byKey.get(k)).filter((c): c is ClassifiedClash => !!c));
-    const pens = members.map((m) => m.penetrationMm);
-    const validity = g.validity;
-    const [p0, p1] = g.disciplinePair.split("×");
     // Engine issue skeletons: coordination issues for real groups and hygiene issues
     // (one per responsible file and rule); never for needs_info (it is a question, not an issue).
+    draftFor(g, rep);
+    const conf: ConfidenceBand = g.confidenceBand;
+    return groupRecordOf(g, members, rep, conf);
+  });
+  function draftFor(g: EngineGroup, rep: ClassifiedClash | undefined): void {
+    const validity = g.validity;
     if (validity !== "needs_info" && (validity === "real" || g.strategy === "hygiene")) {
       try {
         const d = buildIssueDraft(rs, g, res.classified, {
@@ -321,7 +328,11 @@ export function runEngine(input: EngineInput): EngineOutput {
         // Skeleton is optional; the agent drafts issues via draft_issue.
       }
     }
-    const conf: ConfidenceBand = g.confidenceBand;
+  }
+  function groupRecordOf(g: EngineGroup, members: ClashRecord[], rep: ClassifiedClash | undefined, conf: ConfidenceBand): GroupRecord {
+    const pens = members.map((m) => m.penetrationMm);
+    const validity = g.validity;
+    const [p0, p1] = g.disciplinePair.split("×");
     return {
       id: g.id,
       strategy: mapStrategy(g.strategy),
@@ -362,10 +373,38 @@ export function runEngine(input: EngineInput): EngineOutput {
       deltaSummary: { new: 0, persisting: 0, reappeared: 0, modified: 0 },
       delta: "new",
     };
-  });
+  }
 
-  // Unique, self-explaining titles (same type on the same level → state the element).
+  // F1 families + invariant 8 (one group = one family; mixed groups are split).
+  const docName = new Map(input.documents.map((d) => [d.id, d.displayName]));
+  const originOf = new Map<string, string>();
+  for (const e of elementsIn) {
+    if (!e.externalId || e.documentId === undefined) continue;
+    const linked = !!(e.raw as Record<string, unknown> | undefined)?.["__coord/linkedExternalId"];
+    if (!linked || !originOf.has(e.externalId)) {
+      if (!linked) originOf.set(e.externalId, docName.get(e.documentId) ?? `doc ${e.documentId}`);
+    }
+  }
+  const fam = attachFamilies({
+    groups: groups0,
+    clashes,
+    engineGroups: res.groups,
+    classified: res.classified,
+    originFile: (s) => originOf.get(String(s.externalId ?? "")) ?? docName.get(Number(s.documentId)) ?? `doc ${String(s.documentId)}`,
+    representativeOf,
+  });
+  const groups = fam.groups;
+  // Split parts (invariant 8): the issue skeleton describes the part's own representative.
+  const egById = new Map(res.groups.map((g) => [g.id, g]));
+  for (const part of fam.parts) {
+    const eg = egById.get(part.engineGroupId);
+    if (!eg) continue;
+    delete issueDrafts[part.id];
+    const sub: EngineGroup = { ...eg, id: part.id, memberKeys: part.keys, mcClashIds: part.mcClashIds };
+    draftFor(sub, representativeOf(part.keys.map((k) => byKey.get(k)).filter((c): c is ClassifiedClash => !!c)));
+  }
   const hubExt = new Map(res.groups.map((g) => [g.id, g.hubElement?.externalId]));
+  // Unique, self-explaining titles (same type on the same level → state the element).
   disambiguateTitles(groups, {
     clashById,
     elementByRef: new Map([...els].map(([k, e]) => [`E-${k}`, e])),
@@ -402,6 +441,7 @@ export function runEngine(input: EngineInput): EngineOutput {
     unmatchedClashes: res.stats.unmatchedClashes,
     topRules: res.stats.topRules,
     byStrategy: res.stats.groups.byStrategy,
+    families: fam.families,
     issueDrafts,
   };
 }

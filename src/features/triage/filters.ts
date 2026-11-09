@@ -17,7 +17,7 @@ export type Filters = Partial<Record<FilterKey, string[]>>;
 
 export const SORT_KEYS = ["priority", "confidence_asc", "count_desc", "distance", "level", "pair", "delta", "updated"] as const;
 export type SortKey = (typeof SORT_KEYS)[number];
-export type ViewMode = "groups" | "clashes";
+export type ViewMode = "families" | "groups" | "clashes";
 
 export interface ListQuery {
   filters: Filters;
@@ -117,7 +117,7 @@ export function parseQuery(sp: URLSearchParams): ListQuery {
     filters,
     sort: sortRaw && (SORT_KEYS as readonly string[]).includes(sortRaw) ? sortRaw : "priority",
     q: sp.get("q") ?? "",
-    view: sp.get("view") === "clashes" ? "clashes" : "groups",
+    view: sp.get("view") === "clashes" ? "clashes" : sp.get("view") === "groups" ? "groups" : "families",
     ...(sp.get("docs") ? { docs: sp.get("docs")! } : {}),
   };
 }
@@ -134,7 +134,7 @@ export function writeQuery(sp: URLSearchParams, q: ListQuery): URLSearchParams {
   if (!q.filters.decision) sp.set("decision", "");
   q.sort === "priority" ? sp.delete("sort") : sp.set("sort", q.sort);
   q.q ? sp.set("q", q.q) : sp.delete("q");
-  q.view === "groups" ? sp.delete("view") : sp.set("view", q.view);
+  q.view === "families" ? sp.delete("view") : sp.set("view", q.view);
   q.docs ? sp.set("docs", q.docs) : sp.delete("docs");
   return sp;
 }

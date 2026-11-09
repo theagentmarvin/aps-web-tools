@@ -93,6 +93,9 @@ export interface ClashSide {
   viewerDbId: number;
 }
 
+/** raw[] key that marks an element as a linked copy (value = original linked externalId). */
+export const LINKED_EXTERNAL_ID_KEY = "__coord/linkedExternalId";
+
 export interface NormalizedClash {
   /** Stable clash id across model set versions, as a decimal string (research §3.2). */
   id: string;

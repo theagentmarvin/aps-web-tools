@@ -58,7 +58,11 @@ import type {
   RuleSummary,
   TestRun,
   TriageChanges,
-  TriagePayload,
+  TriagePayloadWithFamilies,
+  FamiliesPayload,
+  FamilyDecisionPreview,
+  FamilyDecisionRequest,
+  FamilyExceptionRequest,
   UserInfo,
 } from "./types";
 
@@ -103,7 +107,15 @@ export interface CoordinatorApi {
 
   // Triage
   /** Whole workspace payload for one test (default: latest). */
-  getTriage(projectId: string, modelSetId: string, testId?: string): Promise<TriagePayload>;
+  getTriage(projectId: string, modelSetId: string, testId?: string): Promise<TriagePayloadWithFamilies>;
+  /** Solution families of a test (GET /tests/:testId/families). */
+  getFamilies(testId: string): Promise<FamiliesPayload>;
+  /** What a family decision would touch (validity changes to acknowledge, issues, spot-check need). */
+  previewFamilyDecision(familyId: string, req: FamilyDecisionRequest): Promise<FamilyDecisionPreview>;
+  /** Approve or reject one family decision (human-only, CSRF). Nothing reaches ACC until an approved batch. */
+  decideFamily(familyId: string, req: FamilyDecisionRequest): Promise<unknown>;
+  /** Instance exception (mandatory reason) or its removal. PROVISIONAL route (§5.3). */
+  setFamilyException(familyId: string, req: FamilyExceptionRequest): Promise<unknown>;
   /** Proposals added/updated since `cursor` (polled every 10 s). */
   getTriageChanges(projectId: string, modelSetId: string, testId: string, cursor: string): Promise<TriageChanges>;
   listGroups(query: GroupQuery): Promise<Page<ClashGroup>>;

@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { applyUnifiedPatch, type Coordinator } from "../../server/coordinator";
 import { checkAgentText, untrusted } from "../../server/sanitize";
-import { ingest, makeCoord, ROOT, tempHome } from "./helpers";
+import { CoordinatorUi, ingest, makeCoord, ROOT, tempHome } from "./helpers";
 
 let coord: Coordinator;
 let cleanup: () => void;
@@ -113,6 +113,35 @@ describe("Coordinator service (fixtures)", () => {
     await expect(
       coord.proposeRuleChange({ title: "Malicioso", patch: "--- a/server/x.ts\n+++ b/server/x.ts\n@@ -1 +1 @@\n-a\n+b\n", rationale: "no debería aceptarse", feedbackIds: [r.feedbackId], evaluation: { baselineRubricScore: 100, candidateRubricScore: 100, unsafeClosureRate: 0, criticalFalseNegatives: 0 }, scope: "company" }),
     ).rejects.toThrow(/rules/);
+  });
+
+  it("a rule change can be backed by a real-data evaluation instead of feedback; unsafe closures are refused", async () => {
+    const metrics = {
+      changedUnique: 12,
+      changedMc: 24,
+      validityBefore: { real: 100, false_positive: 10 },
+      validityAfter: { real: 88, false_positive: 22 },
+      groupsBefore: 40,
+      groupsAfter: 35,
+      needsReviewBefore: 20,
+      needsReviewAfter: 21,
+      unsafeClosures: 0,
+      scenariosPassed: 25,
+      scenariosTotal: 26,
+    };
+    const evaluation = { baselineRubricScore: 97.3, candidateRubricScore: 97.3, unsafeClosureRate: 0, criticalFalseNegatives: 0, changedUnique: 12, groupsBefore: 40, groupsAfter: 35 };
+    const base = { title: "Acotar FP-001 (datos reales)", patch: fp001Patch("confidence: 0.97", "confidence: 0.95"), rationale: "Evaluado sobre el test real.", evaluation, scope: "project" as const };
+    await expect(coord.proposeRuleChange({ ...base, feedbackIds: [] })).rejects.toThrow(/feedbackIds o evidence/);
+    await expect(coord.proposeRuleChange({ ...base, evidence: { kind: "real_data_evaluation", testKey: k42, summary: "x", metrics: { ...metrics, unsafeClosures: 2 } } })).rejects.toThrow(/unsafeClosures/);
+    await expect(coord.proposeRuleChange({ ...base, evidence: { kind: "real_data_evaluation", testKey: "T-00000000", summary: "x", metrics } })).rejects.toThrow(/no existe/);
+    const p = await coord.proposeRuleChange({ ...base, evidence: { kind: "real_data_evaluation", testKey: k42, summary: "12 conflictos únicos pasan a FP; 0 cierres inseguros.", metrics } });
+    expect(p.status).toBe("pending_review");
+    const ui = new CoordinatorUi(coord);
+    const s = (await ui.ruleSuggestions()).find((x) => x.id === p.proposalId)!;
+    expect(s.state).toBe("pending");
+    expect(s.feedbackCount).toBe(0);
+    expect(s.evidence).toMatchObject({ kind: "real_data_evaluation", testKey: k42, metrics: { changedUnique: 12, unsafeClosures: 0, scenariosPassed: 25 } });
+    expect(s.affected).toBe(12);
   });
 
   it("generates a report whose headline numbers come from the server", async () => {

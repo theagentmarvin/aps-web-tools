@@ -1,0 +1,179 @@
+/**
+ * Family tree rows (docs/domain/solution-families-proposal.md §5.1):
+ * level 1 = discipline pair (or the "Conjunto de modelos" / "No es problema"
+ * buckets), level 2 = problem type, level 3 = family, level 4 = instances
+ * (today's group rows, rendered by GroupList).
+ */
+import { memo } from "react";
+import { useT } from "~/i18n";
+import type { FamilyGroup, TriageFamily } from "~/lib/api/types";
+import { PriorityChip, ValidityBadge } from "~/lib/components/badges";
+import { IconAlert, IconChevronDown, IconChevronRight, IconFlag, IconInherited } from "~/lib/components/icons";
+import { problemTypeOf } from "~/lib/problem-types";
+import { useTriageContext } from "./actions";
+import { useTriage, type Row, type TreeNode } from "./store";
+
+export const NODE_H = 32;
+export const FAMILY_H = 56;
+
+/** Left padding per tree depth (px). */
+export const indent = (depth = 0) => 4 + depth * 14;
+
+function rowCls(isCursor: boolean) {
+  return [
+    "group/row flex h-full cursor-pointer select-none border-b border-brand-muted/10 pr-2",
+    isCursor ? "border-l-2 border-l-brand bg-brand-surface" : "border-l-2 border-l-transparent hover:bg-gray-50",
+  ].join(" ");
+}
+
+function Chevron({ open, onClick, label }: { open: boolean; onClick: () => void; label: string }) {
+  return (
+    <button
+      type="button"
+      tabIndex={-1}
+      aria-label={label}
+      onClick={(ev) => {
+        ev.stopPropagation();
+        onClick();
+      }}
+      className="flex h-5 w-5 shrink-0 items-center justify-center text-gray-400 hover:text-brand"
+    >
+      {open ? <IconChevronDown size={12} /> : <IconChevronRight size={12} />}
+    </button>
+  );
+}
+
+export function useNodeLabel(n: TreeNode | undefined): string {
+  const t = useT();
+  const { store } = useTriageContext();
+  const pts = useTriage(store, (s) => s.problemTypes);
+  if (!n) return "";
+  if (n.depth === 1) return problemTypeOf(pts, n.problemType as TriageFamily["parts"]["problemType"])?.nameEs ?? n.problemType ?? "";
+  if (n.bucket === "model_set") return t("families.bucket.modelSet");
+  if (n.bucket === "non_issue") return t("families.bucket.nonIssue");
+  if (n.bucket === "loose") return t("families.bucket.loose");
+  return n.pair ? `${n.pair[0]} × ${n.pair[1]}` : n.id;
+}
+
+export const NodeRow = memo(function NodeRow({ row }: { row: Row }) {
+  const t = useT();
+  const { store } = useTriageContext();
+  const isCursor = useTriage(store, (s) => s.cursorKey === row.key);
+  const open = useTriage(store, (s) => !s.collapsedNodes.has(row.id));
+  const n = useTriage(store, (s) => s.nodes.get(row.id));
+  const label = useNodeLabel(n);
+  if (!n) return null;
+  return (
+    <div
+      id={`row-${row.key}`}
+      role="treeitem"
+      aria-level={n.depth + 1}
+      aria-expanded={open}
+      aria-selected={isCursor}
+      className={`${rowCls(isCursor)} items-center gap-1 ${n.depth === 0 ? "bg-gray-50/80" : ""}`}
+      style={{ paddingLeft: indent(row.depth) }}
+      onClick={() => store.setCursor(row.key)}
+      onDoubleClick={() => store.toggleNode(row.id)}
+    >
+      <Chevron open={open} label={open ? t("list.collapse") : t("list.expand")} onClick={() => store.toggleNode(row.id)} />
+      {n.depth === 1 && n.problemType && <span className="shrink-0 rounded bg-gray-100 px-1 font-mono text-[10px] text-gray-500">{n.problemType}</span>}
+      <span className={`min-w-0 flex-1 truncate ${n.depth === 0 ? "text-sm font-semibold text-gray-900" : "text-[13px] text-gray-800"}`} title={label}>
+        {label}
+      </span>
+      {n.worst && n.depth === 0 && <PriorityChip value={n.worst} />}
+      <span className="shrink-0 whitespace-nowrap text-[11px] text-gray-500">
+        {n.bucket === "loose"
+          ? t("families.countsLoose", { instances: n.instanceCount, clashes: n.clashCount })
+          : t("families.counts", { families: n.familyIds.length, instances: n.instanceCount, clashes: n.clashCount })}
+      </span>
+    </div>
+  );
+});
+
+/** "Típico", "validez mixta", "orientación por confirmar" badges. */
+export function FamilyTags({ family, compact }: { family: TriageFamily; compact?: boolean }) {
+  const t = useT();
+  return (
+    <>
+      {family.tags.includes("tipico") && (
+        <span title={t("families.typicalTooltip")} className="shrink-0 rounded border border-sky-200 bg-sky-50 px-1 text-[10px] font-medium leading-4 text-sky-800">
+          {t("families.typical")}
+        </span>
+      )}
+      {family.tags.includes("validez_mixta") && (
+        <span title={t("families.mixedTooltip")} className="inline-flex shrink-0 items-center gap-0.5 rounded border border-amber-300 bg-amber-50 px-1 text-[10px] font-medium leading-4 text-amber-900">
+          <IconAlert size={10} />
+          {t("families.mixed")}
+        </span>
+      )}
+      {family.tags.includes("orientacion_por_confirmar") && (
+        <span title={t("families.orientationTooltip")} className="shrink-0 rounded border border-dashed border-gray-400 px-1 text-[10px] leading-4 text-gray-600">
+          {compact ? t("families.orientationShort") : t("families.orientation")}
+        </span>
+      )}
+    </>
+  );
+}
+
+export function levelRange(levels: string[]): string {
+  if (!levels.length) return "";
+  if (levels.length === 1) return levels[0];
+  return `${levels[0]} – ${levels[levels.length - 1]}`;
+}
+
+export const FamilyRow = memo(function FamilyRow({ row }: { row: Row }) {
+  const t = useT();
+  const { store } = useTriageContext();
+  const isCursor = useTriage(store, (s) => s.cursorKey === row.key);
+  const open = useTriage(store, (s) => s.expanded.has(row.id));
+  const f = useTriage(store, (s) => s.families.get(row.id));
+  useTriage(store, (s) => s.latest);
+  if (!f) return null;
+  const worst = store.familyWorst(f);
+  const decided = f.decision?.status === "approved";
+  return (
+    <div
+      id={`row-${row.key}`}
+      role="treeitem"
+      aria-level={3}
+      aria-expanded={open}
+      aria-selected={isCursor}
+      className={`${rowCls(isCursor)} gap-1`}
+      style={{ paddingLeft: indent(row.depth) }}
+      onClick={() => store.setCursor(row.key)}
+      onDoubleClick={() => store.toggleExpand(row.id)}
+    >
+      <div className="flex items-center">
+        <Chevron open={open} label={open ? t("list.collapse") : t("list.expand")} onClick={() => store.toggleExpand(row.id)} />
+      </div>
+      <div className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
+        <div className="flex min-w-0 items-center gap-1.5 overflow-hidden">
+          {worst && <PriorityChip value={worst} />}
+          <span className="shrink-0 text-xs">
+            <ValidityBadge value={f.decision?.status === "approved" ? f.decision.validity : f.proposed.validity} />
+          </span>
+          <FamilyTags family={f} compact />
+          <span className="ml-auto shrink-0 whitespace-nowrap text-[11px] text-gray-500" title={f.levels.join(", ")}>
+            {t("families.rowCounts", { instances: f.instanceCount, clashes: f.uniqueClashCount, levels: f.levels.length })}
+          </span>
+          {decided ? <IconInherited size={13} label={t("families.decided")} className="shrink-0 text-green-700" /> : null}
+        </div>
+        <div className="truncate text-sm font-medium text-gray-900" title={f.title}>
+          {f.title}
+        </div>
+      </div>
+    </div>
+  );
+});
+
+/** Inheritance mark on an instance row: ↳ heredada · ⚑ excepción · ◌ pendiente. */
+export function InheritanceMark({ group }: { group: FamilyGroup }) {
+  const t = useT();
+  const { store } = useTriageContext();
+  const pendingException = useTriage(store, (s) => (group.familyId ? s.familyExceptions.get(group.familyId)?.has(group.id) : false));
+  const st = group.inheritance?.state;
+  if (st === "exception" || pendingException) return <IconFlag size={12} label={t("families.exception")} className="shrink-0 text-amber-700" />;
+  if (st === "inherited") return <IconInherited size={12} label={t("families.inherited")} className="shrink-0 text-green-700" />;
+  if (st === "inherited_pending") return <span title={t("families.inheritedPending")} className="shrink-0 text-xs text-gray-500">◌</span>;
+  return null;
+}

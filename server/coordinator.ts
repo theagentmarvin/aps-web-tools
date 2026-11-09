@@ -21,9 +21,11 @@ import { ClashCache, type CacheKey } from "./cache/clash-cache";
 import { loadConfig, MAX_SUPPORTED_LEVEL, type AutonomyLevel, type CoordinatorConfig, type LoadedConfig } from "./config";
 import { CLOSABLE, ENGINE_NAME, ENGINE_VERSION, loadRules, runEngine } from "./engine";
 import { fixtureLedgerSeed, LedgerService } from "./ledger";
+import { familyViews, FamilyDecisionStore, type FamilyView } from "./families";
+import { PROBLEM_TYPES } from "../core/families";
 import { assertCode, DisciplineStore, inCode, outCode, suggestedToken, validCodes } from "./disciplines";
 import type { ClashDiff } from "../core/types";
-import { checkAgentText, referencedIds, untrusted, type Untrusted } from "./sanitize";
+import { checkAgentText, referencedIds, sanitizeModelText, untrusted, type Untrusted } from "./sanitize";
 import { FixtureSource } from "./source/fixtures";
 import { LiveSource } from "./source/live";
 import type { DataSource } from "./source/types";
@@ -44,6 +46,7 @@ import type {
   ProposalRecord,
   ProposalState,
   Risk,
+  RuleChangeEvidence,
   Severity,
   TestRecord,
   Validity,
@@ -707,6 +710,7 @@ export class Coordinator {
       groups: out.groups,
       clashes: out.clashes,
       resolvedSincePrevious: resolved,
+      families: out.families,
       stats: { unmatchedClashes: out.unmatchedClashes, topRules: out.topRules, carriedDecisions: carried, durationMs: this.now() - t0 },
     };
     (rec as ClassificationRecord & { issueDrafts?: unknown }).issueDrafts = out.issueDrafts;
@@ -1211,6 +1215,123 @@ export class Coordinator {
     };
   }
 
+  /** Family decisions per project + model set (server/families.ts). */
+  get families(): FamilyDecisionStore {
+    return (this.familyStore ??= new FamilyDecisionStore(this.store));
+  }
+  private familyStore?: FamilyDecisionStore;
+
+  /** Families of a classified test with decisions, merges, detaches and inheritance applied. */
+  async familyViewsFor(testKey?: string): Promise<{ test: TestRecord; cls: ClassificationRecord; views: FamilyView[] }> {
+    const { test, cls } = await this.requireClassified(testKey);
+    if (!cls.families) throw new CoordError("not_classified", `El test ${test.testKey} se clasificó antes de existir las familias.`, "Vuelve a ejecutar run_classification.");
+    const st = await this.families.load(test.projectId, test.modelSetId);
+    return { test, cls, views: familyViews(cls.families, cls.groups, st) };
+  }
+
+  /** MCP list_families: compact rows; titles/signatures are model-derived (untrusted). */
+  async listFamilies(input: { testKey?: string; problemType?: string[]; bucket?: string; state?: string; minInstances?: number; limit: number; cursor?: string }) {
+    const { test, views } = await this.familyViewsFor(input.testKey);
+    const rows = views.filter(
+      (f) =>
+        (!input.problemType?.length || input.problemType.includes(f.parts.problemType)) &&
+        (!input.bucket || f.bucket === input.bucket) &&
+        (!input.state || f.state === input.state) &&
+        f.instanceCount >= (input.minInstances ?? 0),
+    );
+    const page = paginate(rows, input.limit, input.cursor);
+    return {
+      testKey: test.testKey,
+      totals: { families: views.length, instances: views.reduce((n, f) => n + f.instanceCount, 0), withReal: views.filter((f) => (f.validityMix.real ?? 0) > 0).length },
+      columns: ["familyId", "problemType", "title", "bucket", "pair", "instances", "uniqueClashes", "levels", "validityMix", "proposedValidity", "proposedAction", "responsible", "state", "tags"],
+      rows: page.items.map((f) => [
+        f.id,
+        f.parts.problemType,
+        untrusted(f.title),
+        f.bucket,
+        f.pair ? f.pair.join("×") : null,
+        f.instanceCount,
+        f.uniqueClashCount,
+        f.levels.length > 4 ? [...f.levels.slice(0, 4).map((l) => untrusted(l).untrusted), `+${f.levels.length - 4}`] : f.levels.map((l) => untrusted(l).untrusted),
+        f.validityMix,
+        f.proposed.validity,
+        f.proposed.action,
+        f.proposed.responsibleDiscipline,
+        f.state,
+        f.tags,
+      ]),
+      total: page.total,
+      ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+      problemTypes: PROBLEM_TYPES.map((p) => ({ code: p.code, nameEs: p.nameEs })),
+    };
+  }
+
+  /** MCP get_family: one family with its instances (capped at 60). */
+  async getFamily(input: { testKey?: string; familyId: string }) {
+    const { test, views } = await this.familyViewsFor(input.testKey);
+    const f = views.find((x) => x.id === input.familyId || x.mergedFrom.includes(input.familyId));
+    if (!f) throw new CoordError("not_found", `Familia ${input.familyId} no existe en ${test.testKey}`, "Usa list_families.");
+    return {
+      testKey: test.testKey,
+      familyId: f.id,
+      title: untrusted(f.title),
+      signature: untrusted(f.signature),
+      parts: { ...f.parts, ...(f.parts.hostType ? { hostType: untrusted(f.parts.hostType).untrusted } : {}) },
+      problemType: { code: f.parts.problemType, nameEs: f.problemTypeName, options: PROBLEM_TYPES.find((p) => p.code === f.parts.problemType)?.options ?? [] },
+      bucket: f.bucket,
+      pair: f.pair ?? null,
+      counts: { instances: f.instanceCount, uniqueClashes: f.uniqueClashCount, rawClashes: f.rawClashCount, ...f.counts },
+      levels: f.levels.map((l) => untrusted(l).untrusted),
+      validityMix: f.validityMix,
+      proposed: f.proposed,
+      decision: f.decision ? { version: f.decision.version, status: f.decision.status, validity: f.decision.validity, action: f.decision.action, responsibleDiscipline: f.decision.responsibleDiscipline, issueMode: f.decision.issueMode, decidedBy: f.decision.decidedBy, decidedAt: f.decision.decidedAt } : null,
+      tags: f.tags,
+      evidence: f.evidence,
+      validityConflicts: f.validityConflicts.map((v) => ({ ...v, title: untrusted(v.title) })),
+      instances: f.instances.slice(0, 60).map((i) => ({ groupId: i.groupId, title: untrusted(i.title), levels: i.levels, validity: i.validity, band: i.band, uniqueClashes: i.uniqueClashCount, inheritance: i.inheritance.state })),
+      ...(f.instances.length > 60 ? { truncatedInstances: f.instances.length - 60 } : {}),
+      note: "Solo lectura. Para sugerir una decisión usa propose_family_decision; un humano la aprueba en la UI.",
+    };
+  }
+
+  /** PROPOSAL only: the agent never decides a family; a human approves in the UI. */
+  async proposeFamilyDecision(
+    input: { testKey?: string; familyId: string; validity: Validity; action: "create_issue" | "close" | "mark_reviewed" | "hygiene_issue" | "escalate"; responsibleDiscipline?: string; secondaryDiscipline?: string; solutionOption?: string; issueMode?: "family" | "per_instance"; rationale: string },
+    caller: CallerContext = { actor: AGENT_ACTOR },
+  ) {
+    this.requireLevel(1, "propose_family_decision");
+    this.checkTexts({ rationale: input.rationale, solutionOption: input.solutionOption });
+    if (input.validity === "real" && (input.action === "close" || input.action === "mark_reviewed")) throw new CoordError("validation_error", "Una familia 'real' no se cierra: usa create_issue o escalate.");
+    const { test, views } = await this.familyViewsFor(input.testKey);
+    const f = views.find((x) => x.id === input.familyId);
+    if (!f) throw new CoordError("not_found", `Familia ${input.familyId} no existe en ${test.testKey}`, "Usa list_families.");
+    const p = await this.store.createProposal({
+      kind: "family_decision",
+      projectId: test.projectId,
+      testKey: test.testKey,
+      createdBy: caller.actor,
+      target: { groupIds: f.groupIds, clashIds: [] },
+      payload: {
+        kind: "family_decision",
+        familyId: f.id,
+        modelSetId: test.modelSetId,
+        validity: input.validity,
+        action: input.action,
+        ...(input.responsibleDiscipline ? { responsibleDiscipline: inCode(input.responsibleDiscipline) } : {}),
+        ...(input.secondaryDiscipline ? { secondaryDiscipline: inCode(input.secondaryDiscipline) } : {}),
+        ...(input.solutionOption ? { solutionOption: input.solutionOption } : {}),
+        issueMode: input.issueMode ?? "family",
+      },
+      rationale: input.rationale,
+      evidence: [],
+      confidence: "media",
+      risk: f.uniqueClashCount > 50 || input.validity !== f.proposed.validity ? "high" : "medium",
+      affectedClashes: f.rawClashCount,
+    });
+    await this.store.audit({ actor: caller.actor, action: "family.suggested", projectId: test.projectId, modelSetId: test.modelSetId, testId: test.testKey, targetIds: [p.id, f.id], details: { validity: input.validity, action: input.action, instances: f.instanceCount } });
+    return { proposalId: p.id, kind: p.kind, status: p.state, risk: p.risk, affectedClashes: p.affectedClashes, conflictsWith: [], reviewUrl: this.reviewUrl(p.id), note: "Pendiente de aprobación humana en la UI (familias)." };
+  }
+
   /** Read-only: the project's discipline mappings and how each document of a cached test resolved. */
   async listDisciplines(input: { testKey?: string }) {
     const ctx = await this.store.getContext();
@@ -1676,17 +1797,26 @@ export class Coordinator {
   }
 
   async proposeRuleChange(
-    input: { title: string; patch: string; rationale: string; feedbackIds: string[]; evaluation: Record<string, number>; scope: "project" | "company" },
+    input: { title: string; patch: string; rationale: string; feedbackIds?: string[]; evidence?: RuleChangeEvidence; evaluation: Record<string, number>; scope: "project" | "company" },
     caller: CallerContext = { actor: AGENT_ACTOR },
   ) {
     this.requireLevel(1, "propose_rule_change");
-    this.checkTexts({ title: input.title, rationale: input.rationale });
+    this.checkTexts({ title: input.title, rationale: input.rationale, ...(input.evidence ? { evidence: input.evidence.summary } : {}) });
+    const feedbackIds = input.feedbackIds ?? [];
+    if (!feedbackIds.length && !input.evidence) throw new CoordError("validation_error", "Indica feedbackIds o evidence (evaluación sobre datos reales).");
+    if (input.evidence) {
+      const m = input.evidence.metrics;
+      if (m.unsafeClosures > 0) throw new CoordError("validation_error", `La propuesta cerraría ${m.unsafeClosures} conflicto(s) real(es) sin revisión humana (unsafeClosures > 0): no se registra.`);
+      if (m.scenariosPassed > m.scenariosTotal) throw new CoordError("validation_error", "scenariosPassed no puede superar scenariosTotal.");
+      if (!(await this.store.getTest(input.evidence.testKey))) throw new CoordError("not_found", `testKey de la evidencia no existe: ${input.evidence.testKey}`);
+    }
+    if ((input.evaluation.unsafeClosures ?? 0) > 0) throw new CoordError("validation_error", "evaluation.unsafeClosures > 0: no se registra.");
     const files = patchTargets(input.patch);
     if (files.length === 0) throw new CoordError("validation_error", "El patch no tiene cabeceras de archivo (unified diff).");
     const bad = files.filter((f) => !/^rules\/[A-Za-z0-9_./-]+\.ya?ml$/.test(f) || f.includes(".."));
     if (bad.length) throw new CoordError("validation_error", `El patch solo puede tocar rules/**.yaml: ${bad.join(", ")}`);
     const known = new Set((await this.store.listFeedback()).map((f) => f.id));
-    const unknown = input.feedbackIds.filter((f) => !known.has(f));
+    const unknown = feedbackIds.filter((f) => !known.has(f));
     if (unknown.length) throw new CoordError("not_found", `feedbackIds inexistentes: ${unknown.slice(0, 5).join(", ")}`);
     // Validate that the patch applies and the candidate rules load.
     await this.candidateRulesDir(Promise.resolve(input.patch));
@@ -1696,19 +1826,28 @@ export class Coordinator {
       projectId: ctx?.projectId,
       createdBy: caller.actor,
       target: { groupIds: [], clashIds: [] },
-      payload: { kind: "rule_change", title: input.title, patchFile: "", patchHash: sha256(input.patch), feedbackIds: input.feedbackIds, evaluation: input.evaluation, scope: input.scope },
+      payload: {
+        kind: "rule_change",
+        title: input.title,
+        patchFile: "",
+        patchHash: sha256(input.patch),
+        feedbackIds,
+        evaluation: input.evaluation,
+        scope: input.scope,
+        ...(input.evidence ? { evidence: { ...input.evidence, summary: sanitizeModelText(input.evidence.summary, 1500) } } : {}),
+      },
       rationale: input.rationale,
       evidence: [],
       confidence: "media",
       risk: "high",
-      affectedClashes: 0,
+      affectedClashes: input.evidence?.metrics.changedMc ?? 0,
     });
     const file = await this.store.writeRulePatch(p.id, input.patch);
     await this.store.updateProposal(p.id, (x) => {
       if (x.payload.kind === "rule_change") x.payload.patchFile = file;
     });
-    await this.store.audit({ actor: caller.actor, action: "rule.suggested", projectId: ctx?.projectId, targetIds: [p.id], details: { files: files.join(","), scope: input.scope } });
-    return { proposalId: p.id, kind: p.kind, status: p.state, risk: p.risk, affectedClashes: 0, conflictsWith: [], reviewUrl: this.reviewUrl(p.id), patchPath: file };
+    await this.store.audit({ actor: caller.actor, action: "rule.suggested", projectId: ctx?.projectId, targetIds: [p.id], details: { files: files.join(","), scope: input.scope, feedback: feedbackIds.length, evidence: input.evidence ? input.evidence.testKey : null } });
+    return { proposalId: p.id, kind: p.kind, status: p.state, risk: p.risk, affectedClashes: p.affectedClashes, conflictsWith: [], reviewUrl: this.reviewUrl(p.id), patchPath: file };
   }
 
   async listProposals(input: { testKey?: string; status?: string[]; kind?: string[]; ids?: string[]; createdBy?: "agent" | "coordinator" | "any"; limit: number; cursor?: string }) {
@@ -2182,6 +2321,7 @@ export function proposalSummary(p: ProposalRecord): string {
     case "issue_draft": return pl.issue.title;
     case "group_action": return `acción ${pl.action.type}`;
     case "rule_change": return pl.title;
+    case "family_decision": return `familia ${pl.familyId}: ${pl.validity} / ${pl.action}${pl.responsibleDiscipline ? ` → ${pl.responsibleDiscipline}` : ""}`;
     case "discipline_mapping": return `disciplina ${pl.discipline} → ${pl.fileName ?? pl.rule?.value ?? pl.lineageUrn ?? "?"}${pl.rule ? ` (regla ${pl.rule.match} "${pl.rule.value}")` : ""}`;
     case "engine_batch": return `motor: ${pl.groups.length} grupos ${pl.op === "status_change" ? "cerrables" : "reales"}`;
   }

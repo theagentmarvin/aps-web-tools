@@ -10,17 +10,17 @@
  *   4. Evidence strip: one line per side (A ■ / B ▲); full cards collapsed below.
  *   5. Everything else in collapsed sections (state remembered per user).
  */
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { useSearchParams } from "react-router";
 import { useI18n, useT, type TKey } from "~/i18n";
-import { useApi, useAsync } from "~/lib/api";
-import { band, minConfidence } from "~/lib/api/decision-utils";
-import type { Calibration, DecisionChange, ElementInfo, IssueDraft, Nature, Proposal, Validity } from "~/lib/api/types";
+import { useApi } from "~/lib/api";
+import { minConfidence } from "~/lib/api/decision-utils";
+import type { DecisionChange, ElementInfo, IssueDraft, Nature, Proposal, Validity } from "~/lib/api/types";
 import { categoryNoun, categoryTitle } from "~/lib/category-names";
 import { ConfidenceBadge, FlaggedChip, NatureBadge, PriorityChip, ReasonChip, SpotCheckChip, ValidityBadge } from "~/lib/components/badges";
-import { IconChevronDown, IconChevronLeft, IconChevronRight, SideASwatch, SideBSwatch } from "~/lib/components/icons";
+import { IconChevronLeft, IconChevronRight, SideASwatch, SideBSwatch } from "~/lib/components/icons";
 import { EmptyState, Kbd, Skeleton } from "~/lib/components/ui";
 import { DECISION_KEY } from "~/lib/labels";
-import { readJson, writeJson } from "~/lib/storage";
 import { useTriageContext } from "./actions";
 import {
   ChangesContent,
@@ -35,65 +35,15 @@ import {
   useActionLabel,
   useHistoryItems,
 } from "./detail-sections";
-import type { Evaluated } from "./filters";
+
+import { writeQuery, type Evaluated } from "./filters";
 import { oneLine, summarizePair, type PairSummary, type SideFacts } from "./pair-summary";
 import { parseKey, useTriage } from "./store";
-
-// ── Persisted accordion state ──────────────────────────────────────
-
-type SectionId = "elements" | "clashes" | "reasoning" | "changes" | "properties" | "issue" | "history";
-const SECTIONS_KEY = "coord.detail.sections";
-
-function useSectionPrefs() {
-  const [prefs, setPrefs] = useState<Partial<Record<SectionId, boolean>>>(() => readJson(SECTIONS_KEY, {}));
-  const set = useCallback((id: SectionId, open: boolean) => {
-    setPrefs((p) => {
-      const next = { ...p, [id]: open };
-      writeJson(SECTIONS_KEY, next);
-      return next;
-    });
-  }, []);
-  return { prefs, set };
-}
-
-function Section({ id, title, open, onToggle, children }: { id: SectionId; title: string; open: boolean; onToggle: () => void; children: ReactNode }) {
-  return (
-    <section className="border-t border-brand-muted/20" aria-labelledby={`dsec-${id}-h`}>
-      <h3 id={`dsec-${id}-h`} className="m-0">
-        <button
-          type="button"
-          aria-expanded={open}
-          aria-controls={`dsec-${id}`}
-          onClick={onToggle}
-          className="flex w-full items-center justify-between gap-2 px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 hover:bg-gray-50"
-        >
-          <span className="truncate">{title}</span>
-          <IconChevronDown size={14} className={`shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
-        </button>
-      </h3>
-      {open && (
-        <div id={`dsec-${id}`} className="min-w-0 px-4 pb-3">
-          {children}
-        </div>
-      )}
-    </section>
-  );
-}
+import { Section, useCalibrationText, useSectionPrefs, type SectionId } from "./detail-accordion";
+import { FamilyPanel, NodePanel } from "./FamilyPanel";
 
 // ── Helpers ────────────────────────────────────────────────────────
 
-function useCalibrationText() {
-  const api = useApi();
-  const t = useT();
-  const { fmt } = useI18n();
-  const { data } = useAsync<Calibration>(() => api.getCalibration(), [api]);
-  return (c: number): string | undefined => {
-    if (!data) return undefined;
-    const b = data.bands.find((x) => x.band === band(c, data.thresholds));
-    if (!b || b.proposals < data.minDecisions) return t("confidence.uncalibrated", { min: data.minDecisions });
-    return t("confidence.calibrated", { count: b.proposals, pct: fmt.pct(b.acceptedUnchanged / b.proposals) });
-  };
-}
 
 /** Review reasons: GroupDetail.reviewReasons, else the proposal's "Revisión" signal. */
 function useReviewReasons(e: Evaluated, groupId: string): string[] {
@@ -159,7 +109,16 @@ export function DetailSkeleton() {
 
 // ── Panel ──────────────────────────────────────────────────────────
 
+/** Right pane: family / tree-node summary, or the instance (group/clash) panel. */
 export function DetailPanel() {
+  const { store } = useTriageContext();
+  const cursorKey = useTriage(store, (s) => s.cursorKey);
+  if (cursorKey?.startsWith("f:")) return <FamilyPanel key={cursorKey} familyId={cursorKey.slice(2)} />;
+  if (cursorKey?.startsWith("n:")) return <NodePanel key={cursorKey} nodeId={cursorKey.slice(2)} />;
+  return <InstancePanel />;
+}
+
+function InstancePanel() {
   const t = useT();
   const { lang } = useI18n();
   const { store } = useTriageContext();
@@ -248,7 +207,7 @@ export function DetailPanel() {
           )}
           {e.s.group && <NatureBadge value={e.s.group.nature} />}
           {/* Reserved: future solution-family chip ("Familia: … (24 instancias)"). */}
-          <FamilyChip />
+          {groupId && <FamilyChip groupId={groupId} />}
           <span className="ml-auto whitespace-nowrap font-mono text-[11px] text-gray-400">
             {kind === "group" ? id : e.s.clash?.id.slice(-8)} · {t("list.clashesCount", { count: clashCount })}
           </span>
@@ -315,11 +274,36 @@ export function DetailPanel() {
   );
 }
 
-/** Placeholder for the solution-family chip (BIM "solution families", not implemented yet). */
-function FamilyChip({ family }: { family?: { name: string; count: number } }) {
+/** "Familia: … (N instancias)": jumps to the family row in the Familias view. */
+function FamilyChip({ groupId }: { groupId: string }) {
   const t = useT();
+  const { store } = useTriageContext();
+  const [, setSp] = useSearchParams();
+  const family = useTriage(store, (s) => {
+    const fid = s.familyOf.get(groupId);
+    return fid ? s.families.get(fid) : undefined;
+  });
   if (!family) return null;
-  return <span className="rounded-full border border-slate-200 bg-slate-50 px-2 text-[11px] leading-5 text-slate-700">{t("detail.family", { name: family.name, count: family.count })}</span>;
+  const go = () => {
+    const key = `f:${family.id}`;
+    if (store.state.query.view !== "families") {
+      store.setQuery({ ...store.state.query, view: "families" });
+      setSp((prev) => writeQuery(new URLSearchParams(prev), store.state.query), { replace: true });
+    }
+    store.reveal(key);
+  };
+  return (
+    <button
+      type="button"
+      onClick={go}
+      title={`${family.title}\n${t("families.goToFamily")}`}
+      className="flex min-w-0 max-w-full items-center gap-1 rounded-full border border-slate-300 bg-slate-50 px-2 text-[11px] leading-5 text-slate-700 hover:border-brand hover:text-brand"
+    >
+      <span className="shrink-0">{t("detail.familyLabel")}</span>
+      <span className="min-w-0 truncate">{family.title.split(" · ")[0]}</span>
+      <span className="shrink-0">{t("detail.familyCount", { count: family.instanceCount })}</span>
+    </button>
+  );
 }
 
 function EvidenceLine({ side, text, more }: { side: "a" | "b"; text: string; more: number }) {

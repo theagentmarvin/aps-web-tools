@@ -8,7 +8,7 @@ import { useToast } from "~/lib/components/Toast";
 import { useHotkeys, type HotkeyBinding } from "~/lib/hotkeys";
 import { useSettings } from "~/lib/settings";
 import { useTriageContext } from "./actions";
-import { parseKey } from "./store";
+import { isDecisionKey, parseKey } from "./store";
 
 export function useTriageHotkeys(opts: { onSend: () => void }) {
   const t = useT();
@@ -17,7 +17,8 @@ export function useTriageHotkeys(opts: { onSend: () => void }) {
   const { settings } = useSettings();
   const { store, actions } = useTriageContext();
 
-  const current = () => store.state.cursorKey;
+  // Decision target under the cursor (g:/c:); tree rows (families, nodes) return null.
+  const current = () => (isDecisionKey(store.state.cursorKey) ? store.state.cursorKey : null);
   const focusList = () => document.getElementById("triage-list")?.focus({ preventScroll: true });
 
   const bindings: HotkeyBinding[] = [
@@ -36,6 +37,7 @@ export function useTriageHotkeys(opts: { onSend: () => void }) {
       labelKey: "shortcuts.edit",
       group: "decisions",
       run: () => {
+        if (store.state.cursorKey?.startsWith("f:")) return store.setEditing(true);
         const k = current();
         if (!k) return;
         const { kind, id } = parseKey(k);

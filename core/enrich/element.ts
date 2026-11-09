@@ -99,6 +99,8 @@ export interface ElementFacts {
   moveRank?: number;
   /** Bounding box in metres, when supplied (geometry facts; not a DSL field). */
   bbox?: { min: Vec3Like; max: Vec3Like };
+  /** Origin file (lineage) after resolving linked copies; set by the pipeline. */
+  originFile?: string;
   /** Level name as received, when the pipeline normalized `level`. */
   levelRaw?: string;
 }

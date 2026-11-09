@@ -18,7 +18,7 @@ import { pairKeyOf } from "./ingest/pair-key";
 import type { CompiledRuleSet } from "./rules/load";
 import type { BandName } from "./rules/schemas";
 import { elementSizeInput, scoreClash, type ScoreOptions } from "./score";
-import type { ElementProps, ModelDocument, NormalizedClash } from "./types";
+import { LINKED_EXTERNAL_ID_KEY, type ElementProps, type ModelDocument, type NormalizedClash } from "./types";
 import { cmpStr, sortedPair } from "./util/text";
 
 export interface CoordinationOptions {
@@ -151,6 +151,17 @@ export function runCoordination(input: CoordinationInput): CoordinationResult {
   const entries = [...unique.entries()].sort((x, y) => cmpStr(x[0], y[0]));
   const t1 = now();
 
+  // ── Origin file per element (rule fact sameOriginFile): the lineage of the document where its
+  // externalId appears WITHOUT a link prefix (linked copies carry raw[LINKED_EXTERNAL_ID_KEY]); else its own file.
+  const originOf = new Map<string, string>();
+  const allElements: Iterable<ElementProps> = Array.isArray(input.elements) ? (input.elements as readonly ElementProps[]) : input.elements instanceof Map ? (input.elements as ReadonlyMap<string, ElementProps>).values() : [];
+  for (const e of allElements) {
+    if (!e.externalId || e.raw?.[LINKED_EXTERNAL_ID_KEY]) continue;
+    const d = e.documentId !== undefined ? docs.get(e.documentId) : undefined;
+    const file = e.modelFile ?? d?.lineageUrn ?? d?.urn;
+    if (file && !originOf.has(e.externalId)) originOf.set(e.externalId, file);
+  }
+
   // ── Enrich (cached per element).
   const cache = new Map<string, ElementFacts>();
   let missingElements = 0;
@@ -177,6 +188,8 @@ export function runCoordination(input: CoordinationInput): CoordinationResult {
     };
     el = enrichElement(rs, elInput);
     el.elementKey = sideToken(s);
+    const origin = (el.externalId ? originOf.get(el.externalId) : undefined) ?? el.modelFile;
+    if (origin) el.originFile = origin;
     cache.set(k, el);
     return el;
   };

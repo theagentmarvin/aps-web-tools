@@ -41,7 +41,7 @@ describe("coord MCP server (fixtures)", () => {
   it("lists every contract tool and no approve tool", async () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(TOOLS.map((t) => t.name).sort());
-    expect(tools).toHaveLength(29);
+    expect(tools).toHaveLength(32);
     const apply = tools.find((t) => t.name === "apply_approved_proposals")!;
     expect(apply.annotations?.destructiveHint).toBe(true);
     expect(JSON.stringify(apply.inputSchema)).toContain("dryRun");
@@ -71,7 +71,7 @@ describe("coord MCP server (fixtures)", () => {
     const sum = await call("summarize_clashes", { groupBy: ["disciplinePair", "validity"] });
     expect(sum.data.columns).toEqual(["disciplinePair", "validity", "count", "pctOfTotal", "maxPenetrationMm"]);
 
-    const groups = await call("list_groups", { filter: { needsReview: true }, limit: 50 });
+    const groups = await call("list_groups", { filter: { needsReview: true, validity: ["false_positive", "tolerated"] }, limit: 50 });
     expect(groups.data.rows.length).toBeGreaterThan(0);
     const label = groups.data.rows[0][10];
     expect(label).toHaveProperty("untrusted");

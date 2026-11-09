@@ -11,6 +11,8 @@ import { DISCIPLINES, RULES, USERS } from "./catalog";
 import { HUBS, PROJECTS, SANDBOX_RULES, SANDBOX_SUGGESTIONS, SANDBOX_VIEWS, type MockModelSet, type MockProject } from "./fixtures";
 import { generateTest, rng, type GenerateOptions, type GeneratedTest, type MockDocDef } from "./generate";
 import { buildReport, fakeHash, seedAudit, seedCorrections, seedSuggestions } from "./reports";
+import { deriveFamilies, refreshFamily } from "./families";
+import { PROBLEM_TYPES } from "~/lib/problem-types";
 
 const ME = USERS[0];
 const delay = (ms = 160) => new Promise<void>((r) => setTimeout(r, ms + Math.random() * 120));
@@ -27,6 +29,8 @@ export class MockCoordinatorApi implements CoordinatorApi {
   readonly mode = "mock" as const;
 
   private tests = new Map<string, GeneratedTest>();
+  /** Solution families per test (mock F1 step), derived once from the generated groups. */
+  private families = new Map<string, { families: T.TriageFamily[]; groups: T.FamilyGroup[] }>();
   private decisions = new Map<string, T.Decision[]>();
   private batches = new Map<string, T.Batch>();
   private applyJobs = new Map<string, ApplyJob>();
@@ -638,7 +642,107 @@ export class MockCoordinatorApi implements CoordinatorApi {
 
   // ── Triage ──────────────────────────────────────────────────────
 
-  async getTriage(projectId: string, modelSetId: string, testId?: string): Promise<T.TriagePayload> {
+  private familiesOf(testId: string) {
+    let f = this.families.get(testId);
+    if (!f) {
+      const d = this.data(testId);
+      f = deriveFamilies(d.groups, d.clashes, d.proposals);
+      this.families.set(testId, f);
+    }
+    return f;
+  }
+
+  private familyById(testId: string, familyId: string) {
+    const f = this.familiesOf(testId);
+    const fam = f.families.find((x) => x.id === familyId || x.mergedFrom.includes(familyId));
+    if (!fam) throw new ApiError("Familia no encontrada.", 404, "not_found");
+    return { fam, byId: new Map(f.groups.map((g) => [g.id, g])) };
+  }
+
+  async getFamilies(testId: string): Promise<T.FamiliesPayload> {
+    await delay(120);
+    const f = this.familiesOf(testId);
+    const byId = new Map(f.groups.map((g) => [g.id, g]));
+    for (const fam of f.families) refreshFamily(fam, byId);
+    return clone({ testId, families: f.families, problemTypes: PROBLEM_TYPES });
+  }
+
+  /** Same rules as the server: real instances are never closed by a family; validity changes must be acknowledged. */
+  private familyPlan(fam: T.TriageFamily, byId: Map<string, T.FamilyGroup>, req: T.FamilyDecisionRequest) {
+    const validity = req.validity ?? fam.proposed.validity;
+    const action = req.action ?? fam.proposed.action;
+    const closing = action === "close" || action === "mark_reviewed";
+    const exc = new Set(fam.exceptions.map((e) => e.groupId));
+    const applied = fam.groupIds.map((id) => byId.get(id)).filter((g): g is T.FamilyGroup => !!g && !exc.has(g.id) && !(closing && g.validity === "real"));
+    const validityChanges = applied.filter((g) => g.validity !== validity).map((g) => ({ groupId: g.id, title: g.title, from: g.validity, to: validity }));
+    return { validity, action, applied, validityChanges };
+  }
+
+  async previewFamilyDecision(familyId: string, req: T.FamilyDecisionRequest): Promise<T.FamilyDecisionPreview> {
+    await delay(120);
+    const { fam, byId } = this.familyById(req.testId, familyId);
+    const plan = this.familyPlan(fam, byId, req);
+    const clashes = plan.applied.reduce((n, g) => n + (g.uniqueClashCount ?? g.clashIds.length), 0);
+    return {
+      familyId: fam.id,
+      instances: plan.applied.length,
+      uniqueClashCount: clashes,
+      rawClashCount: plan.applied.reduce((n, g) => n + g.clashIds.length, 0),
+      exceptions: fam.exceptions.length,
+      pendingInherited: fam.counts.pendingInherited,
+      spotCheckRequired: fam.uniqueClashCount > 50 ? Math.min(3, fam.instanceCount) : 1,
+      validityChanges: plan.validityChanges,
+      issues: (req.issueMode ?? "family") === "per_instance" ? plan.applied.length : Math.max(1, Math.ceil(clashes / 1000)),
+    };
+  }
+
+  async setFamilyException(familyId: string, req: T.FamilyExceptionRequest): Promise<unknown> {
+    await delay(80);
+    const { fam, byId } = this.familyById(req.testId, familyId);
+    fam.exceptions = fam.exceptions.filter((e) => e.groupId !== req.groupId);
+    const g = byId.get(req.groupId);
+    if (!req.remove) {
+      if (!req.reason.trim()) throw new ApiError("La excepción requiere un motivo.", 400, "validation");
+      fam.exceptions.push({ groupId: req.groupId, fields: req.fields ?? {}, reason: req.reason.trim(), by: ME.name, at: new Date().toISOString(), decisionVersion: fam.decision?.version });
+      if (g) g.inheritance = { state: "exception", decisionVersion: fam.decision?.version, exceptionReason: req.reason.trim() };
+    } else if (g) g.inheritance = { state: fam.decision?.status === "approved" ? "inherited" : "none", decisionVersion: fam.decision?.version };
+    refreshFamily(fam, byId);
+    return { ok: true };
+  }
+
+  async decideFamily(familyId: string, req: T.FamilyDecisionRequest): Promise<unknown> {
+    await delay(300);
+    const { fam, byId } = this.familyById(req.testId, familyId);
+    const now = new Date().toISOString();
+    const version = (fam.decision?.version ?? 0) + 1;
+    if (req.decision === "approve") {
+      if (!req.spotChecked?.length) throw new ApiError("Abre al menos una instancia antes de aprobar.", 400, "validation", "spot_check_required");
+      const plan = this.familyPlan(fam, byId, req);
+      if (plan.validityChanges.length && !req.acknowledgeValidityChanges)
+        throw new ApiError(`${plan.validityChanges.length} instancias cambian de validez: confírmalas.`, 409, "conflict", "validity_change_unacknowledged");
+      fam.decision = {
+        familyId: fam.id, version, status: "approved", decidedBy: ME.name, decidedAt: now, testKey: req.testId,
+        validity: plan.validity, action: plan.action, responsibleDiscipline: req.responsibleDiscipline ?? fam.proposed.responsibleDiscipline,
+        secondaryDiscipline: req.secondaryDiscipline, solutionOption: req.solutionOption, typicalDetail: req.typicalDetail, issueMode: req.issueMode ?? "family",
+        spotChecked: req.spotChecked, coveredGroupIds: [...fam.groupIds], note: req.note, acknowledgedValidityChanges: plan.validityChanges.map((v) => v.groupId),
+      };
+      fam.issue = { mode: fam.decision.issueMode };
+      const applied = new Set(plan.applied.map((g) => g.id));
+      for (const gid of fam.groupIds) {
+        const g = byId.get(gid);
+        if (!g || g.inheritance?.state === "exception") continue;
+        // Real clashes are never closed through a family decision: they stay for an individual decision.
+        g.inheritance = applied.has(gid) ? { state: "inherited", decisionVersion: version } : { state: "none" };
+      }
+    } else {
+      fam.decision = { familyId: fam.id, version, status: "rejected", decidedBy: ME.name, decidedAt: now, testKey: req.testId, validity: fam.proposed.validity, action: fam.proposed.action, responsibleDiscipline: fam.proposed.responsibleDiscipline, issueMode: "family", spotChecked: req.spotChecked ?? [], coveredGroupIds: [...fam.groupIds], note: req.note };
+    }
+    refreshFamily(fam, byId);
+    this.log({ actor: { type: "user", id: ME.id, name: ME.short }, action: req.decision === "approve" ? "family.decision" : "family.reject", projectId: "", targetIds: [fam.id], details: { testKey: req.testId, instances: fam.instanceCount, version } });
+    return { ok: true, familyId: fam.id, version };
+  }
+
+  async getTriage(projectId: string, modelSetId: string, testId?: string): Promise<T.TriagePayloadWithFamilies> {
     this.ensureSeed();
     const project = this.findProject(projectId);
     const ms = this.findModelSet(projectId, modelSetId);
@@ -655,7 +759,9 @@ export class MockCoordinatorApi implements CoordinatorApi {
       test: d.test,
       tests,
       disciplines: DISCIPLINES,
-      groups: d.groups,
+      groups: this.familiesOf(opts.testId).groups,
+      families: this.familiesOf(opts.testId).families,
+      problemTypes: PROBLEM_TYPES,
       clashes: d.clashes,
       proposals: d.proposals,
       decisions: this.decisionsOf(opts.testId),

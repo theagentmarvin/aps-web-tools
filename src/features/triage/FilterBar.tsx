@@ -141,6 +141,7 @@ export function FilterBar({ query, onChange }: { query: ListQuery; onChange: (q:
   const t = useT();
   const { store } = useTriageContext();
   const manual = useTriage(store, (s) => s.manual);
+  const hasFamilies = useTriage(store, (s) => s.families.size > 0);
   const [search, setSearch] = useState(query.q);
   const add = usePopover();
   const views = usePopover();
@@ -227,11 +228,15 @@ export function FilterBar({ query, onChange }: { query: ListQuery; onChange: (q:
         </label>
         {!manual && (
           <div role="group" className="inline-flex overflow-hidden rounded border border-brand-muted/30">
-            {(["groups", "clashes"] as const).map((v) => (
-              <button key={v} type="button" aria-pressed={query.view === v} onClick={() => onChange({ ...query, view: v })} className={`px-2 py-0.5 ${query.view === v ? "bg-brand text-white" : "bg-white text-gray-600 hover:text-brand"}`}>
-                {v === "groups" ? t("list.viewGroups") : t("list.viewClashes")}
-              </button>
-            ))}
+            {(["families", "groups", "clashes"] as const).map((v) => {
+              const off = v === "families" && !hasFamilies;
+              const on = query.view === v || (query.view === "families" && !hasFamilies && v === "groups");
+              return (
+                <button key={v} type="button" aria-pressed={on} disabled={off} title={off ? t("families.unavailable") : undefined} onClick={() => onChange({ ...query, view: v })} className={`px-2 py-0.5 ${on ? "bg-brand text-white" : "bg-white text-gray-600 hover:text-brand"} disabled:cursor-not-allowed disabled:text-gray-300`}>
+                  {v === "families" ? t("list.viewFamilies") : v === "groups" ? t("list.viewGroups") : t("list.viewClashes")}
+                </button>
+              );
+            })}
           </div>
         )}
         <div ref={views.ref} className="relative">

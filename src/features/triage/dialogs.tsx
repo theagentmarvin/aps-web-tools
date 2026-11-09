@@ -15,6 +15,7 @@ import { displayKey, useHotkeyDocs, type HotkeyGroup } from "~/lib/hotkeys";
 import { FIELD_KEY, PRIORITY_KEY, VALIDITY_KEY, VALIDITY_ORDER } from "~/lib/labels";
 import { BULK_CAP, REASONS_BY_FIELD, changesFromEdits, isRisky, useTriageContext } from "./actions";
 import { parseKey, useTriage, type Dialog } from "./store";
+import { FamilyApproveDialog, FamilyRejectDialog } from "./FamilyDialogs";
 
 // ── Reason code picker (§4.4) ──────────────────────────────────────
 
@@ -379,6 +380,10 @@ export function WorkspaceDialogs() {
       return <RuleDrawer dialog={dialog} />;
     case "shortcuts":
       return <ShortcutOverlay />;
+    case "familyApprove":
+      return <FamilyApproveDialog key={dialog.familyId} familyId={dialog.familyId} />;
+    case "familyReject":
+      return <FamilyRejectDialog key={dialog.familyId} familyId={dialog.familyId} />;
     default:
       return null;
   }

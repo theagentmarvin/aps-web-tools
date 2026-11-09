@@ -33,6 +33,8 @@ export interface ClashFacts {
   clearanceViolation: boolean;
   sameDocument: boolean;
   sameModelFile: boolean;
+  /** Both elements originate in the same file (lineage), resolving linked copies. */
+  sameOriginFile: boolean;
   sameExternalId: boolean;
   sameSystemName: boolean;
   sameFamily: boolean;
@@ -95,6 +97,8 @@ export function computeClashFacts(rs: CompiledRuleSet, input: ClashFactsInput, l
     clearanceViolation: distanceMm >= 0 && distanceMm < tol.clearanceMm,
     sameDocument: same(left, right, "documentId"),
     sameModelFile: same(left, right, "modelFile"),
+    // Origin file (lineage) resolved through linked copies; see core/pipeline.ts.
+    sameOriginFile: same(left, right, "originFile"),
     sameExternalId: same(left, right, "externalId"),
     sameSystemName: same(left, right, "systemName"),
     sameFamily: same(left, right, "family"),

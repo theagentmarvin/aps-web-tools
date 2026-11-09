@@ -10,7 +10,7 @@ import type { DecisionChange, DecisionField, Priority, Proposal, ProposedAction,
 import { useToast } from "~/lib/components/Toast";
 import { useSettings, type Settings } from "~/lib/settings";
 import type { Evaluated } from "./filters";
-import { parseKey, type PendingEdits, type TriageStore } from "./store";
+import { isDecisionKey, parseKey, type PendingEdits, type TriageStore } from "./store";
 
 export const BULK_CAP = 500;
 
@@ -103,7 +103,9 @@ function announce(t: TFunction, label: string, store: TriageStore) {
 }
 
 export function createActions(store: TriageStore, settings: Settings, t: TFunction, toast: ReturnType<typeof useToast>): TriageActions {
-  const cursor = () => store.state.cursorKey;
+  // Tree rows (families, nodes) are not decision targets: family decisions go through their own dialog.
+  const cursor = () => (isDecisionKey(store.state.cursorKey) ? store.state.cursorKey : null);
+  const familyAtCursor = () => (store.state.cursorKey?.startsWith("f:") ? store.state.cursorKey.slice(2) : null);
   const checkedKeys = () => [...store.state.checked].filter((k) => store.state.rows.some((r) => r.key === k));
   const advance = settings.autoAdvance;
 
@@ -141,6 +143,8 @@ export function createActions(store: TriageStore, settings: Settings, t: TFuncti
 
   const actions: TriageActions = {
     accept(key = cursor() ?? undefined) {
+      const fid = key ? null : familyAtCursor();
+      if (fid) return store.setDialog({ type: "familyApprove", familyId: fid });
       if (!key) return;
       const { kind, id } = parseKey(key);
       const e = store.evaluate(kind, id);
@@ -166,6 +170,8 @@ export function createActions(store: TriageStore, settings: Settings, t: TFuncti
     },
 
     reject(keys) {
+      const fid = keys ? null : familyAtCursor();
+      if (fid) return store.setDialog({ type: "familyReject", familyId: fid });
       const ks = keys ?? (cursor() ? [cursor()!] : []);
       if (!ks.length) return;
       store.setDialog({ type: "reason", mode: "reject", keys: ks.slice(0, BULK_CAP), edits: {}, field: "reject" });
@@ -274,7 +280,7 @@ export function createActions(store: TriageStore, settings: Settings, t: TFuncti
     },
 
     acceptInherited() {
-      const keys = store.state.rows.filter((r) => !r.nested && store.evaluate(r.kind, r.id)?.d.state === "inherited").map((r) => r.key);
+      const keys = store.state.rows.filter((r) => !r.nested && (r.kind === "group" || r.kind === "clash") && store.evaluate(r.kind, r.id)?.d.state === "inherited").map((r) => r.key);
       if (!keys.length) return;
       store.decide(keys.slice(0, BULK_CAP), "accept", () => [], { label: t("workspace.acceptInherited", { count: keys.length }) });
       toast.show(t("workspace.acceptInherited", { count: keys.length }));

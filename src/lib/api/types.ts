@@ -186,3 +186,45 @@ export interface ProjectDisciplines {
   /** True when the server has no /disciplines endpoint yet (read-only fallback). */
   unsupported?: boolean;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Solution families (docs/domain/solution-families-proposal.md §4–§5): wire
+// types from the server contract. Every family field is optional on groups and
+// on the triage payload, so older classifications (no families) still load.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type {
+  FamiliesPayload,
+  FamilyAction,
+  FamilyDecision,
+  FamilyDecisionFields,
+  FamilyDecisionPreview,
+  FamilyDecisionRequest,
+  FamilyException,
+  FamilyInstance,
+  FamilyTag,
+  InstanceInheritance,
+  ProblemTypeCode,
+  ProblemTypeInfo,
+  TriageFamily,
+} from "../../../server/api/contract";
+import type { ClashGroup as WireGroup, FamilyDecisionFields as WireDecisionFields, TriagePayload as WirePayload } from "../../../server/api/contract";
+
+/** A group as an instance of its family (the contract already carries the optional family fields). */
+export type FamilyGroup = WireGroup;
+export type TriagePayloadWithFamilies = WirePayload;
+export type IssueMode = "family" | "per_instance";
+
+/**
+ * POST /families/:familyId/exceptions ({testId, groupId, fields, reason}) or,
+ * with `remove`, DELETE /families/:familyId/exceptions/:groupId?testId=.
+ * The router validates the body; the contract has no named type for it yet.
+ */
+export interface FamilyExceptionRequest {
+  testId: string;
+  groupId: string;
+  reason: string;
+  fields?: Partial<WireDecisionFields>;
+  /** true = remove the exception. */
+  remove?: boolean;
+}

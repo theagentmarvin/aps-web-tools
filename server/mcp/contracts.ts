@@ -467,13 +467,13 @@ export interface ProposalCreatedOutput {
   batchId?: string;                    // open draft batch (lote) the proposal was added to
   reviewUrl: string;                   // web UI deep link, e.g. http://localhost:5173/aprobaciones/L-2026-11-05-01
 }
-export type ProposalKind = "classification" | "group_action" | "issue_draft" | "status_change" | "rule_change" | "discipline_mapping";
+export type ProposalKind = "classification" | "group_action" | "issue_draft" | "status_change" | "rule_change" | "discipline_mapping" | "family_decision";
 export type ProposalStatus = "draft" | "pending_review" | "approved" | "rejected" | "withdrawn" | "applied" | "failed";
 
 export const ListProposalsInput = z.object({
   testKey: TestKey.optional(),
   status: z.array(z.enum(["draft", "pending_review", "pending", "approved", "rejected", "withdrawn", "superseded", "applying", "applied", "failed"])).optional(),
-  kind: z.array(z.enum(["classification", "group_action", "issue_draft", "issue", "status_change", "rule_change", "discipline_mapping"])).optional(),
+  kind: z.array(z.enum(["classification", "group_action", "issue_draft", "issue", "status_change", "rule_change", "discipline_mapping", "family_decision"])).optional(),
   ids: z.array(ProposalId).max(50).optional(),
   createdBy: z.enum(["agent", "coordinator", "any"]).default("any"),
   limit: Limit(25, 50),
@@ -544,15 +544,63 @@ export interface EvalMetrics {
   feedbackReplayAgreement?: number;
 }
 
+const ValidityCounts = z.object({ real: z.number().int().min(0), false_positive: z.number().int().min(0), tolerated: z.number().int().min(0), needs_info: z.number().int().min(0) }).partial();
+/** Real-data metrics of a candidate ruleset (baseline vs candidate on one cached test). */
+export const RealDataMetrics = z.object({
+  changedUnique: z.number().int().min(0).describe("Unique conflicts whose classification changes"),
+  changedMc: z.number().int().min(0).describe("Same, counted as MC clashes"),
+  validityBefore: ValidityCounts.describe("Unique conflicts per validity with the current rules"),
+  validityAfter: ValidityCounts.describe("Unique conflicts per validity with the candidate rules"),
+  groupsBefore: z.number().int().min(0),
+  groupsAfter: z.number().int().min(0),
+  needsReviewBefore: z.number().int().min(0),
+  needsReviewAfter: z.number().int().min(0),
+  unsafeClosures: z.number().int().min(0).describe("Real conflicts the candidate would close without human review: must be 0"),
+  scenariosPassed: z.number().int().min(0),
+  scenariosTotal: z.number().int().min(0),
+});
+export const RuleChangeEvidence = z.object({
+  kind: z.literal("real_data_evaluation"),
+  testKey: TestKey,
+  summary: z.string().min(1).max(1500),
+  metrics: RealDataMetrics,
+});
 export const ProposeRuleChangeInput = z.object({
   title: z.string().max(120),
   patch: z.string().max(20000).describe("Unified diff touching only rules/**"),
   rationale: z.string().max(1500),
-  feedbackIds: z.array(z.string()).min(1).max(100),
-  evaluation: z.object({ baselineRubricScore: z.number(), candidateRubricScore: z.number(), unsafeClosureRate: z.number(), criticalFalseNegatives: z.number() }),
+  feedbackIds: z.array(z.string()).max(100).default([]).describe("Coordinator feedback backing the change. Required unless evidence is given."),
+  evidence: RuleChangeEvidence.optional().describe("Real-data evaluation backing the change. Required unless feedbackIds is given."),
+  evaluation: z
+    .object({ baselineRubricScore: z.number(), candidateRubricScore: z.number(), unsafeClosureRate: z.number(), criticalFalseNegatives: z.number() })
+    .extend(RealDataMetrics.partial().omit({ validityBefore: true, validityAfter: true }).shape),
   scope: z.enum(["project", "company"]),
 });
 // output: ProposalCreatedOutput with kind "rule_change"; patch saved to .coordinator/rule-proposals/<id>.patch
+
+/** Read-only: solution families of a classified test (docs/domain/solution-families-proposal.md). */
+export const ListFamiliesInput = z.object({
+  testKey: TestKey.optional(),
+  problemType: z.array(z.enum(["PT00", "PT01", "PT02", "PT03", "PT04", "PT05", "PT06", "PT07", "PT08", "PT09", "PT10", "PT11", "PT12", "PT13", "PT14"])).optional(),
+  bucket: z.enum(["pair", "model_set", "non_issue"]).optional(),
+  state: z.enum(["sin_decidir", "decidida", "rechazada"]).optional(),
+  minInstances: z.number().int().min(1).max(1000).optional(),
+  limit: z.number().int().min(1).max(100).default(30),
+  cursor: z.string().max(200).optional(),
+});
+export const GetFamilyInput = z.object({ testKey: TestKey.optional(), familyId: z.string().regex(/^F-[0-9A-Za-z]{6,16}$/) });
+/** PROPOSAL only — a human approves the family in the UI (spot-check, mixed-validity guard). */
+export const ProposeFamilyDecisionInput = z.object({
+  testKey: TestKey.optional(),
+  familyId: z.string().regex(/^F-[0-9A-Za-z]{6,16}$/),
+  validity: z.enum(["real", "false_positive", "tolerated", "needs_info"]),
+  action: z.enum(["create_issue", "close", "mark_reviewed", "hygiene_issue", "escalate"]),
+  responsibleDiscipline: z.string().min(2).max(6).optional(),
+  secondaryDiscipline: z.string().min(2).max(6).optional(),
+  solutionOption: z.string().max(300).optional().describe("One of the problem type's options (list_families.problemTypes / get_family.problemType.options) or short free text"),
+  issueMode: z.enum(["family", "per_instance"]).optional().describe("Default family: one ACC issue per family"),
+  rationale: z.string().max(1500),
+});
 
 /** Read-only: project discipline mappings + how each document of the test resolved (source/share/rule). */
 export const ListDisciplinesInput = z.object({ testKey: TestKey.optional() });
@@ -682,6 +730,12 @@ export const TOOLS: ToolSpec[] = [
     description: "Project discipline mappings (assignments, ordered naming rules, codes) and per-document resolution of a cached test (source: assignment|rule|matrix|elements|unassigned, share, ruleId). SIN = Sin asignar." },
   { family: "learning", name: "propose_discipline_mapping", title: "Propose discipline mapping", minLevel: 1, annotations: LOCAL_WRITE, input: ProposeDisciplineMappingInput,
     description: "Suggest a document→discipline assignment and/or a naming rule as a proposal. Never changes mappings: a human confirms it in the web UI." },
+  { family: "analysis", name: "list_families", title: "List solution families", minLevel: 0, annotations: RO_LOCAL, input: ListFamiliesInput,
+    description: "Solution families of a classified test: one row per family (same physical problem and solution across levels). Counts are unique conflicts. Titles are model-derived (untrusted)." },
+  { family: "analysis", name: "get_family", title: "Get solution family", minLevel: 0, annotations: RO_LOCAL, input: GetFamilyInput,
+    description: "One family: signature parts, problem type and its solution options, validity mix, evidence (sizes, penetration), decision state and instances (groups) with inheritance state." },
+  { family: "proposal", name: "propose_family_decision", title: "Propose family decision", minLevel: 1, annotations: LOCAL_WRITE, input: ProposeFamilyDecisionInput,
+    description: "Suggest ONE decision for a whole family (validity, action, responsible, solution option, issue mode). Proposal only: a human approves it in the UI after a spot-check; real families are never closed." },
   { family: "report", name: "generate_report", title: "Generate report", minLevel: 0, annotations: { ...RO_LOCAL, readOnlyHint: false }, input: GenerateReportInput,
     description: "Render a report file from cached data; numbers come from the server, the agent supplies only the narrative." },
   { family: "apply", name: "apply_approved_proposals", title: "Apply an approved batch to ACC", minLevel: 1, annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true }, input: ApplyApprovedProposalsInput,

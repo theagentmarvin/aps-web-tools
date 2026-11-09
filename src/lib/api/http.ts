@@ -231,8 +231,21 @@ export class HttpCoordinatorApi implements CoordinatorApi {
     return this.req<T.IngestStart>("POST", `/projects/${enc(projectId)}/model-sets/${enc(modelSetId)}/tests/${enc(accTestId)}/ingest`, { refresh: opts?.refresh ?? false, classify: true });
   }
 
+  getFamilies(testId: string) {
+    return this.get<T.FamiliesPayload>(`/tests/${enc(testId)}/families`);
+  }
+  previewFamilyDecision(familyId: string, req: T.FamilyDecisionRequest) {
+    return this.req<T.FamilyDecisionPreview>("POST", `/families/${enc(familyId)}/decision-preview`, req);
+  }
+  decideFamily(familyId: string, req: T.FamilyDecisionRequest) {
+    return this.req<unknown>("POST", `/families/${enc(familyId)}/decision`, req);
+  }
+  setFamilyException(familyId: string, req: T.FamilyExceptionRequest) {
+    if (req.remove) return this.req<unknown>("DELETE", `/families/${enc(familyId)}/exceptions/${enc(req.groupId)}?testId=${enc(req.testId)}`);
+    return this.req<unknown>("POST", `/families/${enc(familyId)}/exceptions`, { testId: req.testId, groupId: req.groupId, fields: req.fields ?? {}, reason: req.reason });
+  }
   getTriage(projectId: string, modelSetId: string, testId?: string) {
-    return this.get<T.TriagePayload>(`/triage/${enc(projectId)}/${enc(modelSetId)}`, { test: testId });
+    return this.get<T.TriagePayloadWithFamilies>(`/triage/${enc(projectId)}/${enc(modelSetId)}`, { test: testId });
   }
   getTriageChanges(projectId: string, modelSetId: string, testId: string, cursor: string) {
     return this.get<T.TriageChanges>(`/triage/${enc(projectId)}/${enc(modelSetId)}/changes`, { test: testId, since: cursor });

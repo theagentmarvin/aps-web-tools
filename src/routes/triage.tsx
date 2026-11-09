@@ -54,14 +54,15 @@ export function TriageWorkspace() {
     store.load(data);
     const g = sp.get("group");
     const c = sp.get("clash");
+    const f = sp.get("family");
     if (c && store.state.clashes.has(c)) {
       const gid = store.state.clashes.get(c)!.groupId;
       if (store.state.query.view === "groups" && gid) store.toggleExpand(gid, true);
-      store.recompute([rowKey("clash", c)]);
-      store.setCursor(rowKey("clash", c));
+      store.reveal(rowKey("clash", c));
     } else if (g && store.state.groups.has(g)) {
-      store.recompute([rowKey("group", g)]);
-      store.setCursor(rowKey("group", g));
+      store.reveal(rowKey("group", g));
+    } else if (f && store.state.families.has(f)) {
+      store.reveal(`f:${f}`);
     }
     // Setting "Aceptar decisiones heredadas automáticamente" (default off in v1).
     if (settings.autoAcceptInherited) actions.acceptInherited();
@@ -90,7 +91,8 @@ export function TriageWorkspace() {
         const url = new URL(window.location.href);
         url.searchParams.delete("group");
         url.searchParams.delete("clash");
-        if (key) url.searchParams.set(key.startsWith("g:") ? "group" : "clash", key.slice(2));
+        url.searchParams.delete("family");
+        if (key && !key.startsWith("n:")) url.searchParams.set(key.startsWith("g:") ? "group" : key.startsWith("f:") ? "family" : "clash", key.slice(2));
         if (url.href !== window.location.href) window.history.replaceState(window.history.state, "", url);
       }, 400);
     });
@@ -266,6 +268,9 @@ function ListArea({ onClear, onSend, readyCount }: { onClear: () => void; onSend
   const { store } = useTriageContext();
   const rows = useTriage(store, (s) => s.rows.length);
   const query = useTriage(store, (s) => s.query);
+  const familiesMode = useTriage(store, (s) => s.query.view === "families" && s.families.size > 0 && !s.manual);
+  const familyCount = useTriage(store, (s) => [...s.nodes.values()].reduce((n, x) => n + (x.depth === 0 ? x.familyIds.length : 0), 0));
+  const instanceCount = useTriage(store, (s) => [...s.nodes.values()].reduce((n, x) => n + (x.depth === 0 ? x.instanceCount : 0), 0));
   const manual = useTriage(store, (s) => s.manual);
   const progress = useProgress();
   if (rows === 0) {
@@ -287,7 +292,7 @@ function ListArea({ onClear, onSend, readyCount }: { onClear: () => void; onSend
     <>
       <div className="flex-shrink-0 border-b border-brand-muted/10 px-3 py-1 text-[11px] text-gray-500">
         {manual && <span className="mr-2 text-amber-800">{t("workspace.manualMode")}</span>}
-        {query.view === "groups" ? t("list.groupsCount", { count: rows }) : t("list.clashesCount", { count: rows })}
+        {query.view === "clashes" ? t("list.clashesCount", { count: rows }) : familiesMode ? t("families.listSummary", { families: familyCount, groups: instanceCount }) : t("list.groupsCount", { count: rows })}
       </div>
       <GroupList />
       <SelectionBar />

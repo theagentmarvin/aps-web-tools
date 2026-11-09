@@ -111,6 +111,15 @@ The approver identity is the APS profile in live mode, else `approver.name` from
 | POST H | `/projects/:projectId/notes` | `{text, kind?}` | `ProjectNotes` |
 | GET | `/triage/:projectId/:modelSetId?test` | – | `TriagePayload` |
 | GET | `/triage/:projectId/:modelSetId/changes?test&since` | – | `TriageChanges` |
+| GET | `/tests/:testId/families` | – | `FamiliesPayload` `{testId, families: TriageFamily[], problemTypes}` (also in `TriagePayload.families`) |
+| GET | `/tests/:testId/families/:familyId` | – | `TriageFamily` (instances with inheritance state) |
+| POST H | `/families/:familyId/decision-preview` | `{testId, validity?, action?, issueMode?}` | `FamilyDecisionPreview` (no change) |
+| POST H | `/families/:familyId/decision` | `FamilyDecisionRequest` (`approve` needs `spotChecked` ≥1, ≥3 when > 50 unique; `acknowledgeValidityChanges` when instances change validity; real is never closed) | `TriageFamily` (new decision version) |
+| POST H | `/families/:familyId/exceptions` | `{testId, groupId, fields, reason}` | `TriageFamily` |
+| DELETE H | `/families/:familyId/exceptions/:groupId?testId` | – | `TriageFamily` |
+| POST H | `/families/:familyId/confirm-inherited` | `{testId, groupIds?}` | `TriageFamily` |
+| POST H | `/families/:familyId/detach` | `{testId, groupId}` | `FamiliesPayload` |
+| POST H | `/families/merge` | `{testId, from, into}` | `FamiliesPayload` |
 | GET | `/tests/:testId/groups?pair&priority&validity&level&accStatus&delta&sort&limit&cursor` | – | `Page<ClashGroup>` |
 | GET | `/tests/:testId/groups/:groupId` | – | `GroupDetail` |
 | GET | `/tests/:testId/groups/:groupId/clashes?limit&cursor` | – | `Page<Clash>` |
@@ -181,7 +190,7 @@ If any edit happens after step 2 (exclusions, issue text), the approve call is r
 
 ## MCP server `coord`
 
-There are 29 tools, with names and inputs as in `docs/ai/mcp-tool-contracts.ts`. Outputs are one compact JSON envelope `{ok,data?,error?,truncated?,hint?}` capped at `agent.maxResponseTokens` (6,000 tokens × 4 chars); when the cap is hit, the largest array is cut. Model-derived text is returned as `{untrusted, flagged?}`, sanitised and limited to 120 characters; this covers group labels, element family/type/system, rule rationales and document names. Agent-written text is rejected when it contains URLs outside `issues.urlAllowlist`, emails, @mentions, control characters, or G-/C-/E-/P- ids that do not exist. Every tool call is audited (`tool.call`). No tool can approve. `apply_approved_proposals` takes `{batchId, dryRun=true}` and refuses without a valid HMAC approval.
+There are 32 tools, with names and inputs as in `docs/ai/mcp-tool-contracts.ts`. Outputs are one compact JSON envelope `{ok,data?,error?,truncated?,hint?}` capped at `agent.maxResponseTokens` (6,000 tokens × 4 chars); when the cap is hit, the largest array is cut. Model-derived text is returned as `{untrusted, flagged?}`, sanitised and limited to 120 characters; this covers group labels, element family/type/system, rule rationales and document names. Agent-written text is rejected when it contains URLs outside `issues.urlAllowlist`, emails, @mentions, control characters, or G-/C-/E-/P- ids that do not exist. Every tool call is audited (`tool.call`). No tool can approve. `apply_approved_proposals` takes `{batchId, dryRun=true}` and refuses without a valid HMAC approval.
 
 ### MCP deviations from `docs/ai/mcp-tool-contracts.ts`
 
@@ -194,6 +203,13 @@ There are 29 tools, with names and inputs as in `docs/ai/mcp-tool-contracts.ts`.
 - `ingest_clash_test.counts` also includes `byStatus`.
 - Extra error codes: `not_classified`, `invalid_state`, `conflict`.
 - Extra tools: `list_disciplines` (read; project mappings + per-document resolution with `source`, `share`, `ruleId`, `suggestedToken`) and `propose_discipline_mapping` (level ≥ 1; creates a `discipline_mapping` proposal; a human accepts it in the UI, the agent never changes mappings).
+
+- `propose_rule_change` takes `feedbackIds` OR `evidence` (at least one): `evidence = {kind: "real_data_evaluation", testKey, summary ≤ 1500, metrics: {changedUnique, changedMc, validityBefore, validityAfter, groupsBefore, groupsAfter, needsReviewBefore, needsReviewAfter, unsafeClosures, scenariosPassed, scenariosTotal}}`; `evaluation` also accepts those numeric metrics. `unsafeClosures > 0` (real conflicts closed without human review) is refused at registration. `GET /rule-suggestions` returns `evidence` and `feedbackCount`.
+- New clash fact for rules: `sameOriginFile` (both elements originate in the same file lineage, resolving linked copies; `core/pipeline.ts`).
+
+### Solution families
+
+`docs/domain/solution-families-proposal.md` (signature v6) is implemented in `core/families` (pure, per unique clash) and `server/families.ts`. Every group and clash carries `familyId`, `problemType` and `signature`; a group whose members have more than one signature is split (invariant 8; the dominant part keeps the id). Families are stored with the classification; human decisions live in `.coordinator/projects/<p>/model-sets/<m>/families.json` (versioned, audited) and carry over to later tests. Instances present when a decision was taken are `inherited`; new ones are `inherited_pending` until a human confirms them and are never put in a batch automatically. `POST /batches` turns an approved family into ONE assign (issue `[F-xxxx] …`, description ≤ 1,000 chars with locations by level, chunks of 1,000 clashes) or ONE close; `issueMode: per_instance` gives one assign per instance; a later cycle produces a follow-up `[F-xxxx · ciclo vN]`. Batch items list `validityChanges`. MCP: `list_families`, `get_family`, `propose_family_decision` (proposal only).
 
 ### Document discipline
 

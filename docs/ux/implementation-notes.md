@@ -122,3 +122,32 @@ All JSON. Errors are `{ error: { code, message } }` with a matching status code.
   - A 404 on `…/clash-grid` builds the grid from the triage payload of a cached test (distinct groups per document and per pair).
   - A 404 on `/disciplines` falls back to the code list from `rules/discipline-matrix.yaml`, and the Disciplinas tab becomes read-only with a notice.
   - A 404 on `…/views` falls back to an empty list.
+
+## Solution families in the triage workspace (2026-11-09)
+
+Built against `server/api/contract.ts` (families types by Coder C) and `docs/domain/solution-families-proposal.md` §4–§5.
+
+- **List:** a "Familias | Grupos | Interferencias" toggle, defaulting to Familias (`?view=` is absent for families; old `?view=groups` links still work). When the payload has no `families` (old classification), Familias is disabled with a tooltip and the list falls back to groups.
+- **Tree:** discipline pair (or "Conjunto de modelos" / "No es problema") → problem type → family → instances (today's groups) → clashes. Each level shows its counts. It is virtualised in the same list as before, with `role="tree"`.
+  - j/k move; l / → / Enter expand (or step into the first child); h / ← collapse (or jump to the parent).
+  - The cursor lands on the first family, not on a header row.
+  - `?family=F-…` deep-links; `?group=`/`?clash=` reveal the row inside its family.
+- **Family pane** (`FamilyPanel.tsx`):
+  - Headline "PAR · tipo de problema · host · N instancias en M niveles".
+  - The proposed decision: validity, action, who moves plus consulted, solution options from the problem-type catalogue.
+  - Aprobar familia (A) / Cambiar (E, inline editor) / Rechazar (X).
+  - Blast-radius and spot-check status lines.
+  - Validity-mix line, evidence line (penetration range, size histogram).
+  - Instances list with an "Excepción" toggle per instance (reason required).
+  - Issue preview: one per family with locations by level and a 1000-char counter, or "Dividir en una incidencia por instancia".
+- **Approve dialog** (`FamilyDialogs.tsx`) is mandatory:
+  - It states "Afecta N interferencias en M instancias".
+  - It lists every instance whose validity would change (local check ∪ `decision-preview`); each needs a tick.
+  - It lists real instances that a close/mark-reviewed decision will not touch (real clashes are never closed through a family).
+  - It blocks until the spot-check is met (1 opened instance, 3 when > 50 unique clashes; opening an instance row records it) and every exception has a reason.
+  - On confirm it syncs exceptions (POST / DELETE `/families/:id/exceptions`), posts the decision, then reloads `GET /tests/:testId/families`.
+- **Instance pane:** a "Familia: … (N instancias)" chip in the header jumps to the family row (switching to Familias if needed).
+- **Mock:** `src/lib/api/mock/families.ts` derives families from the generated groups.
+  - The signature leaves validity out, so mixed families appear.
+  - Typical-detail and orientation tags are present; there are model-set and non-issue buckets.
+  - Approve, reject, preview and exceptions are implemented with the same guards as the server.

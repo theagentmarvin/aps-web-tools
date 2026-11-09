@@ -82,13 +82,14 @@ export function ClashViewerPane() {
   const { store } = useTriageContext();
   const payload = useTriage(store, (s) => s.payload);
   const viewer = useTriage(store, (s) => s.viewer);
-  const cursorKey = useTriage(store, (s) => s.cursorKey);
+  // Family / tree-node rows show a representative instance.
+  const cursorKey = useTriage(store, (s) => store.viewKey(s.cursorKey));
   const docs = useMemo(() => payload?.test.documents ?? [], [payload]);
   const docsFilter = useTriage(store, (s) => s.query.docs);
   // Only the models involved in what is on screen: the current clash/group, else the grid
   // cell's pair (?docs=a,b), else the first row. Never the whole model set.
   const wantedUrns = useMemo(() => {
-    const key = cursorKey ?? store.state.rows[0]?.key ?? null;
+    const key = cursorKey ?? store.viewKey(store.state.rows[0]?.key ?? null);
     const { pair } = viewPair(key, docsFilter, store.state.clashes, store.state.clashesByGroup);
     if (!pair) return [];
     const urnOf = new Map(docs.map((d) => [d.documentId, d.urn]));
@@ -168,8 +169,8 @@ export function ClashViewerPane() {
         setClashMarkers(specs, (clashId) => {
           const c = store.state.clashes.get(clashId);
           if (!c) return;
-          if (store.state.query.view === "groups") store.toggleExpand(c.groupId, true);
-          store.setCursor(rowKey("clash", clashId));
+          if (store.state.query.view !== "clashes") store.toggleExpand(c.groupId, true);
+          store.reveal(rowKey("clash", clashId));
         });
       } else clearClashMarkers();
     }, 150);
@@ -269,7 +270,8 @@ function ViewerPlaceholder({ hasDocs, needsLogin, onLogin }: { hasDocs: boolean;
   const t = useT();
   const { fmt } = useI18n();
   const { store } = useTriageContext();
-  const cursorKey = useTriage(store, (s) => s.cursorKey);
+  // Family / tree-node rows show a representative instance.
+  const cursorKey = useTriage(store, (s) => store.viewKey(s.cursorKey));
   const { focus, members } = membersOf(cursorKey, store.state.clashes, store.state.clashesByGroup);
   const c = focus ?? members[0];
   return (
@@ -367,7 +369,8 @@ function ClashLegend() {
   const t = useT();
   const { fmt, lang } = useI18n();
   const { store } = useTriageContext();
-  const cursorKey = useTriage(store, (s) => s.cursorKey);
+  // Family / tree-node rows show a representative instance.
+  const cursorKey = useTriage(store, (s) => store.viewKey(s.cursorKey));
   const disciplines = useTriage(store, (s) => s.disciplines);
   const { focus, members } = membersOf(cursorKey, store.state.clashes, store.state.clashesByGroup);
   const c = focus ?? members[0];

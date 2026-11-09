@@ -8,8 +8,10 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { useI18n, useT } from "~/i18n";
 import { ConfidenceDots, DecisionStateIcon, DeltaBadge, DisciplinePairChip, FlaggedChip, PriorityChip, SpotCheckChip, StatusBadge } from "~/lib/components/badges";
 import { IconChevronDown, IconChevronRight, IconFlag, IconNoCube } from "~/lib/components/icons";
+import type { FamilyGroup } from "~/lib/api/types";
 import { useTriageContext } from "./actions";
-import { useTriage, type Row } from "./store";
+import { FAMILY_H, FamilyRow, InheritanceMark, NODE_H, NodeRow, indent } from "./FamilyRows";
+import { useTriage, type Row, type RowKind } from "./store";
 
 const GROUP_H = 56;
 const NESTED_H = 36;
@@ -25,7 +27,7 @@ export function GroupList() {
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: (i) => (rows[i]?.nested ? NESTED_H : GROUP_H),
+    estimateSize: (i) => (rows[i]?.nested ? NESTED_H : rows[i]?.kind === "node" ? NODE_H : rows[i]?.kind === "family" ? FAMILY_H : GROUP_H),
     overscan: 10,
     getItemKey: (i) => rows[i]?.key ?? i,
   });
@@ -43,10 +45,10 @@ export function GroupList() {
     <div
       id="triage-list"
       ref={parentRef}
-      role="listbox"
+      role={view === "families" ? "tree" : "listbox"}
       tabIndex={0}
       aria-multiselectable="true"
-      aria-label={view === "groups" ? t("a11y.groupList") : t("a11y.clashList")}
+      aria-label={view === "families" ? t("families.treeLabel") : view === "groups" ? t("a11y.groupList") : t("a11y.clashList")}
       aria-activedescendant={cursorKey ? `row-${cursorKey}` : undefined}
       className="min-h-0 flex-1 overflow-y-auto focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand/30"
     >
@@ -56,7 +58,7 @@ export function GroupList() {
           if (!row) return null;
           return (
             <div key={vi.key} style={{ position: "absolute", top: 0, left: 0, right: 0, height: vi.size, transform: `translateY(${vi.start}px)` }}>
-              {row.nested ? <NestedClashRow row={row} /> : row.kind === "group" ? <GroupRow row={row} /> : <FlatClashRow row={row} />}
+              {row.kind === "node" ? <NodeRow row={row} /> : row.kind === "family" ? <FamilyRow row={row} /> : row.nested ? <NestedClashRow row={row} /> : row.kind === "group" ? <GroupRow row={row} /> : <FlatClashRow row={row} />}
             </div>
           );
         })}
@@ -82,7 +84,7 @@ function useRowState(row: Row) {
     const c = row.kind === "clash" ? s.clashes.get(row.id) : s.clashesByGroup.get(row.id)?.[0];
     return !!c && (failed.includes(c.a.documentId) || failed.includes(c.b.documentId));
   });
-  const e = store.evaluate(row.kind, row.id);
+  const e = store.evaluate(row.kind as RowKind, row.id);
   return { store, isCursor, isChecked, anyChecked, e, flagged, noViewer };
 }
 
@@ -122,8 +124,8 @@ const GroupRow = memo(function GroupRow({ row }: { row: Row }) {
   const g = e.s.group;
   const decided = e.d.state !== "pending" && e.d.state !== "inherited";
   return (
-    <div id={`row-${row.key}`} role="option" aria-selected={isChecked} aria-expanded={expanded} className={rowCls(isCursor, isChecked, decided)} onClick={() => store.setCursor(row.key)} onDoubleClick={() => store.toggleExpand(row.id)}>
-      <div className="flex w-7 flex-col items-center justify-center gap-1">
+    <div id={`row-${row.key}`} role={row.depth !== undefined ? "treeitem" : "option"} aria-selected={isChecked} aria-expanded={expanded} className={rowCls(isCursor, isChecked, decided)} style={row.depth !== undefined ? { paddingLeft: indent(row.depth) } : undefined} onClick={() => store.setCursor(row.key)} onDoubleClick={() => store.toggleExpand(row.id)}>
+      <div className="flex w-7 shrink-0 flex-col items-center justify-center gap-1">
         <CheckBox rowKey={row.key} checked={isChecked} visible={anyChecked} />
         <button
           type="button"
@@ -150,11 +152,12 @@ const GroupRow = memo(function GroupRow({ row }: { row: Row }) {
           <span className="ml-auto flex items-center gap-1">
             {noViewer && <IconNoCube size={13} label={t("list.noViewer")} className="text-gray-400" />}
             {flagged && <IconFlag size={13} label={t("detail.agentUpdated")} className="text-amber-700" />}
+            {row.depth !== undefined && <InheritanceMark group={g as FamilyGroup} />}
             <DecisionStateIcon state={e.d.state} />
           </span>
         </div>
         <div className={`truncate text-sm ${g.elementMissing ? "text-gray-400" : ""}`} title={g.title}>
-          {g.title}
+          {row.depth !== undefined && (g as FamilyGroup).hostLevelLabel ? `${(g as FamilyGroup).hostLevelLabel} · ${g.title}` : g.title}
         </div>
       </div>
     </div>
@@ -187,7 +190,7 @@ const NestedClashRow = memo(function NestedClashRow({ row }: { row: Row }) {
   const { store, isCursor, isChecked, anyChecked, e } = useRowState(row);
   const own = useTriage(store, (s) => s.latest.get(row.id));
   return (
-    <div id={`row-${row.key}`} role="option" aria-selected={isChecked} className={`${rowCls(isCursor, isChecked, false)} items-center gap-2 pl-7`} onClick={() => store.setCursor(row.key)}>
+    <div id={`row-${row.key}`} role="option" aria-selected={isChecked} className={`${rowCls(isCursor, isChecked, false)} items-center gap-2 pl-7`} style={row.depth !== undefined ? { paddingLeft: indent(row.depth) + 28 } : undefined} onClick={() => store.setCursor(row.key)}>
       <CheckBox rowKey={row.key} checked={isChecked} visible={anyChecked} />
       <ClashLine row={row} />
       {own && e && <DecisionStateIcon state={e.d.state} />}
