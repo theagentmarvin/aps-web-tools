@@ -256,7 +256,8 @@
     "setValidity": "Validity",
     "merge": "Group",
     "split": "Split from group",
-    "nothingToAccept": "No proposal to accept"
+    "nothingToAccept": "No proposal to accept",
+    "change": "Change"
   },
   "priority": {
     "p1": "P1 Critical",
@@ -369,7 +370,34 @@
     "propsLoading": "Loading properties…",
     "reviewReasons": "Why it needs review",
     "flagged": "Flagged text: the agent included instruction-like content. Read carefully; it is never executed.",
-    "flaggedShort": "Flagged text"
+    "flaggedShort": "Flagged text",
+    "whoMoves": "Who moves",
+    "suggestedAction": "Action",
+    "perField": "Confidence and source per field",
+    "seeReasoning": "See reasoning",
+    "needsReview": "Needs review: {reason}",
+    "penMax": "max penetration {value} mm",
+    "moreElements": "+{count} more",
+    "family": "Family: {name} ({count} instances)",
+    "sections": {
+      "elements": "Element details",
+      "clashes": "Clashes ({count})",
+      "reasoning": "Full reasoning and rules",
+      "changes": "Changes since previous test",
+      "properties": "Properties",
+      "issue": "Issue draft",
+      "history": "History"
+    },
+    "verb": {
+      "hard_one": "{movers} goes through {host}",
+      "hard_other": "{movers} go through {host}",
+      "clearance_one": "{movers} violates the clearance of {host}",
+      "clearance_other": "{movers} violate the clearance of {host}",
+      "duplicate_one": "{movers} duplicates {host}",
+      "duplicate_other": "{movers} duplicate {host}",
+      "workflow_one": "{movers} interferes with {host}",
+      "workflow_other": "{movers} interfere with {host}"
+    }
   },
   "issue": {
     "title": "Title",

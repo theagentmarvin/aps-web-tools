@@ -256,7 +256,8 @@
     "setValidity": "Validez",
     "merge": "Agrupar",
     "split": "Separar del grupo",
-    "nothingToAccept": "No hay propuesta que aceptar"
+    "nothingToAccept": "No hay propuesta que aceptar",
+    "change": "Cambiar"
   },
   "priority": {
     "p1": "P1 Crítica",
@@ -369,7 +370,34 @@
     "propsLoading": "Cargando propiedades…",
     "reviewReasons": "Por qué requiere revisión",
     "flagged": "Texto marcado: el agente incluyó contenido con forma de instrucción. Léelo con cuidado; no se ejecuta.",
-    "flaggedShort": "Texto marcado"
+    "flaggedShort": "Texto marcado",
+    "whoMoves": "Mueve",
+    "suggestedAction": "Acción",
+    "perField": "Confianza y origen por campo",
+    "seeReasoning": "Ver razonamiento",
+    "needsReview": "Requiere revisión: {reason}",
+    "penMax": "penetración máx. {value} mm",
+    "moreElements": "+{count} más",
+    "family": "Familia: {name} ({count} instancias)",
+    "sections": {
+      "elements": "Detalles de elementos",
+      "clashes": "Interferencias ({count})",
+      "reasoning": "Razonamiento completo y reglas",
+      "changes": "Cambios desde la prueba anterior",
+      "properties": "Propiedades",
+      "issue": "Borrador de incidencia",
+      "history": "Historial"
+    },
+    "verb": {
+      "hard_one": "{movers} atraviesa {host}",
+      "hard_other": "{movers} atraviesan {host}",
+      "clearance_one": "{movers} invade la holgura de {host}",
+      "clearance_other": "{movers} invaden la holgura de {host}",
+      "duplicate_one": "{movers} duplica {host}",
+      "duplicate_other": "{movers} duplican {host}",
+      "workflow_one": "{movers} interfiere con {host}",
+      "workflow_other": "{movers} interfieren con {host}"
+    }
   },
   "issue": {
     "title": "Título",
