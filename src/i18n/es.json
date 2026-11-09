@@ -758,7 +758,16 @@
     "noData": "Sin datos",
     "aiValue": "Valor IA",
     "humanValue": "Valor humano",
-    "reason": "Razón"
+    "reason": "Razón",
+    "evidence": {
+      "title": "Evidencia medida en datos reales ({test})",
+      "changed": "Interferencias que cambian",
+      "groups": "Grupos",
+      "needsReview": "Requieren revisión",
+      "unsafe": "Cierres inseguros",
+      "scenarios": "Escenarios de evaluación"
+    },
+    "evidenceOnlyHeader": "Respaldada por evaluación en datos reales · aún sin correcciones de coordinadores"
   },
   "reports": {
     "title": "Reportes",

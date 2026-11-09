@@ -758,7 +758,16 @@
     "noData": "No data",
     "aiValue": "AI value",
     "humanValue": "Human value",
-    "reason": "Reason"
+    "reason": "Reason",
+    "evidence": {
+      "title": "Evidence measured on real data ({test})",
+      "changed": "Clashes that change",
+      "groups": "Groups",
+      "needsReview": "Need review",
+      "unsafe": "Unsafe closures",
+      "scenarios": "Evaluation scenarios"
+    },
+    "evidenceOnlyHeader": "Backed by a real-data evaluation · no coordinator corrections yet"
   },
   "reports": {
     "title": "Reports",

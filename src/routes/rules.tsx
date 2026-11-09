@@ -2,7 +2,7 @@
  * /reglas — rules (read-only), rule-change suggestions, corrections log,
  * calibration (spec §6.3). Query: tab.
  */
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useI18n, useT, type TKey } from "~/i18n";
@@ -116,6 +116,44 @@ export function PatchView({ patch }: { patch: string }) {
   );
 }
 
+/** Before → after numbers measured on a real test, so a rule is never approved blind. */
+function EvidenceTable({ evidence }: { evidence: NonNullable<RuleSuggestion["evidence"]> }) {
+  const t = useT();
+  const { fmt } = useI18n();
+  const m = evidence.metrics;
+  const validities = ["real", "false_positive", "tolerated", "needs_info"] as const;
+  const vKey: Record<(typeof validities)[number], TKey> = { real: "validity.valid", false_positive: "validity.falsePositive", tolerated: "validity.tolerable", needs_info: "validity.needsInfo" };
+  const arrow = (a: number, b: number) => (
+    <>
+      {fmt.number(a)} → <strong className={b < a ? "text-green-700" : b > a ? "text-amber-700" : ""}>{fmt.number(b)}</strong>
+    </>
+  );
+  const rows: Array<[string, ReactNode]> = [
+    [t("rules.evidence.changed"), `${fmt.number(m.changedUnique)} (${fmt.number(m.changedMc)} ACC)`],
+    ...validities
+      .filter((v) => (m.validityBefore[v] ?? 0) !== (m.validityAfter[v] ?? 0))
+      .map((v) => [t(vKey[v]), arrow(m.validityBefore[v] ?? 0, m.validityAfter[v] ?? 0)] as [string, ReactNode]),
+    [t("rules.evidence.groups"), arrow(m.groupsBefore, m.groupsAfter)],
+    [t("rules.evidence.needsReview"), arrow(m.needsReviewBefore, m.needsReviewAfter)],
+    [t("rules.evidence.unsafe"), <strong key="u" className={m.unsafeClosures ? "text-red-700" : "text-green-700"}>{fmt.number(m.unsafeClosures)}</strong>],
+    [t("rules.evidence.scenarios"), `${m.scenariosPassed}/${m.scenariosTotal}`],
+  ];
+  return (
+    <section aria-label={t("rules.evidence.title")} className="rounded border border-brand-muted/20 bg-brand-surface/40 p-3">
+      <h3 className="mb-2 text-xs font-medium text-gray-600">{t("rules.evidence.title", { test: evidence.testKey })}</h3>
+      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs text-gray-700">
+        {rows.map(([k, v]) => (
+          <div key={k} className="contents">
+            <dt className="text-gray-500">{k}</dt>
+            <dd>{v}</dd>
+          </div>
+        ))}
+      </dl>
+      {evidence.summary && <p className="mt-2 whitespace-pre-line text-xs text-gray-600" lang="es">{evidence.summary}</p>}
+    </section>
+  );
+}
+
 function Suggestions() {
   const t = useT();
   const { fmt } = useI18n();
@@ -136,7 +174,11 @@ function Suggestions() {
         <article key={s.id} className={`${cardCls} space-y-3 p-4`}>
           <header className="flex flex-wrap items-start justify-between gap-2">
             <div>
-              <p className="text-xs text-gray-500">{t("rules.suggestionHeader", { count: s.count, reason: s.reasonCode, pair: s.pair })}</p>
+              <p className="text-xs text-gray-500">
+                {s.evidence && !s.feedbackCount
+                  ? t("rules.evidenceOnlyHeader")
+                  : t("rules.suggestionHeader", { count: s.feedbackCount ?? s.count, reason: s.reasonCode, pair: s.pair })}
+              </p>
               <h2 className="font-medium text-gray-900">{s.title}</h2>
             </div>
             <span className="font-mono text-xs text-gray-400">
@@ -146,6 +188,7 @@ function Suggestions() {
           <p className="text-sm text-gray-700" lang="es">
             {s.summary}
           </p>
+          {s.evidence && <EvidenceTable evidence={s.evidence} />}
           <div>
             <h3 className="mb-1 text-xs text-gray-500">{t("rules.proposedChange")}</h3>
             <PatchView patch={s.patch} />
