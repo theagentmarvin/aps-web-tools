@@ -127,6 +127,7 @@ const GroupRow = memo(function GroupRow({ row }: { row: Row }) {
     const fid = s.familyOf.get(row.id);
     return !!fid && !!s.familyExceptions.get(fid)?.has(row.id);
   });
+  const question = useTriage(store, (s) => (s.openQuestionByGroup.has(row.id) ? s.questions.get(s.openQuestionByGroup.get(row.id)!) : undefined));
   if (!e?.s.group) return null;
   const g = e.s.group;
   const decided = e.d.state !== "pending" && e.d.state !== "inherited";
@@ -166,7 +167,7 @@ const GroupRow = memo(function GroupRow({ row }: { row: Row }) {
           <ChangeChip change={groupChange(g)} />
           <GroupCount groupId={g.id} total={g.clashIds.length} unique={(g as FamilyGroup).uniqueClashCount} />
           <span className="ml-auto flex items-center">
-            <RowStateIcon state={e.d.state} acc={(g as FamilyGroup).acc} inheritance={(g as FamilyGroup).inheritance} pendingException={pendingException} />
+            <RowStateIcon state={e.d.state} acc={g.acc} inheritance={g.inheritance} pendingException={pendingException} question={question} inherited={g.inherited} />
           </span>
         </div>
         <div className={`truncate text-sm ${g.elementMissing ? "text-gray-400" : ""}`}>
@@ -227,7 +228,7 @@ const FlatClashRow = memo(function FlatClashRow({ row }: { row: Row }) {
             {e.s.group?.title}
           </span>
           <ChangeChip change={clashChange(e.s.clash)} />
-          <RowStateIcon state={e.d.state} acc={(e.s.group as FamilyGroup | undefined)?.acc} />
+          <RowStateIcon state={e.d.state} acc={e.s.group?.acc} inherited={e.s.group?.inherited} question={e.s.group ? store.openQuestion(e.s.group.id) : undefined} />
         </div>
         <div className="flex items-center gap-2">
           <ClashLine row={row} />

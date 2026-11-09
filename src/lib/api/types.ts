@@ -213,6 +213,16 @@ import type { ClashGroup as WireGroup, FamilyDecisionFields as WireDecisionField
 /** A group as an instance of its family (the contract carries the optional family, change and ACC fields). */
 export type FamilyGroup = WireGroup;
 export type TriagePayloadWithFamilies = WirePayload;
+
+// M2 (F1 decision memory + X3 coordinator questions): wire types from the server contract.
+export type { CoordinatorQuestion, InheritedDecision, QuestionAnswerRequest } from "../../../server/api/contract";
+export type AgentQuestion = import("../../../server/api/contract").CoordinatorQuestion;
+
+/** Verification reject reasons (M3, F2). Labels in i18n reasons.V01… */
+export const VERIFICATION_REASON_CODES = ["V01", "V02", "V03", "V04", "V05"] as const;
+export type VerificationReasonCode = (typeof VERIFICATION_REASON_CODES)[number];
+
+
 /** A family (grupo), including the M1 changeCounts / acc. */
 export type FamilyView = WireFamily;
 

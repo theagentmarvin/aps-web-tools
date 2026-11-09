@@ -272,8 +272,75 @@ export interface ClashGroup {
   inheritance?: InstanceInheritance;
   /** ACC-decided state of the group's clashes (X1, D8: ACC wins). Absent when ACC has no group for them. */
   acc?: AccState;
-  /** "Qué cambió" vs the previous cached version (M1; M2 switches to the last reviewed version). */
+  /** "Qué cambió" vs the baseline (changeSummary.baseVersion: last version the coordinator reviewed). */
   change?: ChangeKind;
+  /**
+   * M2 F1: a decision taken on an earlier version, inherited because every clash is unchanged
+   * (|Δpenetration| ≤ 10 mm, same element types). Inherited groups count as decided (reviewState
+   * "decided"); a closure is never inherited by a `real` clash.
+   */
+  inherited?: InheritedDecision;
+  /** M2 X3: open coordinator questions about this group. */
+  questionIds?: string[];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M2: decision memory (F1), coordinator questions (X3), capture codes
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface InheritedDecision {
+  fromVersion: number;
+  fromTestKey?: string;
+  /** human = a coordinator decision; family = an approved family decision; acc = ACC assigned/closed (D8). */
+  source: "human" | "family" | "acc";
+  /** human: accept | correct | reject | postpone; family: the family action; acc: assigned | closed. */
+  decision: string;
+  /** Validity the decision set, when it set one. */
+  validity?: Validity;
+  /** What it does in ACC: an issue, a closure, or nothing. */
+  effect: "issue" | "close" | "none";
+  decidedAt: string;
+  decidedBy?: string;
+  /** Decision id, family id + version, or ACC group id. */
+  ref: string;
+  /** true = listed by "Aceptar heredadas" for an explicit confirmation (family instance pending). */
+  needsConfirmation?: boolean;
+}
+
+/** X3: a question the agent asks the coordinator (answered in the UI). */
+export interface CoordinatorQuestion {
+  id: string;
+  testKey: string;
+  version: number;
+  familyId?: string;
+  groupIds: string[];
+  clashIds: string[];
+  /** Spanish, ≤ 300 characters. Agent text: render as text. */
+  question: string;
+  /** ≤ 5 options; the UI shows them as buttons (free text is always allowed). */
+  options?: string[];
+  kind: "validity" | "action" | "other";
+  state: "open" | "answered" | "stale";
+  answer?: string;
+  answeredBy?: string;
+  answeredAt?: string;
+  createdBy: "agent";
+  createdAt: string;
+  /** Decisions created from the answer (validity / action questions). */
+  decisionIds?: string[];
+  /** Why it went stale (clashes changed in a newer version). */
+  staleReason?: string;
+}
+/** POST /questions/:id/answer */
+export interface QuestionAnswerRequest {
+  /** The chosen option or free text (≤ 1000). */
+  answer: string;
+  /** validity questions: the validity the answer means. */
+  validity?: Validity;
+  /** action questions: the action the answer means. */
+  action?: "create_issue" | "close" | "mark_reviewed" | "postpone";
+  /** Required for close / validity changes (R01–R13, V01–V05, R99 + note). */
+  reasonCode?: ReasonCode;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -316,6 +383,13 @@ export interface ChangeSummary {
   groups: ChangeCounts;
   /** Raw clashes per change word. */
   clashes: ChangeCounts;
+  /** M2: the baseline "Qué cambió" compares against. */
+  baseVersion?: number;
+  baseTestKey?: string;
+  /** last_reviewed = newest older version with ≥ 1 human decision or approved batch; previous = fallback. */
+  baseReason?: "last_reviewed" | "previous";
+  /** Groups whose decision is inherited from an earlier version (counted as decided). */
+  inherited?: number;
   /** Raw clashes of the previous version that are resolved (excluding out-of-scope). */
   resolved: number;
   /** Raw clashes that would be resolved but belong to a document with a scope change: never counted as resolved, never proposed. */
@@ -515,12 +589,19 @@ export interface Proposal {
   flagged?: boolean;
   issueDraft?: IssueDraft;
   inherited?: PreviousDecision;
+  /** M2: who proposed it: the deterministic engine or the agent (any agent proposal merged in). */
+  origin?: "engine" | "agent";
 }
 
 export type DecisionKind = "accept" | "correct" | "reject" | "postpone" | "note" | "undo";
 export type DecisionField = "validity" | "priority" | "owner" | "action" | "group" | "issueDraft";
 export interface DecisionChange { field: DecisionField; aiValue: unknown; humanValue: unknown; aiConfidence?: number; aiSource?: string; ruleIds?: string[] }
-export const REASON_CODES = ["R01", "R02", "R03", "R04", "R05", "R06", "R07", "R08", "R09", "R10", "R11", "R12", "R13", "R99"] as const;
+/**
+ * R01–R13 / R99: triage reasons. V01–V05 (M2 capture, verification of resolved issues):
+ * V01 problem moved · V02 model too old · V03 fix not approved by the responsible party ·
+ * V04 deletion accepted as fix · V05 partial fix enough.
+ */
+export const REASON_CODES = ["R01", "R02", "R03", "R04", "R05", "R06", "R07", "R08", "R09", "R10", "R11", "R12", "R13", "R99", "V01", "V02", "V03", "V04", "V05"] as const;
 export type ReasonCode = (typeof REASON_CODES)[number];
 
 /** POST /api/coord/triage/decisions — idempotent by `id`. `userId`/`userName` are overwritten by the server with the session user. */
@@ -565,6 +646,8 @@ export interface TriagePayload {
   scopeChanges?: ScopeChange[];
   /** "Qué cambió" summary. Always sent by the server. */
   changeSummary?: ChangeSummary;
+  /** M2 X3: questions for this test (open ones carried from older versions included). */
+  questions?: CoordinatorQuestion[];
 }
 export interface TriageChanges { cursor: string; proposals: Proposal[] }
 

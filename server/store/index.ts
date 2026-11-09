@@ -23,6 +23,7 @@
  * Every mutation runs under {@link Store.withLock}; every file write is atomic.
  */
 import { createHmac } from "node:crypto";
+import { stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { appendJsonl, listFiles, readJsonFile, readJsonl, readTextFile, withFileLock, writeFileAtomic, writeJsonAtomic } from "./fs";
 import { assertBatchTransition, assertProposalTransition } from "./state-machine";
@@ -166,8 +167,39 @@ export class Store {
     await this.withLock(() => writeJsonAtomic(this.path("tests", safe(rec.testKey, "testKey"), "classification.json"), rec));
   }
 
+  /**
+   * Classifications are large (MBs on real data) and read many times per request: an in-process
+   * cache validated by mtime + size (writes from other processes are seen). Treat the returned
+   * record as read-only.
+   */
   async getClassification(testKey: string): Promise<ClassificationRecord | undefined> {
-    return readJsonFile<ClassificationRecord>(this.path("tests", safe(testKey, "testKey"), "classification.json"));
+    const file = this.path("tests", safe(testKey, "testKey"), "classification.json");
+    const st = await stat(file).catch(() => undefined);
+    if (!st) return undefined;
+    const sig = `${st.mtimeMs}|${st.size}`;
+    const hit = this.clsCache.get(file);
+    if (hit && hit.sig === sig) return hit.value;
+    const value = await readJsonFile<ClassificationRecord>(file);
+    if (value) {
+      this.clsCache.set(file, { sig, value });
+      if (this.clsCache.size > 6) this.clsCache.delete(this.clsCache.keys().next().value!);
+    }
+    return value;
+  }
+  private readonly clsCache = new Map<string, { sig: string; value: ClassificationRecord }>();
+
+  /** Cheap existence check (no parse). */
+  async hasClassification(testKey: string): Promise<boolean> {
+    return !!(await stat(this.path("tests", safe(testKey, "testKey"), "classification.json")).catch(() => undefined));
+  }
+
+  /** mtime+size signature of store paths (memoization keys; missing paths give "-"). */
+  async signature(paths: ReadonlyArray<readonly string[]>): Promise<string> {
+    const parts = await Promise.all(paths.map(async (p) => {
+      const st = await stat(this.path(...p)).catch(() => undefined);
+      return st ? `${st.mtimeMs}:${st.size}` : "-";
+    }));
+    return parts.join("|");
   }
 
   // ── proposals ────────────────────────────────────────────────────────────

@@ -14,9 +14,14 @@ import { assertCode, modelLevelDiscipline, outCode, ruleMatches, SIN, suggestedT
 import { sanitizeModelText } from "./sanitize";
 import { PROBLEM_TYPES } from "../core/families";
 import { aggregateAcc, emptyCounts, itemChange, mergeAcc, type AccIndex } from "./cycle";
+import { questionView, type StoredQuestion } from "./questions";
+import { markFrozen } from "./api/frozen";
 import type { ClashDiff } from "../core/types";
 
 interface CycleCtx {
+  baseReason: "last_reviewed" | "previous";
+  inherited: Map<string, C.InheritedDecision>;
+  questions: StoredQuestion[];
   acc: AccIndex;
   resolvedByGroup: ReadonlyMap<string, number>;
   sync?: C.AccSyncSummary;
@@ -88,8 +93,25 @@ export class CoordinatorUi {
   // ── session ──────────────────────────────────────────────────────────────
 
   /** The human using the web UI / CLI: APS profile, else configured approver name. */
+  // ── short-lived caches (performance: ACC / APS reads on every page load) ──
+
+  private readonly ttlCache = new Map<string, { at: number; value: unknown }>();
+  private async ttl<T>(key: string, ms: number, fn: () => Promise<T>): Promise<T> {
+    const hit = this.ttlCache.get(key);
+    if (hit && Date.now() - hit.at < ms) return hit.value as T;
+    const value = await fn();
+    this.ttlCache.set(key, { at: Date.now(), value });
+    return value;
+  }
+  /** Drop cached session / ACC reads (login, logout). */
+  invalidateCaches(): void {
+    this.ttlCache.clear();
+    this.triageMemo.clear();
+  }
+
   async currentUser(): Promise<HumanUser | undefined> {
-    const u = await this.core.source.currentUser().catch(() => undefined);
+    const st = await this.core.source.authStatus().catch(() => undefined);
+    const u = await this.ttl(`user:${st?.loggedIn ? "in" : "out"}:${st?.expiresAt ?? ""}`, 60_000, () => this.core.source.currentUser().catch(() => undefined));
     if (u) return { id: u.id, name: u.name };
     const name = this.core.config.approver.name;
     return name ? { id: `local:${name}`, name } : undefined;
@@ -172,7 +194,7 @@ export class CoordinatorUi {
 
   /** One project: summarise only that one (was: every project in every hub). */
   async project(projectId: string): Promise<C.ProjectSummary> {
-    const p = await this.core.source.getProject(projectId).catch(() => undefined);
+    const p = await this.ttl(`project:${projectId}`, 60_000, () => this.core.source.getProject(projectId).catch(() => undefined));
     if (!p) throw new CoordError("not_found", `Proyecto ${projectId} no existe`);
     return this.summarize(p, await this.store.listTests());
   }
@@ -185,7 +207,7 @@ export class CoordinatorUi {
   }
 
   async modelSets(projectId: string): Promise<C.ModelSetSummary[]> {
-    const sets = await this.core.source.listModelSets(withB(projectId));
+    const sets = await this.ttl(`modelSets:${projectId}`, 60_000, () => this.core.source.listModelSets(withB(projectId)));
     const tests = await this.store.listTests();
     const batches = await this.store.listBatches();
     const out: C.ModelSetSummary[] = [];
@@ -229,11 +251,11 @@ export class CoordinatorUi {
   }
 
   async tests(projectId: string, modelSetId: string): Promise<C.TestRun[]> {
-    const remote = await this.core.source.listClashTests(withB(projectId), modelSetId).catch(() => []);
+    const remote = await this.ttl(`tests:${projectId}:${modelSetId}`, 30_000, () => this.core.source.listClashTests(withB(projectId), modelSetId).catch(() => []));
     const cached = (await this.store.listTests()).filter((t) => t.modelSetId === modelSetId);
     const out: C.TestRun[] = [];
     for (const t of cached) {
-      const classified = !!(await this.store.getClassification(t.testKey));
+      const classified = await this.store.hasClassification(t.testKey);
       const diff = t.previousTestKey ? await this.core.diffForTest(t).catch(() => undefined) : undefined;
       out.push({
         ...this.testRun(t, classified),
@@ -332,7 +354,17 @@ export class CoordinatorUi {
         const c = this.cycles.get(test.testKey);
         if (!c) return {};
         const acc = aggregateAcc(g.clashIds, c.acc, c.resolvedByGroup);
-        return { ...(acc ? { acc } : {}), change: itemChange(g.clashIds, c.changes) };
+        const inh = c.inherited.get(g.id);
+        const clashSet = new Set(g.clashIds);
+        const qs = c.questions.filter((q) => q.state === "open" && (q.groupIds.includes(g.id) || q.clashIds.some((x) => clashSet.has(x)))).map((q) => q.id);
+        return {
+          ...(acc ? { acc } : {}),
+          change: itemChange(g.clashIds, c.changes),
+          ...(inh ? { inherited: inh } : {}),
+          // F1: an inherited decision counts as decided ("Pendiente" filter) unless it needs a confirmation.
+          ...(inh && !inh.needsConfirmation && state !== "decided" ? { reviewState: "decided" as const } : {}),
+          ...(qs.length ? { questionIds: qs } : {}),
+        };
       })(),
       ...(g.familyId ? { familyId: g.familyId, problemType: g.problemType as C.ProblemTypeCode, signature: g.signature ?? "", uniqueClashCount: g.uniqueClashCount ?? g.clashIds.length } : {}),
       ...(g.hostLevelLabel ? { hostLevelLabel: g.hostLevelLabel } : {}),
@@ -439,6 +471,13 @@ export class CoordinatorUi {
       spotCheck: spotCheck(id + g.id, validity.confidence, this.bands.high),
       ...(agent.some((p) => p.flaggedText) ? { flagged: true } : {}),
       ...(issueDraft ? { issueDraft } : {}),
+      origin: agent.length ? "agent" : "engine",
+      ...((): Partial<C.Proposal> => {
+        const inh = this.cycles.get(test.testKey)?.inherited.get(g.id);
+        if (!inh) return {};
+        const kind: C.DecisionKind = inh.decision === "correct" || inh.decision === "reject" || inh.decision === "postpone" ? inh.decision : "accept";
+        return { inherited: { testId: inh.fromTestKey ?? "", decidedAt: inh.decidedAt, userName: inh.decidedBy ?? (inh.source === "acc" ? "ACC" : inh.source === "family" ? "familia" : ""), kind } };
+      })(),
     };
   }
 
@@ -461,10 +500,21 @@ export class CoordinatorUi {
   private async cycleCtx(test: TestRecord, cls: ClassificationRecord): Promise<CycleCtx> {
     const acc = await this.core.accFor(test, cls.clashes.map((c) => c.id));
     const ch = await this.core.changesFor(test, cls);
-    const ctx: CycleCtx = { acc: acc.index, resolvedByGroup: acc.resolvedByGroup, ...(acc.sync ? { sync: acc.sync } : {}), changes: ch.byClash, ...(ch.diff ? { diff: ch.diff } : {}), ...(ch.previous ? { previous: ch.previous } : {}) };
+    const ctx: CycleCtx = {
+      acc: acc.index,
+      resolvedByGroup: acc.resolvedByGroup,
+      ...(acc.sync ? { sync: acc.sync } : {}),
+      changes: ch.byClash,
+      ...(ch.diff ? { diff: ch.diff } : {}),
+      ...(ch.previous ? { previous: ch.previous } : {}),
+      baseReason: ch.baseReason,
+      inherited: await this.core.inheritanceFor(test, cls, acc),
+      questions: await this.core.questionsFor(test),
+    };
     this.cycles.set(test.testKey, ctx);
     return ctx;
   }
+
   private accOfGroup(testKey: string, clashIds: readonly string[]): C.AccState | undefined {
     const c = this.cycles.get(testKey);
     return c ? aggregateAcc(clashIds, c.acc, c.resolvedByGroup) : undefined;
@@ -479,16 +529,64 @@ export class CoordinatorUi {
     return (c) => !idx?.has(c.id);
   }
 
+  /**
+   * Memoized triage projection. Key: the test plus the mtime/size of everything the payload reads
+   * (classification, test records of the model set, diff, decisions, proposals, batches, questions,
+   * family decisions, ledger incl. ACC sync, disciplines) and a 1-minute bucket for remote reads.
+   * Same key → the same object (the router then reuses its serialized / compressed bytes).
+   */
+  private readonly triageMemo = new Map<string, { sig: string; payload: C.TriagePayload }>();
   async triage(projectId: string, modelSetId: string, testKey?: string): Promise<C.TriagePayload> {
     let key = testKey;
     if (!key) {
       const mine = (await this.store.listTests()).filter((t) => t.modelSetId === modelSetId && bareProjectId(t.projectId) === bareProjectId(projectId)).sort((a, b) => b.modelSetVersion - a.modelSetVersion);
-      for (const t of mine) if (await this.store.getClassification(t.testKey)) { key = t.testKey; break; }
+      for (const t of mine) if (await this.store.hasClassification(t.testKey)) { key = t.testKey; break; }
+    }
+    if (!key) return this.triageUncached(projectId, modelSetId, testKey);
+    const test = await this.store.getTest(key);
+    if (!test) return this.triageUncached(projectId, modelSetId, testKey);
+    const seg = (s: string) => s.replace(/[^A-Za-z0-9._-]/g, "_");
+    const same = (await this.store.listTests()).filter((t) => t.modelSetId === test.modelSetId).map((t) => ["tests", t.testKey] as const);
+    const sig = [
+      await this.store.signature([
+        ["tests"],
+        ...same,
+        ["tests", key, "classification.json"],
+        ["tests", key, "test.json"],
+        ["tests", key, "diff.json"],
+        ["decisions", "decisions.jsonl"],
+        ["proposals"],
+        ["batches"],
+        ["questions.json"],
+        ["ledgers", seg(bareProjectId(test.projectId)), `${seg(test.modelSetId)}.json`],
+        ["projects", seg(bareProjectId(test.projectId)), "model-sets", seg(test.modelSetId), "families.json"],
+        ["projects", seg(bareProjectId(test.projectId)), "disciplines.json"],
+      ]),
+      Math.floor(Date.now() / 60_000),
+    ].join("#");
+    const mk = `${bareProjectId(projectId)}|${modelSetId}|${key}`;
+    const hit = this.triageMemo.get(mk);
+    if (hit && hit.sig === sig) return hit.payload;
+    const payload = markFrozen(await this.triageUncached(projectId, modelSetId, key));
+    this.triageMemo.set(mk, { sig, payload });
+    if (this.triageMemo.size > 8) this.triageMemo.delete(this.triageMemo.keys().next().value!);
+    return payload;
+  }
+
+  private async triageUncached(projectId: string, modelSetId: string, testKey?: string): Promise<C.TriagePayload> {
+    let key = testKey;
+    if (!key) {
+      const mine = (await this.store.listTests()).filter((t) => t.modelSetId === modelSetId && bareProjectId(t.projectId) === bareProjectId(projectId)).sort((a, b) => b.modelSetVersion - a.modelSetVersion);
+      for (const t of mine) if (await this.store.hasClassification(t.testKey)) { key = t.testKey; break; }
       if (!key) throw new CoordError("not_ingested", "No hay pruebas analizadas para este conjunto.", "Pide al agente: ingesta y clasifica la prueba más reciente.");
     }
+    // Remote reads (ACC, cached briefly) run in parallel with the local projection.
+    const remote = Promise.all([this.project(projectId).catch(() => undefined), this.modelSets(projectId).catch(() => []), this.tests(projectId, modelSetId)]);
+    remote.catch(() => undefined);
     const { test, cls, states, byGroup, cycle } = await this.testContext(key);
-    const project = await this.project(projectId).catch(() => ({ id: bareProjectId(projectId), name: test.projectName, hubId: "", hubName: "", modelSetCount: 1, pendingDecisions: 0 }));
-    const modelSet = (await this.modelSets(projectId).catch(() => [])).find((m) => m.id === modelSetId) ?? {
+    const [projectR, setsR, testsR] = await remote;
+    const project = projectR ?? { id: bareProjectId(projectId), name: test.projectName, hubId: "", hubName: "", modelSetCount: 1, pendingDecisions: 0 };
+    const modelSet = setsR.find((m) => m.id === modelSetId) ?? {
       id: modelSetId, projectId: bareProjectId(projectId), name: test.modelSetName, latestVersion: test.modelSetVersion, analyzedVersion: test.modelSetVersion,
       groupsReviewed: 0, groupsTotal: cls.groups.length, readyToApprove: 0, agentCommand: `Analiza el conjunto "${test.modelSetName}"`,
     };
@@ -508,8 +606,15 @@ export class CoordinatorUi {
         if (x) g.inheritance = x;
       }
     }
-    const changeSummary: C.ChangeSummary = { groups: emptyCounts(), clashes: emptyCounts(), resolved: (cycle.diff?.counts.resolved ?? 0) + (cycle.diff?.counts.element_deleted ?? 0), outOfScope: cycle.diff?.counts.out_of_scope ?? 0 };
-    if (cycle.previous) Object.assign(changeSummary, { previousVersion: cycle.previous.modelSetVersion, previousTestKey: cycle.previous.testKey });
+    const changeSummary: C.ChangeSummary = {
+      groups: emptyCounts(),
+      clashes: emptyCounts(),
+      resolved: (cycle.diff?.counts.resolved ?? 0) + (cycle.diff?.counts.element_deleted ?? 0),
+      outOfScope: cycle.diff?.counts.out_of_scope ?? 0,
+      baseReason: cycle.baseReason,
+      inherited: cycle.inherited.size,
+    };
+    if (cycle.previous) Object.assign(changeSummary, { previousVersion: cycle.previous.modelSetVersion, previousTestKey: cycle.previous.testKey, baseVersion: cycle.previous.modelSetVersion, baseTestKey: cycle.previous.testKey });
     for (const g of groups) changeSummary.groups[g.change ?? "unchanged"]++;
     for (const k of cycle.changes.values()) changeSummary.clashes[k]++;
     return {
@@ -517,10 +622,11 @@ export class CoordinatorUi {
       ...(cycle.sync ? { accSync: cycle.sync } : {}),
       scopeChanges: await this.core.scopeChangesFor(test),
       changeSummary,
+      questions: cycle.questions.map(questionView),
       project,
       modelSet,
       test: this.testRun(test, true),
-      tests: await this.tests(projectId, modelSetId),
+      tests: testsR,
       disciplines: rs.source.matrix.disciplines.map((d) => ({ code: d.code, es: d.es, en: (d as { en?: string }).en ?? d.es })),
       groups,
       clashes: cls.clashes.map((c) => this.clashUi(c)),
@@ -634,6 +740,20 @@ export class CoordinatorUi {
     }
     const { saved, added } = await this.store.appendDecisions(records);
     const actor: Actor = { type: "user", id: user.id, name: user.name };
+    // F1: the ledger keeps a reference of every human group decision (with the clash geometry).
+    for (const [testId, ctx] of byTest) {
+      const mine = added.filter((d) => d.testId === testId && d.targetType === "group");
+      const items = mine
+        .filter((d) => d.kind === "accept" || d.kind === "correct" || d.kind === "reject" || d.kind === "postpone")
+        .map((d) => {
+          const g = ctx.cls.groups.find((x) => x.id === d.targetId)!;
+          const eff = this.effective(this.proposalView(g, ctx.test, ctx.cls, ctx.byGroup.get(g.id) ?? []), d);
+          const effect: "issue" | "close" | "none" = d.kind === "reject" || d.kind === "postpone" ? "none" : eff.action.createIssue ? "issue" : eff.action.setStatus === "closed" || eff.action.setStatus === "reviewed" ? "close" : "none";
+          return { groupId: g.id, ref: { source: "human" as const, ref: d.id, decision: d.kind, validity: eff.validity, effect, decidedBy: user.name, decidedAt: d.decidedAt } };
+        });
+      const undo = mine.filter((d) => d.kind === "undo" && d.undoes).map((d) => d.undoes!);
+      await this.core.recordDecisionRefs(ctx.test, ctx.cls, items, undo);
+    }
     for (const d of added) {
       const ctx = byTest.get(d.testId)!;
       const action = d.kind === "accept" ? "decision.accepted" : d.kind === "correct" ? "decision.corrected" : d.kind === "reject" ? "decision.rejected" : d.kind === "postpone" ? "decision.postponed" : d.kind === "undo" ? "decision.undone" : "decision.note";
@@ -1749,6 +1869,19 @@ export class CoordinatorUi {
         details: { validity: fields.validity, action: fields.action, issueMode: fields.issueMode, instances: covered.length, validityChanges: changes.length, spotChecked: spot.length },
       },
     );
+    {
+      // F1: family decision references on the covered instances' clashes (reject removes them).
+      const { cls } = await this.core.requireClassified(test.testKey);
+      const prevRefs = (v.decision ? Array.from({ length: v.decision.version }, (_, i) => `${v.id}@v${i + 1}`) : []);
+      const version = (v.decision?.version ?? 0) + 1;
+      const effect: "issue" | "close" | "none" = fields.action === "create_issue" || fields.action === "hygiene_issue" ? "issue" : fields.action === "close" || fields.action === "mark_reviewed" ? "close" : "none";
+      await this.core.recordDecisionRefs(
+        test,
+        cls,
+        req.decision === "approve" ? covered.map((groupId) => ({ groupId, ref: { source: "family" as const, ref: `${v.id}@v${version}`, decision: fields.action, validity: fields.validity, effect, decidedBy: user.name, decidedAt: now } })) : [],
+        prevRefs,
+      );
+    }
     if (prop && PENDING.has(prop.state)) {
       if (req.decision === "approve") {
         await this.store.transitionProposal(prop.id, "approved", user.name);
@@ -1840,6 +1973,65 @@ export class CoordinatorUi {
       st.aliases[from.id] = into.id;
     }, { action: "family.merged", testKey: test.testKey, targetIds: [from.id, into.id] });
     return this.families(test.testKey);
+  }
+
+  // ── X3 questions ─────────────────────────────────────────────────────────
+
+  async questionsOf(testKey: string): Promise<C.CoordinatorQuestion[]> {
+    const { test } = await this.core.loadTest(testKey);
+    return (await this.core.questionsFor(test)).map(questionView);
+  }
+
+  /**
+   * Human answer (POST /questions/:id/answer). validity / action answers become human decisions on
+   * the question's groups (same path as the triage decisions: audit, learning loop, ledger refs);
+   * "other" answers are stored for the next agent run (list_questions).
+   */
+  async answerQuestion(id: string, body: C.QuestionAnswerRequest, user: HumanUser): Promise<C.CoordinatorQuestion> {
+    const q = await this.core.questions.get(id);
+    if (!q) throw new CoordError("not_found", `Pregunta ${id} no existe`);
+    if (q.state !== "open") throw new CoordError("invalid_state", `La pregunta ${id} está ${q.state === "stale" ? "obsoleta (sus interferencias cambiaron)" : "respondida"}.`);
+    const answer = sanitizeModelText(body.answer, 1000).trim();
+    if (!answer) throw new CoordError("validation_error", "La respuesta está vacía.");
+    if (q.kind === "validity" && !body.validity) throw new CoordError("validation_error", "Una pregunta de validez requiere \"validity\".");
+    if (q.kind === "action" && !body.action) throw new CoordError("validation_error", "Una pregunta de acción requiere \"action\".");
+    const decisionIds: string[] = [];
+    if (q.kind !== "other") {
+      const { test, cls, byGroup } = await this.testContext(q.testKey);
+      const now = nowIso(this.core.now());
+      const decisions: C.Decision[] = [];
+      for (const gid of q.groupIds) {
+        const g = cls.groups.find((x) => x.id === gid);
+        if (!g) continue;
+        const view = this.proposalView(g, test, cls, byGroup.get(g.id) ?? []);
+        const base = { proposalId: view.id, targetType: "group" as const, targetId: g.id, testId: test.testKey, modelSetId: test.modelSetId, projectId: bareProjectId(test.projectId), viewedInViewerMs: 0, decidedAt: now, userId: user.id, userName: user.name };
+        const did = `d-${q.id}-${g.id}`;
+        const note = `Respuesta a ${q.id}: ${answer}`.slice(0, 1000);
+        if (q.kind === "validity") {
+          const same = body.validity === view.fields.validity.value;
+          decisions.push({ ...base, id: did, kind: same ? "accept" : "correct", changes: same ? [] : [{ field: "validity", aiValue: view.fields.validity.value, humanValue: body.validity }], ...(same ? {} : { reasonCode: body.reasonCode ?? "R99", note }) });
+        } else if (body.action === "postpone") {
+          decisions.push({ ...base, id: did, kind: "postpone", changes: [], note });
+        } else {
+          const want: C.ProposedAction = body.action === "create_issue" ? { createIssue: true, setStatus: null } : { createIssue: false, setStatus: body.action === "close" ? "closed" : "reviewed" };
+          const cur = view.fields.action.value;
+          const same = cur.createIssue === want.createIssue && cur.setStatus === want.setStatus;
+          if (!same && want.setStatus === "closed" && !body.reasonCode) throw new CoordError("validation_error", "Cerrar requiere reasonCode.");
+          decisions.push({ ...base, id: did, kind: same ? "accept" : "correct", changes: same ? [] : [{ field: "action", aiValue: cur, humanValue: want }], ...(same ? {} : { reasonCode: body.reasonCode ?? "R99", note }) });
+        }
+      }
+      const r = await this.saveDecisions(decisions, user);
+      decisionIds.push(...r.saved);
+    }
+    const updated = await this.core.questions.update(id, (x) => {
+      x.state = "answered";
+      x.answer = answer;
+      x.answeredBy = user.name;
+      x.answeredAt = nowIso(this.core.now());
+      if (decisionIds.length) x.decisionIds = decisionIds;
+    });
+    await this.store.audit({ actor: { type: "user", id: user.id, name: user.name }, action: "question.answered", projectId: q.projectId, modelSetId: q.modelSetId, testId: q.testKey, targetIds: [q.id, ...decisionIds.slice(0, 10)], details: { kind: q.kind, decisions: decisionIds.length, validity: body.validity ?? null, action: body.action ?? null } });
+    return questionView(updated);
   }
 
   /** Assign body for a set of clashes (shared by family issue items). */

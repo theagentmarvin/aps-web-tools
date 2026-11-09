@@ -34,6 +34,29 @@ export interface LedgerEntry {
   previousIds?: string[];
   /** ACC-decided state (X1, D8: ACC wins), as last read from ACC. */
   acc?: LedgerAccState;
+  /**
+   * F1 decision memory: the last HUMAN or FAMILY decision that covered this clash, with the
+   * clash's geometry at that moment (inheritance needs it unchanged). Rule verdicts are never
+   * stored: they are recomputed on every run.
+   */
+  decision?: LedgerDecisionRef;
+}
+
+export interface LedgerDecisionRef {
+  source: "human" | "family";
+  /** Decision id, or `<familyId>@v<n>`. */
+  ref: string;
+  /** accept | correct | reject | postpone (human) or the family action. */
+  decision: string;
+  validity?: string;
+  effect: "issue" | "close" | "none";
+  decidedAtVersion: number;
+  testKey: string;
+  decidedBy?: string;
+  decidedAt: string;
+  /** Geometry when decided: inherit only while |Δ| ≤ 10 mm and the element types are the same. */
+  penetrationMm: number;
+  elementTypes: string;
 }
 
 export interface LedgerAccState {
@@ -131,6 +154,7 @@ export function updateLedger(ledger: ClashLedger, current: LedgerVersion, diff?:
   const l = clone(ledger);
   // ACC state is per clash id, not per version: keep it across a re-record (X1).
   const accById = new Map(Object.values(l.entries).filter((e) => e.acc).map((e) => [e.id, e.acc!]));
+  const decisionById = new Map(Object.values(l.entries).filter((e) => e.decision).map((e) => [e.id, e.decision!]));
   stripVersion(l, current.version);
   const v = current.version;
   const idx = diff ? diffStateIndex(diff) : undefined;
@@ -147,6 +171,8 @@ export function updateLedger(ledger: ClashLedger, current: LedgerVersion, diff?:
         seenIn: [],
         states: [],
         ...(prev ? { previousIds: [...(prev.previousIds ?? []), prev.id] } : {}),
+        // F1: a clash matched by element pair under a new MC id keeps its decision reference.
+        ...(prev?.decision ? { decision: prev.decision } : {}),
       };
       l.entries[c.id] = e;
     }
@@ -168,6 +194,10 @@ export function updateLedger(ledger: ClashLedger, current: LedgerVersion, diff?:
   for (const [id, acc] of accById) {
     const e = l.entries[id];
     if (e && !e.acc) e.acc = acc;
+  }
+  for (const [id, d] of decisionById) {
+    const e = l.entries[id];
+    if (e && !e.decision) e.decision = d;
   }
   l.versions = [...l.versions, v].sort((x, y) => x - y);
   return l;
@@ -218,6 +248,27 @@ export function applyAccSnapshot(ledger: ClashLedger, snap: AccSnapshot, current
     ...(l.accSync ?? {}),
     [String(snap.version)]: { at: snap.at, assignedGroups: snap.groups.filter((g) => g.kind === "assigned").length, closedGroups: snap.groups.filter((g) => g.kind === "closed").length, issues: issues.size },
   };
+  return l;
+}
+
+/**
+ * F1: record a decision reference on the given clashes (pure). `undo` removes the references
+ * made by that decision. Ids not in the ledger are skipped (record the version first).
+ */
+export function applyDecisionRefs(
+  ledger: ClashLedger,
+  refs: ReadonlyArray<{ clashId: string; ref: LedgerDecisionRef }>,
+  undoRef?: string,
+): ClashLedger {
+  const l = clone(ledger);
+  if (undoRef) for (const e of Object.values(l.entries)) if (e.decision?.ref === undoRef) delete e.decision;
+  for (const { clashId, ref } of refs) {
+    const e = l.entries[clashId];
+    if (!e) continue;
+    // A newer version's decision wins; same version: the latest one.
+    if (e.decision && e.decision.decidedAtVersion > ref.decidedAtVersion) continue;
+    e.decision = ref;
+  }
   return l;
 }
 

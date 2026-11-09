@@ -21,9 +21,11 @@ import { ClashCache, type CacheKey } from "./cache/clash-cache";
 import { loadConfig, MAX_SUPPORTED_LEVEL, type AutonomyLevel, type CoordinatorConfig, type LoadedConfig } from "./config";
 import { CLOSABLE, ENGINE_NAME, ENGINE_VERSION, loadRules, runEngine } from "./engine";
 import { fixtureLedgerSeed, LedgerService, recordAccInLedger } from "./ledger";
-import { accIndexOf, accResolvedByGroup, clashChanges, detectScopeChanges, outOfScopePredicate } from "./cycle";
+import { QuestionStore, type StoredQuestion } from "./questions";
+import { applyDecisionRefs, updateLedger, type LedgerDecisionRef } from "../core/ingest/ledger";
+import { accIndexOf, accResolvedByGroup, CHANGE_PENETRATION_MM, clashChanges, clashDeltas, detectScopeChanges, elementTypesOf, itemDelta, outOfScopePredicate } from "./cycle";
 import type { AccSnapshot } from "../core/ingest/ledger";
-import type { ChangeKind, ScopeChange } from "./api/contract";
+import type { ChangeKind, InheritedDecision, ScopeChange } from "./api/contract";
 import { familyViews, FamilyDecisionStore, type FamilyView } from "./families";
 import { PROBLEM_TYPES } from "../core/families";
 import { assertCode, DisciplineStore, inCode, outCode, suggestedToken, validCodes } from "./disciplines";
@@ -456,7 +458,7 @@ export class Coordinator {
         const raw = await this.loadRaw(existing).catch(() => undefined);
         if (raw) await this.syncAcc(existing, raw.clashes, acc);
       }
-      return { ...this.ingestOutput(existing), durationMs: this.now() - t0, cached: true, timings };
+      return { ...this.ingestOutput(existing), cycle: await this.cycleSummary(existing).catch(() => undefined), durationMs: this.now() - t0, cached: true, timings };
     }
 
     // ── Phase 1: clash resources only.
@@ -516,7 +518,7 @@ export class Coordinator {
       accTestId: input.testId,
       details: { testKey, clashes: rec.counts.clashes, version: rec.modelSetVersion, properties: rec.properties.status, ms: this.now() - t0 },
     });
-    return { ...this.ingestOutput(rec), durationMs: this.now() - t0, cached: false, timings };
+    return { ...this.ingestOutput(rec), cycle: await this.cycleSummary(rec).catch(() => undefined), durationMs: this.now() - t0, cached: false, timings };
   }
 
   private buildTestRecord(
@@ -613,6 +615,7 @@ export class Coordinator {
         scope.affectedPrevDocs.size ? outOfScopePredicate(scope.affectedPrevDocs) : undefined,
       );
       await this.store.withLock(() => writeJsonAtomic(this.store.path("tests", rec.testKey, "diff.json"), { prevTestKey: previous.testKey, diff, scopeChanges: scope.changes }));
+      await this.markStaleQuestions(rec, diff, prevRaw.clashes, clashes).catch((err) => log.warn("questions.stale_failed", { message: (err as Error).message }));
       return { diff, scopeChanges: scope.changes };
     } catch (err) {
       log.warn("ledger.update_failed", { message: (err as Error).message });
@@ -661,17 +664,275 @@ export class Coordinator {
   }
 
   /** "Qué cambió": change word per raw clash vs the previous cached version. */
-  async changesFor(test: TestRecord, cls: ClassificationRecord): Promise<{ byClash: Map<string, ChangeKind>; diff?: ClashDiff; previous?: TestRecord }> {
-    const diff = await this.diffForTest(test);
-    const previous = test.previousTestKey ? await this.store.getTest(test.previousTestKey) : undefined;
+  async changesFor(test: TestRecord, cls: ClassificationRecord): Promise<{ byClash: Map<string, ChangeKind>; deltas: Map<string, { dPen: number; typeChanged: boolean }>; diff?: ClashDiff; previous?: TestRecord; baseReason: "last_reviewed" | "previous" }> {
+    const { base, reason } = await this.baselineFor(test);
+    const previous = base;
+    let diff: ClashDiff | undefined;
+    if (base && base.testKey === test.previousTestKey) diff = await this.diffForTest(test);
+    else if (base) {
+      // Baseline older than the previous version: diff base → test (ledger history, scope guard).
+      const [baseRaw, raw, ledger] = await Promise.all([this.loadRaw(base).catch(() => undefined), this.loadRaw(test).catch(() => undefined), this.ledger.load(test.projectId, test.modelSetId).catch(() => undefined)]);
+      if (baseRaw && raw) {
+        const prelim = diffTestVersions(baseRaw.clashes, raw.clashes);
+        const scope = detectScopeChanges({ viewName: base.viewName, documents: baseRaw.documents, clashes: baseRaw.clashes }, { viewName: test.viewName, documents: raw.documents }, prelim);
+        diff = diffTestVersions(baseRaw.clashes, raw.clashes, {
+          history: ledger ? historyBeforeLedger(ledger, base.modelSetVersion) : [],
+          ...(scope.affectedPrevDocs.size ? { outOfScope: outOfScopePredicate(scope.affectedPrevDocs) } : {}),
+        });
+      }
+    }
     const prevCls = previous ? await this.store.getClassification(previous.testKey) : undefined;
     const prevById = new Map((prevCls?.clashes ?? []).map((c) => [c.id, c]));
     if (diff && !prevCls && previous) {
       const raw = await this.loadRaw(previous).catch(() => undefined);
       for (const c of raw?.clashes ?? []) prevById.set(c.id, { penetrationMm: c.penetrationMm, a: { type: undefined, category: "" }, b: { type: undefined, category: "" } } as unknown as ClashRecord);
     }
-    return { byClash: clashChanges(cls.clashes, diff, prevById), ...(diff ? { diff } : {}), ...(previous ? { previous } : {}) };
+    return { byClash: clashChanges(cls.clashes, diff, prevById), deltas: clashDeltas(cls.clashes, diff, prevById), ...(diff ? { diff } : {}), ...(previous ? { previous } : {}), baseReason: reason };
   }
+
+  /** M2 cycle info for the agent tools: ACC, changes vs the baseline, inheritance, review states. */
+  async cycleInfo(test: TestRecord, cls: ClassificationRecord) {
+    const acc = await this.accFor(test, cls.clashes.map((c) => c.id));
+    const ch = await this.changesFor(test, cls);
+    const inherited = await this.inheritanceFor(test, cls, acc);
+    const states = await this.groupStates(test.testKey, cls);
+    const groupDelta = (g: GroupRecord) => itemDelta(g.clashIds, ch.byClash, ch.deltas);
+    /** Still needs a human: the engine gate says so, nobody decided it here, and nothing is inherited. */
+    const needsHuman = (g: GroupRecord) => states.get(g.id) === "needs_review" && !(inherited.get(g.id) && !inherited.get(g.id)!.needsConfirmation);
+    return { acc, ch, inherited, states, groupDelta, needsHuman };
+  }
+
+  /** M2 summary returned by ingest_clash_test / run_classification (first cycle vs later). */
+  async cycleSummary(test: TestRecord, cls?: ClassificationRecord) {
+    const scopeChanges = await this.scopeChangesFor(test).catch(() => []);
+    if (!cls) {
+      const { base, reason } = await this.baselineFor(test);
+      const sync = (await this.accFor(test, [])).sync;
+      return { baseVersion: base?.modelSetVersion ?? null, baseReason: base ? reason : "first_cycle", scopeChanges, accSync: sync ?? null };
+    }
+    const info = await this.cycleInfo(test, cls);
+    const counts = { new: 0, changed: 0, reappeared: 0, unchanged: 0, inherited: info.inherited.size };
+    for (const g of cls.groups) counts[info.groupDelta(g).state]++;
+    const clashCounts = { new: 0, changed: 0, reappeared: 0, unchanged: 0 };
+    for (const k of info.ch.byClash.values()) clashCounts[k]++;
+    return {
+      baseVersion: info.ch.previous?.modelSetVersion ?? null,
+      baseReason: info.ch.previous ? info.ch.baseReason : "first_cycle",
+      counts,
+      clashCounts,
+      needsReview: cls.groups.filter(info.needsHuman).length,
+      scopeChanges,
+      accSync: info.acc.sync ?? null,
+    };
+  }
+
+  // ── M2: decision memory (F1), coordinator questions (X3) ──────────────────
+
+  /**
+   * F1 inheritance: a group with no decision of its own on this version inherits, in order,
+   * (1) ACC's state when every clash is assigned/closed in ACC (D8), (2) its family's approved
+   * decision from an earlier version (pending instances need confirmation), (3) the human decision
+   * of an earlier version when EVERY clash carries it and is unchanged (|Δpenetration| ≤ 10 mm,
+   * same element types). A closure is never inherited by a `real` group; postponements are not inherited.
+   */
+  async inheritanceFor(test: TestRecord, cls: ClassificationRecord, acc: Awaited<ReturnType<Coordinator["accFor"]>>): Promise<Map<string, InheritedDecision>> {
+    const out = new Map<string, InheritedDecision>();
+    const own = await this.effectiveDecisions(test.testKey);
+    const ledger = await this.ledger.load(test.projectId, test.modelSetId).catch(() => undefined);
+    const versionOf = new Map((await this.store.listTests()).map((t) => [t.testKey, t.modelSetVersion]));
+    const famInst = new Map<string, { inst: FamilyView["instances"][number]; view: FamilyView }>();
+    if (cls.families) {
+      for (const v of familyViews(cls.families, cls.groups, await this.families.load(test.projectId, test.modelSetId))) for (const i of v.instances) famInst.set(i.groupId, { inst: i, view: v });
+    }
+    const clash = new Map(cls.clashes.map((c) => [c.id, c]));
+    for (const g of cls.groups) {
+      if (own.has(g.id)) continue;
+      // 1. ACC
+      const accs = g.clashIds.map((id) => acc.index.get(id));
+      if (accs.length && accs.every((a) => !!a)) {
+        const a = accs[0]!;
+        const allSame = accs.every((x) => x!.status === a.status);
+        out.set(g.id, { fromVersion: a.version, source: "acc", decision: allSame ? a.status : "mixed", effect: allSame && a.status === "closed" ? "close" : "issue", decidedAt: acc.sync?.at ?? "", ref: a.groupId });
+        continue;
+      }
+      // 2. family
+      const f = famInst.get(g.id);
+      const dec = f?.view.decision;
+      if (f && dec && dec.status === "approved" && (f.inst.inheritance.state === "inherited" || f.inst.inheritance.state === "inherited_pending")) {
+        const from = versionOf.get(dec.testKey) ?? test.modelSetVersion;
+        const effect = dec.action === "create_issue" || dec.action === "hygiene_issue" ? "issue" : dec.action === "close" || dec.action === "mark_reviewed" ? "close" : "none";
+        if (from < test.modelSetVersion && !(effect === "close" && g.validity === "real")) {
+          out.set(g.id, { fromVersion: from, fromTestKey: dec.testKey, source: "family", decision: dec.action, validity: dec.validity, effect, decidedAt: dec.decidedAt, decidedBy: dec.decidedBy, ref: `${dec.familyId}@v${dec.version}`, ...(f.inst.inheritance.state === "inherited_pending" ? { needsConfirmation: true } : {}) });
+          continue;
+        }
+      }
+      // 3. human, clash by clash
+      const refs = g.clashIds.map((id) => ledger?.entries[id]?.decision);
+      if (!refs.length || refs.some((r) => !r || r.source !== "human" || r.decidedAtVersion >= test.modelSetVersion || r.decision === "postpone")) continue;
+      const key = (r: NonNullable<(typeof refs)[number]>) => `${r.decision}|${r.validity ?? ""}|${r.effect}`;
+      if (new Set(refs.map((r) => key(r!))).size !== 1) continue;
+      const unchanged = g.clashIds.every((id, i) => {
+        const c = clash.get(id)!;
+        const r = refs[i]!;
+        return Math.abs(c.penetrationMm - r.penetrationMm) <= CHANGE_PENETRATION_MM && elementTypesOf(c) === r.elementTypes;
+      });
+      const r = refs.reduce((m, x) => (x!.decidedAt > m!.decidedAt ? x : m))!;
+      if (!unchanged || (r.effect === "close" && g.validity === "real")) continue;
+      out.set(g.id, { fromVersion: r.decidedAtVersion, fromTestKey: r.testKey, source: "human", decision: r.decision, ...(r.validity ? { validity: r.validity as Validity } : {}), effect: r.effect, decidedAt: r.decidedAt, ...(r.decidedBy ? { decidedBy: r.decidedBy } : {}), ref: r.ref });
+    }
+    return out;
+  }
+
+
+  get questions(): QuestionStore {
+    return (this.questionStore ??= new QuestionStore(this.store));
+  }
+  private questionStore?: QuestionStore;
+
+  /**
+   * The baseline "Qué cambió" compares against: the newest OLDER cached version the coordinator
+   * reviewed (≥ 1 human decision or an approved batch), else the previous cached version.
+   */
+  async baselineFor(test: TestRecord): Promise<{ base?: TestRecord; reason: "last_reviewed" | "previous" }> {
+    const older = (await this.store.listTests())
+      .filter((t) => bareProjectId(t.projectId) === bareProjectId(test.projectId) && t.modelSetId === test.modelSetId && t.modelSetVersion < test.modelSetVersion)
+      .sort((a, b) => b.modelSetVersion - a.modelSetVersion);
+    const decisions = await this.store.listDecisions();
+    const batches = await this.store.listBatches();
+    for (const t of older) {
+      const human = decisions.some((d) => d.testId === t.testKey && (d.kind === "accept" || d.kind === "correct" || d.kind === "reject"));
+      const approved = batches.some((b) => b.testKey === t.testKey && (b.state === "approved" || b.state === "applied" || b.state === "partial"));
+      if (human || approved) return { base: t, reason: "last_reviewed" };
+    }
+    const prev = test.previousTestKey ? await this.store.getTest(test.previousTestKey) : undefined;
+    return prev ? { base: prev, reason: "previous" } : { reason: "previous" };
+  }
+
+  /** F1: record decision references on the clashes of the given groups (human or family). */
+  async recordDecisionRefs(
+    test: TestRecord,
+    cls: ClassificationRecord,
+    items: ReadonlyArray<{ groupId: string; ref: Omit<LedgerDecisionRef, "penetrationMm" | "elementTypes" | "decidedAtVersion" | "testKey"> }>,
+    undoRefs: readonly string[] = [],
+  ): Promise<void> {
+    if (!items.length && !undoRefs.length) return;
+    const raw = await this.loadRaw(test).catch(() => undefined);
+    const byGroup = new Map<string, ClashRecord[]>();
+    for (const c of cls.clashes) byGroup.set(c.groupId, [...(byGroup.get(c.groupId) ?? []), c]);
+    const refs = items.flatMap((it) =>
+      (byGroup.get(it.groupId) ?? []).map((c) => ({
+        clashId: c.id,
+        ref: { ...it.ref, decidedAtVersion: test.modelSetVersion, testKey: test.testKey, penetrationMm: c.penetrationMm, elementTypes: elementTypesOf(c) } as LedgerDecisionRef,
+      })),
+    );
+    try {
+      await this.ledger.withLedger(test.projectId, test.modelSetId, (l) => {
+        let next = l.versions.includes(test.modelSetVersion) || !raw ? l : updateLedger(l, { version: test.modelSetVersion, clashes: raw.clashes });
+        for (const u of undoRefs) next = applyDecisionRefs(next, [], u);
+        return applyDecisionRefs(next, refs);
+      });
+    } catch (err) {
+      log.warn("ledger.decision_refs_failed", { message: (err as Error).message });
+    }
+  }
+
+  /** Questions to show for a test: its own, plus OPEN ones asked on older versions of the model set. */
+  async questionsFor(test: TestRecord): Promise<StoredQuestion[]> {
+    return (await this.questions.forModelSet(test.projectId, test.modelSetId)).filter((q) => q.testKey === test.testKey || (q.state === "open" && q.version < test.modelSetVersion));
+  }
+
+  /** X3: open questions of older versions whose clashes changed in `rec` become stale. */
+  private async markStaleQuestions(rec: TestRecord, diff: ClashDiff, prevClashes: readonly NormalizedClash[], clashes: readonly NormalizedClash[]): Promise<void> {
+    const gone = new Set([...diff.resolved, ...diff.element_deleted, ...diff.out_of_scope]);
+    const prevPen = new Map(prevClashes.map((c) => [c.id, c.penetrationMm]));
+    const renamed = new Map(diff.matchedByPairKey.map((m) => [m.prevId, m.nextId]));
+    const now = new Map(clashes.map((c) => [c.id, c.penetrationMm]));
+    const changed = (id: string): string | undefined => {
+      if (gone.has(id)) return "una interferencia ya no está";
+      const cur = now.get(renamed.get(id) ?? id);
+      if (cur === undefined) return "una interferencia ya no está";
+      const before = prevPen.get(id);
+      if (before !== undefined && Math.abs(before - cur) > 10) return "la penetración cambió más de 10 mm";
+      return undefined;
+    };
+    const stale = new Map<string, string>();
+    for (const q of await this.questions.forModelSet(rec.projectId, rec.modelSetId)) {
+      if (q.state !== "open" || q.version >= rec.modelSetVersion) continue;
+      const why = q.clashIds.map(changed).find((x) => !!x);
+      if (why) stale.set(q.id, why);
+    }
+    if (!stale.size) return;
+    await this.questions.updateMany((q) => stale.has(q.id), (q) => {
+      q.state = "stale";
+      q.staleReason = `v${rec.modelSetVersion}: ${stale.get(q.id)}`;
+    });
+    await this.store.audit({ actor: { type: "server", id: "coordinator", name: "coordinator" }, action: "question.stale", projectId: rec.projectId, modelSetId: rec.modelSetId, testId: rec.testKey, targetIds: [...stale.keys()].slice(0, 20), details: { count: stale.size } });
+  }
+
+  /** MCP ask_coordinator: the agent asks; ids must exist; text validated like other agent text. */
+  async askCoordinator(
+    input: { testKey?: string; familyId?: string; groupIds?: string[]; clashIds?: string[]; question: string; options?: string[]; kind: "validity" | "action" | "other" },
+    caller: CallerContext = { actor: AGENT_ACTOR },
+  ) {
+    this.checkTexts({ question: input.question, ...Object.fromEntries((input.options ?? []).map((o, i) => [`options[${i}]`, o])) });
+    if (input.question.length > 300) throw new CoordError("validation_error", "La pregunta tiene más de 300 caracteres.");
+    if ((input.options?.length ?? 0) > 5) throw new CoordError("validation_error", "Máximo 5 opciones.");
+    const { test, cls } = await this.requireClassified(input.testKey);
+    let groupIds = [...new Set(input.groupIds ?? [])];
+    if (input.familyId) {
+      const v = (await this.familyViewsFor(test.testKey)).views.find((f) => f.id === input.familyId || f.mergedFrom.includes(input.familyId!));
+      if (!v) throw new CoordError("not_found", `Familia ${input.familyId} no existe en ${test.testKey}`);
+      groupIds = [...new Set([...groupIds, ...v.groupIds])];
+    }
+    const gSet = new Set(cls.groups.map((g) => g.id));
+    const badG = groupIds.filter((g) => !gSet.has(g));
+    if (badG.length) throw new CoordError("not_found", `Grupos inexistentes: ${badG.slice(0, 5).join(", ")}`);
+    const cSet = new Set(cls.clashes.map((c) => c.id));
+    const clashIds = [...new Set((input.clashIds ?? []).map((c) => c.replace(/^C-/, "")))];
+    const badC = clashIds.filter((c) => !cSet.has(c));
+    if (badC.length) throw new CoordError("not_found", `Interferencias inexistentes: ${badC.slice(0, 5).join(", ")}`);
+    if (!groupIds.length && !clashIds.length) throw new CoordError("validation_error", "Indica familyId, groupIds o clashIds.");
+    for (const c of clashIds) {
+      const g = cls.clashes.find((x) => x.id === c)!.groupId;
+      if (!groupIds.includes(g)) groupIds.push(g);
+    }
+    const allClashes = clashIds.length ? clashIds : cls.clashes.filter((c) => groupIds.includes(c.groupId)).map((c) => c.id);
+    const q = await this.questions.create({
+      projectId: test.projectId,
+      modelSetId: test.modelSetId,
+      testKey: test.testKey,
+      version: test.modelSetVersion,
+      ...(input.familyId ? { familyId: input.familyId } : {}),
+      groupIds,
+      clashIds: allClashes,
+      question: input.question.trim(),
+      ...(input.options?.length ? { options: input.options.map((o) => o.trim()).filter(Boolean) } : {}),
+      kind: input.kind,
+      state: "open",
+      createdBy: "agent",
+      createdAt: nowIso(this.now()),
+    });
+    await this.store.audit({ actor: caller.actor, action: "question.asked", projectId: test.projectId, modelSetId: test.modelSetId, testId: test.testKey, targetIds: [q.id, ...groupIds.slice(0, 10)], details: { kind: q.kind, groups: groupIds.length } });
+    return { questionId: q.id, state: q.state, groups: groupIds.length, clashes: allClashes.length, note: "La respuesta llega por list_questions (el coordinador responde en la UI)." };
+  }
+
+  /** MCP list_questions. Question/answer text is untrusted (written by the agent / a person). */
+  async listQuestions(input: { testKey?: string; state?: Array<"open" | "answered" | "stale">; limit: number; cursor?: string }) {
+    const { test } = await this.loadTest(input.testKey);
+    const all = (await this.questionsFor(test)).concat(
+      (await this.questions.forModelSet(test.projectId, test.modelSetId)).filter((q) => q.testKey !== test.testKey && q.state !== "open" && q.version < test.modelSetVersion),
+    );
+    const rows = all.filter((q) => !input.state?.length || input.state.includes(q.state)).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+    const page = paginate(rows, input.limit, input.cursor);
+    return {
+      testKey: test.testKey,
+      columns: ["questionId", "version", "kind", "state", "question", "options", "answer", "answeredBy", "groupIds", "familyId", "decisionIds"],
+      rows: page.items.map((q) => [q.id, q.version, q.kind, q.state, untrusted(q.question), (q.options ?? []).map((o) => untrusted(o).untrusted), q.answer ? untrusted(q.answer) : null, q.answeredBy ?? null, q.groupIds.slice(0, 20), q.familyId ?? null, q.decisionIds ?? []]),
+      total: page.total,
+      ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+    };
+  }
+
 
   // ── ingest jobs (asynchronous, for the web UI) ─────────────────────────────
 
@@ -871,7 +1132,7 @@ export class Coordinator {
       topRules: out.topRules,
       carriedDecisions: carried,
       ...(batchProposals ? { batchProposals } : {}),
-      ...(input.dryRun || input.rulesetRef ? { persisted: false } : {}),
+      ...(input.dryRun || input.rulesetRef ? { persisted: false } : { cycle: await this.cycleSummary(test, rec).catch(() => undefined) }),
       durationMs: this.now() - t0,
     };
   }
@@ -1110,6 +1371,16 @@ export class Coordinator {
         source: "engine" as const,
       },
       reviewState: this.reviewStateOf(g, props, !!dec),
+      ...(await (async () => {
+        // M2: change vs the last reviewed version, the decision it inherits, and the review gate.
+        const info = await this.cycleInfo(test, cls);
+        const inh = info.inherited.get(g.id);
+        return {
+          humanReview: info.needsHuman(g),
+          delta: info.groupDelta(g),
+          previousDecision: inh ? { source: inh.source, version: inh.fromVersion, validity: inh.validity ?? null, action: inh.decision, effect: inh.effect } : null,
+        };
+      })()),
       reviewReasons: g.reviewReasons,
       evidence,
       history: {
@@ -1345,20 +1616,34 @@ export class Coordinator {
   }
 
   /** MCP list_families: compact rows; titles/signatures are model-derived (untrusted). */
-  async listFamilies(input: { testKey?: string; problemType?: string[]; bucket?: string; state?: string; minInstances?: number; limit: number; cursor?: string }) {
-    const { test, views } = await this.familyViewsFor(input.testKey);
+  async listFamilies(input: { testKey?: string; problemType?: string[]; bucket?: string; state?: string; minInstances?: number; delta?: Array<ChangeKind | "inherited">; needsReview?: boolean; limit: number; cursor?: string }) {
+    const { test, cls, views } = await this.familyViewsFor(input.testKey);
+    const info = await this.cycleInfo(test, cls);
+    const gById = new Map(cls.groups.map((g) => [g.id, g]));
+    const famDelta = (f: FamilyView) => {
+      const set = new Set<string>();
+      for (const id of f.groupIds) {
+        const g = gById.get(id);
+        if (!g) continue;
+        set.add(info.inherited.has(id) ? "inherited" : info.groupDelta(g).state);
+      }
+      return set;
+    };
+    const famNeeds = (f: FamilyView) => f.groupIds.filter((id) => gById.has(id) && info.needsHuman(gById.get(id)!)).length;
     const rows = views.filter(
       (f) =>
         (!input.problemType?.length || input.problemType.includes(f.parts.problemType)) &&
         (!input.bucket || f.bucket === input.bucket) &&
         (!input.state || f.state === input.state) &&
-        f.instanceCount >= (input.minInstances ?? 0),
+        f.instanceCount >= (input.minInstances ?? 0) &&
+        (!input.delta?.length || input.delta.some((d) => famDelta(f).has(d))) &&
+        (input.needsReview === undefined || (famNeeds(f) > 0) === input.needsReview),
     );
     const page = paginate(rows, input.limit, input.cursor);
     return {
       testKey: test.testKey,
       totals: { families: views.length, instances: views.reduce((n, f) => n + f.instanceCount, 0), withReal: views.filter((f) => (f.validityMix.real ?? 0) > 0).length },
-      columns: ["familyId", "problemType", "title", "bucket", "pair", "instances", "uniqueClashes", "levels", "validityMix", "proposedValidity", "proposedAction", "responsible", "state", "tags"],
+      columns: ["familyId", "problemType", "title", "bucket", "pair", "instances", "uniqueClashes", "levels", "validityMix", "proposedValidity", "proposedAction", "responsible", "state", "tags", "delta", "needsReview"],
       rows: page.items.map((f) => [
         f.id,
         f.parts.problemType,
@@ -1374,6 +1659,8 @@ export class Coordinator {
         f.proposed.responsibleDiscipline,
         f.state,
         f.tags,
+        [...famDelta(f)].sort(),
+        famNeeds(f),
       ]),
       total: page.total,
       ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
@@ -1383,10 +1670,23 @@ export class Coordinator {
 
   /** MCP get_family: one family with its instances (capped at 60). */
   async getFamily(input: { testKey?: string; familyId: string }) {
-    const { test, views } = await this.familyViewsFor(input.testKey);
+    const { test, cls, views } = await this.familyViewsFor(input.testKey);
     const f = views.find((x) => x.id === input.familyId || x.mergedFrom.includes(input.familyId));
     if (!f) throw new CoordError("not_found", `Familia ${input.familyId} no existe en ${test.testKey}`, "Usa list_families.");
+    const info = await this.cycleInfo(test, cls);
+    const members = cls.groups.filter((g) => f.groupIds.includes(g.id));
+    const famDelta = itemDelta(members.flatMap((g) => g.clashIds), info.ch.byClash, info.ch.deltas);
+    const versionOf = new Map((await this.store.listTests()).map((t) => [t.testKey, t.modelSetVersion]));
+    const inhs = members.map((g) => info.inherited.get(g.id)).filter((x): x is InheritedDecision => !!x);
+    const prevDecision = f.decision && (versionOf.get(f.decision.testKey) ?? test.modelSetVersion) < test.modelSetVersion
+      ? { source: "family" as const, version: versionOf.get(f.decision.testKey)!, validity: f.decision.validity, action: f.decision.action }
+      : inhs.length === members.length && inhs.length && new Set(inhs.map((x) => `${x.source}|${x.decision}|${x.validity}`)).size === 1
+        ? { source: inhs[0]!.source, version: Math.max(...inhs.map((x) => x.fromVersion)), validity: inhs[0]!.validity ?? null, action: inhs[0]!.decision }
+        : null;
     return {
+      humanReview: members.some(info.needsHuman),
+      delta: famDelta,
+      previousDecision: prevDecision,
       testKey: test.testKey,
       familyId: f.id,
       title: untrusted(f.title),
@@ -1403,7 +1703,10 @@ export class Coordinator {
       tags: f.tags,
       evidence: f.evidence,
       validityConflicts: f.validityConflicts.map((v) => ({ ...v, title: untrusted(v.title) })),
-      instances: f.instances.slice(0, 60).map((i) => ({ groupId: i.groupId, title: untrusted(i.title), levels: i.levels, validity: i.validity, band: i.band, uniqueClashes: i.uniqueClashCount, inheritance: i.inheritance.state })),
+      instances: f.instances.slice(0, 60).map((i) => {
+        const g = members.find((x) => x.id === i.groupId);
+        return { groupId: i.groupId, title: untrusted(i.title), levels: i.levels, validity: i.validity, band: i.band, uniqueClashes: i.uniqueClashCount, inheritance: i.inheritance.state, ...(g ? { change: info.groupDelta(g).state, humanReview: info.needsHuman(g), inherited: info.inherited.get(g.id)?.source ?? null } : {}) };
+      }),
       ...(f.instances.length > 60 ? { truncatedInstances: f.instances.length - 60 } : {}),
       note: "Solo lectura. Para sugerir una decisión usa propose_family_decision; un humano la aprueba en la UI.",
     };

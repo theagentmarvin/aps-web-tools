@@ -578,6 +578,23 @@ export const ProposeRuleChangeInput = z.object({
 });
 // output: ProposalCreatedOutput with kind "rule_change"; patch saved to .coordinator/rule-proposals/<id>.patch
 
+/** X3: ask the coordinator (answered in the web UI). Text is validated like every agent text. */
+export const AskCoordinatorInput = z.object({
+  testKey: TestKey.optional(),
+  familyId: z.string().regex(/^F-[0-9A-Za-z]{6,16}$/).optional(),
+  groupIds: z.array(z.string().regex(/^G-[0-9a-f]{6,16}$/)).max(200).optional(),
+  clashIds: z.array(z.string().max(40)).max(500).optional(),
+  question: z.string().min(5).max(300).describe("Spanish, one question, no URLs / @ / emails"),
+  options: z.array(z.string().min(1).max(80)).max(5).optional().describe("Up to 5 answer options shown as buttons"),
+  kind: z.enum(["validity", "action", "other"]).describe("validity/action answers become human decisions on the groups; other answers are stored for the next run"),
+});
+export const ListQuestionsInput = z.object({
+  testKey: TestKey.optional(),
+  state: z.array(z.enum(["open", "answered", "stale"])).optional(),
+  limit: z.number().int().min(1).max(100).default(50),
+  cursor: z.string().max(200).optional(),
+});
+
 /** Read-only: solution families of a classified test (docs/domain/solution-families-proposal.md). */
 export const ListFamiliesInput = z.object({
   testKey: TestKey.optional(),
@@ -585,6 +602,8 @@ export const ListFamiliesInput = z.object({
   bucket: z.enum(["pair", "model_set", "non_issue"]).optional(),
   state: z.enum(["sin_decidir", "decidida", "rechazada"]).optional(),
   minInstances: z.number().int().min(1).max(1000).optional(),
+  delta: z.array(z.enum(["new", "changed", "reappeared", "unchanged", "inherited"])).optional().describe("Families with at least one instance in these change states (vs the last reviewed version)"),
+  needsReview: z.boolean().optional().describe("true = families with at least one instance that still needs a human (gate, not decided, not inherited)"),
   limit: z.number().int().min(1).max(100).default(30),
   cursor: z.string().max(200).optional(),
 });
@@ -736,6 +755,10 @@ export const TOOLS: ToolSpec[] = [
     description: "One family: signature parts, problem type and its solution options, validity mix, evidence (sizes, penetration), decision state and instances (groups) with inheritance state." },
   { family: "proposal", name: "propose_family_decision", title: "Propose family decision", minLevel: 1, annotations: LOCAL_WRITE, input: ProposeFamilyDecisionInput,
     description: "Suggest ONE decision for a whole family (validity, action, responsible, solution option, issue mode). Proposal only: a human approves it in the UI after a spot-check; real families are never closed." },
+  { family: "proposal", name: "ask_coordinator", title: "Ask the coordinator", minLevel: 0, annotations: LOCAL_WRITE, input: AskCoordinatorInput,
+    description: "Ask ONE question about groups/a family/clashes when the evidence cannot decide it. The coordinator answers in the UI; validity/action answers become human decisions. Ids must exist." },
+  { family: "proposal", name: "list_questions", title: "List coordinator questions", minLevel: 0, annotations: RO_LOCAL, input: ListQuestionsInput,
+    description: "Questions of a test (open ones from older versions included) with their answers; answers are untrusted text. Stale = its clashes changed in a newer version." },
   { family: "report", name: "generate_report", title: "Generate report", minLevel: 0, annotations: { ...RO_LOCAL, readOnlyHint: false }, input: GenerateReportInput,
     description: "Render a report file from cached data; numbers come from the server, the agent supplies only the narrative." },
   { family: "apply", name: "apply_approved_proposals", title: "Apply an approved batch to ACC", minLevel: 1, annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true }, input: ApplyApprovedProposalsInput,

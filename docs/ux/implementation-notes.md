@@ -194,9 +194,28 @@ Plan: `docs/PLAN-core-features-simplified.md` (approved). Contract: `ClashGroup.
 
 | Row | Chip 1 | Chip 2 | Chip 3 (one status chip, by precedence) | State icon (one, by precedence) |
 |---|---|---|---|---|
-| Ubicación | Priority | Discipline pair | Reapareció > Cambió > Nuevo | Your decision in this version (✓ ✎ ✕ ⏸) > ACC: closed ⊘ / assigned or mixed (issue icon; tooltip with issue ids, "siguen" / "resueltas") > exception ⚑ > inherited ↺ / ◌ > pending ○ |
+| Ubicación | Priority | Discipline pair | Reapareció > Cambió > Nuevo | Your decision in this version (✓ ✎ ✕ ⏸) > open agent question **?** (M2) > ACC: closed ⊘ / assigned or mixed (issue icon; tooltip with issue ids, "siguen" / "resueltas") > exception ⚑ > inherited ↺ (tooltip "Heredada de v10 · decidida por ti / por el grupo / en ACC") / ◌ > pending ○ |
 | Grupo | Worst priority | Validity | Reapareció > Cambió > Nuevo > validez mixta > orientación por confirmar > Típico | Decided ✓ > ACC (aggregated) |
 | Interferencia (flat) | Priority | — | Reapareció > Cambió > Nuevo | Same as ubicación (ACC from its group) |
 | Nodes (par / tipo) | Worst priority | — | — | — (counts and "N por revisar" as text) |
 
 **Removed from rows, still in the tooltip or panel:** confidence dots, the "Revisión aleatoria" chip (the spot-check guard still applies), the flagged-text chip, the agent-updated flag icon, the "no 3D" icon, and DeltaBadge (replaced by the change word). The other grupo tags (Típico, validez mixta, orientación) stay in the grupo panel header.
+
+## M2: decision memory (F1) and agent questions (X3) (2026-11-09)
+
+Contract: `ClashGroup.inherited` (InheritedDecision), `ClashGroup.questionIds`, `TriagePayload.questions` (CoordinatorQuestion), `changeSummary.baseVersion` / `baseReason`, `Proposal.origin`, V01–V05 in `REASON_CODES`, and `POST /questions/:id/answer` (QuestionAnswerRequest).
+
+- **Baseline.** "Qué cambió" compares with `changeSummary.baseVersion`. The lens tooltip and the panel lines say "respecto de v10 (última revisada)", or "(anterior)" when `baseReason` is `previous`.
+- **Inherited decisions.**
+  - Rows show ↺ with the tooltip "Heredada de v10 · decidida por ti / por el grupo / en ACC".
+  - Inherited groups count as decided (server `reviewState: decided`), so the default filter (Pendiente) hides them in both views.
+  - In "Qué cambió", inherited and unchanged items stay under "↺ N sin cambios".
+  - In the panel, an unchanged inherited ubicación shows "Decisión heredada de v10: Válida · Crear incidencia · decidida por ti" with **[Mantener ⏎] [Revisar E]**. Mantener records an `accept` with the note "Mantiene la decisión heredada de v10". Enter keeps it on such a row; on any other row Enter expands.
+  - A changed item that had a decision shows "Antes decidiste (v10): … · cambió: …".
+- **Agent questions.**
+  - The row state icon is **?**, which comes before ACC, ↺ and ○.
+  - The panel opens with a violet callout holding the question, the option buttons and a free-text answer, and shows the answered or stale state afterwards.
+  - The UI derives `validity` / `action` from the chosen option's wording (`src/features/triage/questions.ts`). When the server reports `decisionIds`, the UI merges the server's decisions, so the answer shows as the decision.
+  - "Qué cambió" includes any ubicación with an open question, even if it is unchanged, with the same predicate in both views.
+- **Violet bar** on the proposal block only when `Proposal.origin === "agent"`.
+- **Reason codes:** V01–V05 labels are in i18n under `reasons.V0x`, ready for M3 verification rejects.

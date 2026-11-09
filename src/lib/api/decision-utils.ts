@@ -43,8 +43,8 @@ export function latestDecisions(decisions: Iterable<Decision>): Map<string, Deci
   return out;
 }
 
-export function decisionState(decision: Decision | undefined, proposal: Proposal | undefined): DecisionState {
-  if (!decision) return proposal?.inherited ? "inherited" : "pending";
+export function decisionState(decision: Decision | undefined, proposal: Proposal | undefined, inherited = false): DecisionState {
+  if (!decision) return proposal?.inherited || inherited ? "inherited" : "pending";
   switch (decision.kind) {
     case "accept":
       return "accepted";

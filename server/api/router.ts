@@ -13,11 +13,14 @@
  */
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { brotliCompressSync, constants as zlibConstants, gzipSync } from "node:zlib";
 import { z } from "zod";
+import { isFrozen } from "./frozen";
 import { ApsAuth } from "../aps/auth";
 import { Coordinator, type CoordinatorOptions } from "../coordinator";
 import { CoordinatorUi, type HumanUser } from "../coordinator-ui";
 import { loadRules } from "../engine";
+import { REASON_CODES } from "../store/types";
 import { LiveSource } from "../source/live";
 import { CoordError, httpStatusFor, log } from "../util";
 import { fetchSiteOk, hostAllowed, originMatches } from "./host-guard";
@@ -71,9 +74,31 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
   }
 }
 
-function send(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
-  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", ...headers });
-  res.end(JSON.stringify(body));
+/** Responses above this size are compressed when the client accepts it. */
+const COMPRESS_MIN_BYTES = 8 * 1024;
+/** Serialized / compressed bodies of memoized payload objects (same object → same bytes). */
+const encoded = new WeakMap<object, { json?: Buffer; br?: Buffer; gzip?: Buffer }>();
+
+function send(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}, req?: IncomingMessage): void {
+  const memo = isFrozen(body) ? (encoded.get(body as object) ?? {}) : {};
+  const json = memo.json ?? Buffer.from(JSON.stringify(body));
+  const accept = String(req?.headers["accept-encoding"] ?? "");
+  let enc: "br" | "gzip" | undefined;
+  if (json.length >= COMPRESS_MIN_BYTES) enc = /\bbr\b/.test(accept) ? "br" : /\bgzip\b/.test(accept) ? "gzip" : undefined;
+  let out = json;
+  if (enc === "br") out = memo.br ??= brotliCompressSync(json, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 4, [zlibConstants.BROTLI_PARAM_SIZE_HINT]: json.length } });
+  else if (enc === "gzip") out = memo.gzip ??= gzipSync(json, { level: 6 });
+  if (isFrozen(body) && status === 200) encoded.set(body as object, { ...memo, json });
+  res.writeHead(status, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+    Vary: "Accept-Encoding",
+    ...(enc ? { "Content-Encoding": enc } : {}),
+    "Content-Length": String(out.length),
+    ...headers,
+  });
+  res.end(out);
 }
 
 function cookie(req: IncomingMessage, name: string): string | undefined {
@@ -318,6 +343,7 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
     "/auth/logout",
     async () => {
       await apsAuth()?.logout();
+      ui.invalidateCaches();
       return { ok: true };
     },
     true,
@@ -405,6 +431,25 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
   add("DELETE", "/families/:familyId/exceptions/:groupId", async ({ params, query, user }) => ui.removeFamilyException(params.familyId, TestIdZ.parse(query.get("testId")), params.groupId, await user()), true);
   add("POST", "/families/:familyId/detach", async ({ params, body, user }) => ui.detachInstance(params.familyId, z.strictObject({ testId: TestIdZ, groupId: GroupIdZ }).parse(body), await user()), true);
   add("POST", "/families/:familyId/confirm-inherited", async ({ params, body, user }) => ui.confirmInherited(params.familyId, z.strictObject({ testId: TestIdZ, groupIds: z.array(GroupIdZ).max(500).optional() }).parse(body), await user()), true);
+
+  // ── X3 coordinator questions ───────────────────────────────────────────
+  add("GET", "/tests/:testId/questions", async ({ params }) => ui.questionsOf(params.testId));
+  add(
+    "POST",
+    "/questions/:questionId/answer",
+    async ({ params, body, user }) =>
+      ui.answerQuestion(
+        params.questionId,
+        z.strictObject({
+          answer: z.string().min(1).max(1000),
+          validity: z.enum(["real", "false_positive", "tolerated", "needs_info"]).optional(),
+          action: z.enum(["create_issue", "close", "mark_reviewed", "postpone"]).optional(),
+          reasonCode: z.enum(REASON_CODES).optional(),
+        }).parse(body),
+        await user(),
+      ),
+    true,
+  );
 
   // ── disciplines (writes are human-only, audited) ───────────────────────
   const RuleIn = z.object({
@@ -591,7 +636,7 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
         const params = Object.fromEntries(route.keys.map((k, i) => [k, decodeURIComponent(m[i + 1]!)]));
         const body = method === "GET" ? undefined : await readBody(req);
         const result = await route.handler({ req, res, params, query: url.searchParams, body, user: userOf });
-        send(res, 200, result ?? { ok: true });
+        send(res, 200, result ?? { ok: true }, {}, req);
       } catch (err) {
         const { status, body } = errorBody(err);
         if (status >= 500) log.warn("api.error", { path: url.pathname, message: (err as Error).message });

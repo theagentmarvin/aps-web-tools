@@ -13,6 +13,7 @@
       "mcp__coord__propose_*",
       "mcp__coord__draft_issue",
       "mcp__coord__withdraw_proposal",
+      "mcp__coord__ask_coordinator",
       "mcp__coord__record_feedback",
       "mcp__coord__evaluate_ruleset",
       "mcp__coord__generate_report",

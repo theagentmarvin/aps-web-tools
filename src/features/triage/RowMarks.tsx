@@ -5,12 +5,14 @@
  * Chip precedence (status slot, one chip): Reapareció > Cambió > Nuevo >
  *   (grupo rows only) validez mixta > orientación por confirmar > Típico.
  * State icon precedence (one icon): your decision in this version (✓ ✎ ✕ ⏸)
- *   > ACC (closed ⊘, assigned/mixed 🗎) > exception ⚑ > inherited ↺ / ◌ > pending ○.
+ *   > open agent question ? > ACC (closed ⊘, assigned/mixed 🗎) > exception ⚑
+ *   > inherited ↺ / ◌ > pending ○.
  * Everything else (confidence, spot-check, agent-updated, no-viewer) lives in
  * the row tooltip or the panel; the spot-check guard still applies.
  */
 import { useT, type TFunction } from "~/i18n";
-import type { AccState, ChangeKind, DecisionState, FamilyGroup } from "~/lib/api/types";
+import type { AccState, AgentQuestion, ChangeKind, DecisionState, FamilyGroup, InheritedDecision } from "~/lib/api/types";
+import { inheritedTooltip } from "./questions";
 import { DecisionStateIcon } from "~/lib/components/badges";
 import { IconCircle, IconClosed, IconFlag, IconInherited, IconIssue } from "~/lib/components/icons";
 
@@ -33,15 +35,36 @@ export function accTooltip(t: TFunction, acc: AccState): string {
 }
 
 /** The single right-side state icon of a row. */
-export function RowStateIcon({ state, acc, inheritance, pendingException }: { state: DecisionState; acc?: AccState; inheritance?: FamilyGroup["inheritance"]; pendingException?: boolean }) {
+export function RowStateIcon({
+  state,
+  acc,
+  inheritance,
+  pendingException,
+  question,
+  inherited,
+}: {
+  state: DecisionState;
+  acc?: AccState;
+  inheritance?: FamilyGroup["inheritance"];
+  pendingException?: boolean;
+  question?: AgentQuestion;
+  inherited?: InheritedDecision;
+}) {
   const t = useT();
   const own = state === "accepted" || state === "corrected" || state === "rejected" || state === "postponed";
   if (own) return <DecisionStateIcon state={state} />;
+  if (question)
+    return (
+      <span role="img" aria-label={t("questions.tooltip", { text: question.question })} title={t("questions.tooltip", { text: question.question })} className="flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-full bg-violet-600 text-[10px] font-bold leading-none text-white">
+        ?
+      </span>
+    );
   if (acc) {
     const tip = accTooltip(t, acc);
     return acc.status === "closed" ? <IconClosed size={13} label={tip} className="shrink-0 text-gray-500" /> : <IconIssue size={13} label={tip} className="shrink-0 text-brand" />;
   }
   if (inheritance?.state === "exception" || pendingException) return <IconFlag size={12} label={t("families.exception")} className="shrink-0 text-amber-700" />;
+  if (inherited) return <IconInherited size={13} label={inheritedTooltip(t, inherited)} className="shrink-0 text-gray-500" />;
   if (inheritance?.state === "inherited" || state === "inherited") return <IconInherited size={13} label={t("families.inherited")} className="shrink-0 text-gray-500" />;
   if (inheritance?.state === "inherited_pending")
     return (

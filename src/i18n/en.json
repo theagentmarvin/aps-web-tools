@@ -485,7 +485,12 @@
     "R99": "Other",
     "pickHint": "Press the reason number and Enter to save.",
     "noteRequiredError": "The “Other” reason requires a note.",
-    "bulkApplies": "Applies to {count} items."
+    "bulkApplies": "Applies to {count} items.",
+    "V01": "The problem moved (another clash)",
+    "V02": "The responsible model has no new version",
+    "V03": "The fix is not approved by the responsible party",
+    "V04": "Deleting the element was the fix",
+    "V05": "Partial fix is enough"
   },
   "bulk": {
     "title": "Accept {count} proposals",
@@ -569,7 +574,8 @@
     "escape": "Close / clear",
     "closeHint": "Press Esc or ? to close",
     "compare": "Compare properties",
-    "split": "Split from group"
+    "split": "Split from group",
+    "keepInherited": "Keep inherited decision (else expand)"
   },
   "approvals": {
     "title": "Approvals",
@@ -1172,7 +1178,11 @@
     "empty": "Nothing changed since the previous version with these filters.",
     "showAll": "Show all",
     "cambiosClashes": "{new} new clashes · {changed} changed · {reappeared} reappeared",
-    "changedBracket": "({count} new)"
+    "changedBracket": "({count} new)",
+    "baseLastReviewed": "since v{version} (last reviewed)",
+    "basePrevious": "since v{version} (previous)",
+    "questionsCount_one": "{count} question",
+    "questionsCount_other": "{count} questions"
   },
   "scope": {
     "title": "Scope change since v{version}",
@@ -1183,5 +1193,37 @@
     "preparedBy": "Prepared by the agent · {time}",
     "preparedTip": "Last agent activity or newest proposal",
     "accSync": "ACC synced {time} · {assigned} assigned · {closed} closed"
+  },
+  "inherited": {
+    "tooltip": "Inherited from v{version} · {who}",
+    "source": {
+      "human": "decided by you",
+      "family": "decided by the group",
+      "acc": "decided in ACC"
+    },
+    "effect": {
+      "issue": "Create issue",
+      "close": "Close",
+      "none": "No ACC action"
+    },
+    "title": "Decision inherited from v{version}",
+    "body": "{summary} · {who}{by}",
+    "keep": "Keep",
+    "review": "Review",
+    "kept": "Decision kept",
+    "keptNote": "Keeps the decision inherited from v{version}",
+    "before": "Before you decided: {summary}",
+    "beforeChanged": "You decided (v{version}): {summary} · changed: {what}"
+  },
+  "questions": {
+    "title": "Agent question",
+    "tooltip": "The agent asks: {text}",
+    "placeholder": "Your answer…",
+    "send": "Answer",
+    "otherOption": "Other answer",
+    "answered": "Answer recorded",
+    "answeredDecision": "Answer recorded as a decision",
+    "stale": "No longer applies: {reason}",
+    "answeredBy": "Answered by {user}: {answer}"
   }
 }

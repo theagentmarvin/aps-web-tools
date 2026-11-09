@@ -347,7 +347,7 @@ export interface ProposalRecord {
 
 // ── Human decisions (UI triage) ────────────────────────────────────────────
 
-export const REASON_CODES = ["R01", "R02", "R03", "R04", "R05", "R06", "R07", "R08", "R09", "R10", "R11", "R12", "R13", "R99"] as const;
+export const REASON_CODES = ["R01", "R02", "R03", "R04", "R05", "R06", "R07", "R08", "R09", "R10", "R11", "R12", "R13", "R99", "V01", "V02", "V03", "V04", "V05"] as const;
 export type ReasonCode = (typeof REASON_CODES)[number];
 
 export interface DecisionRecord {

@@ -13,6 +13,7 @@ import { generateTest, rng, type GenerateOptions, type GeneratedTest, type MockD
 import { buildReport, fakeHash, seedAudit, seedCorrections, seedSuggestions } from "./reports";
 import { deriveFamilies, refreshFamily } from "./families";
 import { applyM1, type M1Data } from "./m1";
+import { applyM2, type M2Data } from "./m2";
 import { PROBLEM_TYPES } from "~/lib/problem-types";
 
 const ME = USERS[0];
@@ -31,7 +32,7 @@ export class MockCoordinatorApi implements CoordinatorApi {
 
   private tests = new Map<string, GeneratedTest>();
   /** Solution families per test (mock F1 step), derived once from the generated groups. */
-  private families = new Map<string, { families: T.TriageFamily[]; groups: T.FamilyGroup[]; m1: M1Data }>();
+  private families = new Map<string, { families: T.TriageFamily[]; groups: T.FamilyGroup[]; m1: M1Data; m2: M2Data }>();
   private decisions = new Map<string, T.Decision[]>();
   private batches = new Map<string, T.Batch>();
   private applyJobs = new Map<string, ApplyJob>();
@@ -648,10 +649,13 @@ export class MockCoordinatorApi implements CoordinatorApi {
     if (!f) {
       const d = this.data(testId);
       const derived = deriveFamilies(d.groups, d.clashes, d.proposals);
-      const m1 = applyM1(d.test, derived.groups, d.clashes, !!this.locateTest(testId).opts.firstTest);
+      const firstTest = !!this.locateTest(testId).opts.firstTest;
+      const m1 = applyM1(d.test, derived.groups, d.clashes, firstTest);
+      const m2 = applyM2(d.test, derived.groups, firstTest);
+      if (m1.changeSummary) m1.changeSummary.baseVersion = m2.baseVersion;
       const byId = new Map(derived.groups.map((g) => [g.id, g]));
       for (const fam of derived.families) refreshFamily(fam, byId);
-      f = { ...derived, m1 };
+      f = { ...derived, m1, m2 };
       this.families.set(testId, f);
     }
     return f;
@@ -747,6 +751,51 @@ export class MockCoordinatorApi implements CoordinatorApi {
     return { ok: true, familyId: fam.id, version };
   }
 
+  /** X3: the answer is stored; validity/action answers become a human decision on the ubicaciones of the question. */
+  async answerQuestion(questionId: string, req: T.QuestionAnswerRequest): Promise<T.AgentQuestion> {
+    await delay(200);
+    for (const [testId, f] of this.families) {
+      const q = f.m2.questions.find((x) => x.id === questionId);
+      if (!q) continue;
+      if (q.state !== "open") throw new ApiError("La pregunta ya no está abierta.", 409, "conflict");
+      const { project, modelSet } = this.locateTest(testId);
+      const now = new Date().toISOString();
+      const decisionIds: string[] = [];
+      if ((q.kind === "validity" && req.validity) || (q.kind === "action" && req.action)) {
+        const d = this.data(testId);
+        for (const gid of q.groupIds) {
+          const p = d.proposals.find((x) => x.targetId === gid);
+          const changes: T.DecisionChange[] = [];
+          if (req.validity && p && p.fields.validity.value !== req.validity) changes.push({ field: "validity", aiValue: p.fields.validity.value, humanValue: req.validity });
+          const kind: T.DecisionKind = req.action === "postpone" ? "postpone" : changes.length ? "correct" : "accept";
+          const dec: T.Decision = {
+            id: newId(),
+            proposalId: p?.id ?? "",
+            targetType: "group",
+            targetId: gid,
+            testId,
+            modelSetId: modelSet.id,
+            projectId: project.id,
+            kind,
+            changes,
+            reasonCode: changes.length ? (req.reasonCode ?? "R99") : undefined,
+            note: `Respuesta a ${q.id}: ${req.answer}`,
+            viewedInViewerMs: 0,
+            decidedAt: now,
+            userId: ME.id,
+            userName: ME.name,
+          };
+          this.decisionsOf(testId).push(dec);
+          decisionIds.push(dec.id);
+        }
+      }
+      Object.assign(q, { state: "answered", answer: req.answer, answeredBy: ME.name, answeredAt: now, decisionIds });
+      this.log({ actor: { type: "user", id: ME.id, name: ME.short }, action: "question.answered", projectId: project.id, targetIds: [q.id, ...q.groupIds], details: { kind: q.kind, decisions: decisionIds.length } });
+      return clone(q);
+    }
+    throw new ApiError("Pregunta no encontrada.", 404, "not_found");
+  }
+
   async getTriage(projectId: string, modelSetId: string, testId?: string): Promise<T.TriagePayloadWithFamilies> {
     this.ensureSeed();
     const project = this.findProject(projectId);
@@ -769,6 +818,7 @@ export class MockCoordinatorApi implements CoordinatorApi {
       changeSummary: this.familiesOf(opts.testId).m1.changeSummary,
       scopeChanges: this.familiesOf(opts.testId).m1.scopeChanges,
       accSync: this.familiesOf(opts.testId).m1.accSync ?? undefined,
+      questions: this.familiesOf(opts.testId).m2.questions,
       problemTypes: PROBLEM_TYPES,
       clashes: d.clashes,
       proposals: d.proposals,

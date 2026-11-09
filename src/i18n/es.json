@@ -485,7 +485,12 @@
     "R99": "Otro",
     "pickHint": "Pulsa el número de la razón y Enter para guardar.",
     "noteRequiredError": "La razón «Otro» requiere una nota.",
-    "bulkApplies": "Se aplicará a {count} elementos."
+    "bulkApplies": "Se aplicará a {count} elementos.",
+    "V01": "El problema se movió (otra interferencia)",
+    "V02": "El modelo responsable no tiene versión nueva",
+    "V03": "La solución no está aprobada por el responsable",
+    "V04": "Se borró el elemento como solución",
+    "V05": "Solución parcial suficiente"
   },
   "bulk": {
     "title": "Aceptar {count} propuestas",
@@ -569,7 +574,8 @@
     "escape": "Cerrar / limpiar",
     "closeHint": "Pulsa Esc o ? para cerrar",
     "compare": "Comparar propiedades",
-    "split": "Separar de la ubicación"
+    "split": "Separar de la ubicación",
+    "keepInherited": "Mantener decisión heredada (si no, desplegar)"
   },
   "approvals": {
     "title": "Aprobaciones",
@@ -1172,7 +1178,11 @@
     "empty": "Nada cambió desde la versión anterior con estos filtros.",
     "showAll": "Ver todo",
     "cambiosClashes": "{new} interferencias nuevas · {changed} cambiaron · {reappeared} reaparecieron",
-    "changedBracket": "({count} nuevas)"
+    "changedBracket": "({count} nuevas)",
+    "baseLastReviewed": "respecto de v{version} (última revisada)",
+    "basePrevious": "respecto de v{version} (anterior)",
+    "questionsCount_one": "{count} pregunta",
+    "questionsCount_other": "{count} preguntas"
   },
   "scope": {
     "title": "Cambio de alcance respecto de v{version}",
@@ -1183,5 +1193,37 @@
     "preparedBy": "Preparado por el agente · {time}",
     "preparedTip": "Última actividad del agente o propuesta más reciente",
     "accSync": "ACC sincronizado {time} · {assigned} asignados · {closed} cerrados"
+  },
+  "inherited": {
+    "tooltip": "Heredada de v{version} · {who}",
+    "source": {
+      "human": "decidida por ti",
+      "family": "decidida por el grupo",
+      "acc": "decidida en ACC"
+    },
+    "effect": {
+      "issue": "Crear incidencia",
+      "close": "Cerrar",
+      "none": "Sin acción en ACC"
+    },
+    "title": "Decisión heredada de v{version}",
+    "body": "{summary} · {who}{by}",
+    "keep": "Mantener",
+    "review": "Revisar",
+    "kept": "Decisión mantenida",
+    "keptNote": "Mantiene la decisión heredada de v{version}",
+    "before": "Antes decidiste: {summary}",
+    "beforeChanged": "Antes decidiste (v{version}): {summary} · cambió: {what}"
+  },
+  "questions": {
+    "title": "Pregunta del agente",
+    "tooltip": "El agente pregunta: {text}",
+    "placeholder": "Tu respuesta…",
+    "send": "Responder",
+    "otherOption": "Otra respuesta",
+    "answered": "Respuesta registrada",
+    "answeredDecision": "Respuesta registrada como decisión",
+    "stale": "Ya no aplica: {reason}",
+    "answeredBy": "Respondida por {user}: {answer}"
   }
 }

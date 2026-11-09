@@ -8,6 +8,7 @@ import { useToast } from "~/lib/components/Toast";
 import { useHotkeys, type HotkeyBinding } from "~/lib/hotkeys";
 import { useSettings } from "~/lib/settings";
 import { useTriageContext } from "./actions";
+import { groupChange } from "./change";
 import { isDecisionKey, parseKey } from "./store";
 
 export function useTriageHotkeys(opts: { onSend: () => void }) {
@@ -27,7 +28,18 @@ export function useTriageHotkeys(opts: { onSend: () => void }) {
     { keys: ["k", "ArrowUp"], labelKey: "shortcuts.prev", group: "navigation", run: () => store.move(-1) },
     { keys: ["J"], labelKey: "shortcuts.nextClash", group: "navigation", run: () => store.moveWithinGroup(1) },
     { keys: ["K"], labelKey: "shortcuts.prevClash", group: "navigation", run: () => store.moveWithinGroup(-1) },
-    { keys: ["Enter", "l", "ArrowRight"], labelKey: "shortcuts.expand", group: "navigation", run: () => store.expandCurrent() },
+    {
+      keys: ["Enter"],
+      labelKey: "shortcuts.keepInherited",
+      group: "decisions",
+      run: () => {
+        const k = current();
+        const g = k?.startsWith("g:") ? store.state.groups.get(k.slice(2)) : undefined;
+        if (k && g?.inherited && groupChange(g) === "unchanged" && !store.state.latest.has(g.id)) return actions.keepInherited(k);
+        store.expandCurrent();
+      },
+    },
+    { keys: ["l", "ArrowRight"], labelKey: "shortcuts.expand", group: "navigation", run: () => store.expandCurrent() },
     { keys: ["h", "ArrowLeft"], labelKey: "shortcuts.collapse", group: "navigation", run: () => store.collapseCurrent() },
     { keys: ["g g", "G"], labelKey: "shortcuts.firstLast", group: "navigation", run: (e) => (e.key === "G" ? store.last() : store.first()) },
     // Decisions

@@ -156,7 +156,11 @@ export function mergeAcc(items: ReadonlyArray<C.AccState | undefined>): C.AccSta
 /** Penetration threshold for "changed" (plan F1: inherit when |Δpenetration| ≤ 10 mm). */
 export const CHANGE_PENETRATION_MM = 10;
 
-const types = (c: Pick<ClashRecord, "a" | "b">) => [c.a.type ?? c.a.category, c.b.type ?? c.b.category].sort().join("|");
+/** Element types of a clash (sorted), the F1 "same element types" key. */
+export function elementTypesOf(c: Pick<ClashRecord, "a" | "b">): string {
+  return [c.a.type ?? c.a.category, c.b.type ?? c.b.category].sort().join("|");
+}
+const types = elementTypesOf;
 
 /**
  * Change word per raw clash of the current version. Without a previous version
@@ -186,6 +190,30 @@ export function clashChanges(
     }
   }
   return out;
+}
+
+/** Per raw clash: |Δpenetration| (mm) and whether the element types changed, vs the baseline. */
+export function clashDeltas(
+  current: readonly ClashRecord[],
+  diff: ClashDiff | undefined,
+  prevById: ReadonlyMap<string, Pick<ClashRecord, "penetrationMm" | "a" | "b">>,
+): Map<string, { dPen: number; typeChanged: boolean }> {
+  const out = new Map<string, { dPen: number; typeChanged: boolean }>();
+  if (!diff) return out;
+  const renamed = new Map(diff.matchedByPairKey.map((m) => [m.nextId, m.prevId]));
+  for (const c of current) {
+    const p = prevById.get(renamed.get(c.id) ?? c.id);
+    if (!p) continue;
+    const known = !!(p.a.type || p.a.category);
+    out.set(c.id, { dPen: Math.round(Math.abs(p.penetrationMm - c.penetrationMm) * 10) / 10, typeChanged: known && types(p) !== types(c) });
+  }
+  return out;
+}
+
+/** Item delta for the MCP outputs: change word, max |Δpenetration|, any type change. */
+export function itemDelta(clashIds: readonly string[], changes: ReadonlyMap<string, C.ChangeKind>, deltas: ReadonlyMap<string, { dPen: number; typeChanged: boolean }>) {
+  const ds = clashIds.map((id) => deltas.get(id)).filter((x): x is { dPen: number; typeChanged: boolean } => !!x);
+  return { state: itemChange(clashIds, changes), deltaPenetrationMm: ds.length ? Math.max(...ds.map((d) => d.dPen)) : null, typeChanged: ds.some((d) => d.typeChanged) };
 }
 
 /** One word per item: reappeared > new (all new) > changed (any new/changed) > unchanged. */

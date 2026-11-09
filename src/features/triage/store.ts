@@ -18,6 +18,7 @@ import type {
   DecisionChange,
   DecisionField,
   DecisionKind,
+  AgentQuestion,
   ChangeKind,
   Discipline,
   FamilyAction,
@@ -175,6 +176,9 @@ export interface TriageState {
   hiddenByGroup: Map<string, Clash[]>;
   /** Ubicaciones per lens under the other filters (lens tab counts). */
   lensCounts: { cambios: number; todo: number };
+  /** X3 agent questions by id, and the open ones per ubicación. */
+  questions: Map<string, AgentQuestion>;
+  openQuestionByGroup: Map<string, string>;
   collapsedNodes: Set<string>;
   /** Instances (group ids) opened this session, per family: the spot-check record. */
   familyVisits: Map<string, Set<string>>;
@@ -263,6 +267,8 @@ export class TriageStore {
       summary: { groups: 0, locations: 0, clashes: 0 },
       hiddenByGroup: new Map(),
       lensCounts: { cambios: 0, todo: 0 },
+      questions: new Map(),
+      openQuestionByGroup: new Map(),
       collapsedNodes: new Set(["unchanged"]),
       familyVisits: new Map(),
       familyExceptions: new Map(),
@@ -330,6 +336,7 @@ export class TriageStore {
   load(p: TriagePayloadWithFamilies) {
     const groups = new Map(p.groups.map((g) => [g.id, g]));
     const families = new Map((p.families ?? []).map((f) => [f.id, f]));
+    const questions = new Map((p.questions ?? []).map((q) => [q.id, q]));
     const familyOf = new Map<string, string>();
     for (const f of families.values()) for (const gid of f.groupIds) familyOf.set(gid, f.id);
     for (const g of p.groups) if (g.familyId && families.has(g.familyId)) familyOf.set(g.id, g.familyId);
@@ -363,6 +370,8 @@ export class TriageStore {
       groups,
       families,
       problemTypes: p.problemTypes ?? [],
+      questions,
+      openQuestionByGroup: openQuestions(questions, p.groups),
       familyOf,
       collapsedNodes: new Set(["unchanged"]),
       familyVisits: new Map(),
@@ -528,6 +537,44 @@ export class TriageStore {
     return l === "cambios" && this.hasPrevious() ? "cambios" : "todo";
   }
 
+  /** Version "Qué cambió" compares with: the last reviewed one (M2), else the previous cached one. */
+  baseVersion(): number | undefined {
+    const cs = this.state.payload?.changeSummary;
+    return cs?.baseVersion ?? cs?.previousVersion;
+  }
+
+  /** Open agent question of a ubicación (X3). */
+  openQuestion(groupId: string): AgentQuestion | undefined {
+    const id = this.state.openQuestionByGroup.get(groupId);
+    return id ? this.state.questions.get(id) : undefined;
+  }
+
+  /** Record an answer locally (the server already stored it). */
+  applyAnswer(questionId: string, patch: Partial<AgentQuestion>) {
+    const q = this.state.questions.get(questionId);
+    if (!q) return;
+    const questions = new Map(this.state.questions);
+    questions.set(questionId, { ...q, state: "answered", ...patch });
+    this.set({ questions, openQuestionByGroup: openQuestions(questions, [...this.state.groups.values()]) });
+  }
+
+  /** Lens "Qué cambió": changed ubicaciones, plus any with an open agent question (even if unchanged). */
+  inChangesLens(e: Evaluated): boolean {
+    if (CHANGED.has(this.changeOf(e))) return true;
+    const gid = e.s.kind === "group" ? e.s.id : (e.s.clash?.groupId ?? "");
+    return this.state.openQuestionByGroup.has(gid);
+  }
+
+  /** Add decisions created by the server (e.g. from a question answer); no save, no undo entry. */
+  mergeServerDecisions(list: Decision[]) {
+    const known = new Set(this.state.log.map((d) => d.id));
+    const fresh = list.filter((d) => !known.has(d.id) && d.testId === this.state.payload?.test.id);
+    if (!fresh.length) return;
+    const log = [...this.state.log, ...fresh].sort((a, b) => a.decidedAt.localeCompare(b.decidedAt));
+    for (const d of fresh) this.staticFacts.delete(rowKey(d.targetType, d.targetId));
+    this.set({ log, latest: latestDecisions(log), dirty: true });
+  }
+
   /** Change word of the ubicación an item belongs to. */
   changeOf(e: Evaluated): ChangeKind {
     const gid = e.s.kind === "group" ? e.s.id : (e.s.clash?.groupId ?? "");
@@ -647,7 +694,7 @@ export class TriageStore {
     // Tab counts are clashes: "Qué cambió" = clashes that actually changed (not every clash of a changed ubicación).
     const isChangedClash = (e: Evaluated) => !!e.s.clash && CHANGED.has(clashChange(e.s.clash) ?? "unchanged");
     const lensCounts = { cambios: base.filter(isChangedClash).length, todo: base.length };
-    const items = lens === "cambios" ? base.filter((e) => keepIds.has(e.s.id) || CHANGED.has(this.changeOf(e))) : base;
+    const items = lens === "cambios" ? base.filter((e) => keepIds.has(e.s.id) || this.inChangesLens(e)) : base;
     const rows: Row[] = [];
     if (this.familiesMode()) {
       // Clash-level filter, then group the passing clashes into ubicaciones → grupos → tipo → par.
@@ -1254,6 +1301,13 @@ function levelsOf(f: TriageFamily, items: Evaluated[]): number {
   const set = new Set<string>();
   for (const e of items) for (const l of byId.get(e.s.id) ?? [e.s.group?.location?.level ?? ""]) if (l) set.add(l);
   return set.size;
+}
+
+function openQuestions(questions: Map<string, AgentQuestion>, groups: Iterable<FamilyGroup>): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const q of questions.values()) if (q.state === "open") for (const t of q.groupIds) if (!out.has(t)) out.set(t, q.id);
+  for (const g of groups) for (const id of g.questionIds ?? []) if (questions.get(id)?.state === "open" && !out.has(g.id)) out.set(g.id, id);
+  return out;
 }
 
 function familyExceptionsFrom(families: Map<string, TriageFamily>): [string, Map<string, string>][] {

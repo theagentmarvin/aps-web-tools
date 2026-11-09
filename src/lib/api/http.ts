@@ -231,6 +231,9 @@ export class HttpCoordinatorApi implements CoordinatorApi {
     return this.req<T.IngestStart>("POST", `/projects/${enc(projectId)}/model-sets/${enc(modelSetId)}/tests/${enc(accTestId)}/ingest`, { refresh: opts?.refresh ?? false, classify: true });
   }
 
+  answerQuestion(questionId: string, req: T.QuestionAnswerRequest) {
+    return this.req<T.AgentQuestion>("POST", `/questions/${enc(questionId)}/answer`, req);
+  }
   getFamilies(testId: string) {
     return this.get<T.FamiliesPayload>(`/tests/${enc(testId)}/families`);
   }

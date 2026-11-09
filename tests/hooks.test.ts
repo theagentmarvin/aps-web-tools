@@ -97,6 +97,8 @@ function applyRoot(extra: Record<string, string> = {}): string {
     "node_modules/tsx/loader.mjs": "export {};\n",
     "server/cli.ts": V2_CLI,
     "server/approval/index.ts": "export const x = 1;\n",
+    "server/aps/write-guard.ts": "export const guard = 1;\n",
+    "server/aps/issues.ts": "export const issues = 1;\n",
     ...extra,
   });
   git(root, "init", "-q");
@@ -231,6 +233,20 @@ describe("guard-apply", () => {
     const root = applyRoot();
     writeFileSync(join(root, "server", "approval", "bypass.ts"), "export {};\n");
     expect(run(H, pre(APPLY, { batchId: "L-ok", dryRun: false }), { root }).decision).toBe("deny");
+  });
+
+  it.each(["server/aps/write-guard.ts", "server/aps/issues.ts"])("[v2] denies when the ACC write door %s differs from git HEAD", (file) => {
+    const root = applyRoot();
+    appendFileSync(join(root, ...file.split("/")), "\n// tampered\n");
+    expect(run(H, pre(APPLY, { batchId: "L-ok", dryRun: false }), { root }).decision).toBe("deny");
+  });
+
+  it("[v2] settings allow-list: ask_coordinator is allowed, no shell allow rules exist", () => {
+    const settingsPath = resolve(HOOKS, "..", "settings.json");
+    if (!existsSync(settingsPath)) return;
+    const allow: string[] = JSON.parse(readFileSync(settingsPath, "utf8")).permissions?.allow ?? [];
+    expect(allow).toContain("mcp__coord__ask_coordinator");
+    expect(allow.filter((r) => /^(Bash|PowerShell|Monitor)\b/.test(r))).toEqual([]);
   });
 
   it("[v2] dev mode skips the integrity check but still requires a valid approval", () => {

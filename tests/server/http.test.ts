@@ -79,7 +79,7 @@ describe("HTTP API /api/coord", () => {
     expect(ing.json.jobId).toMatch(/^J-[0-9a-f]{12}$/);
     const phases = new Set<string>();
     let job = ing.json;
-    for (let i = 0; i < 200 && job.phase !== "done" && job.phase !== "failed"; i++) {
+    for (let i = 0; i < 1500 && job.phase !== "done" && job.phase !== "failed"; i++) {
       await new Promise((r) => setTimeout(r, 20));
       job = (await req<IngestJob>("GET", `/ingest-jobs/${ing.json.jobId}`)).json;
       phases.add(job.phase);
@@ -91,6 +91,15 @@ describe("HTTP API /api/coord", () => {
     expect((await req("GET", "/ingest-jobs/J-000000000000")).status).toBe(404);
 
     const tri = await req<TriagePayload>("GET", `/triage/demo-proyecto/${MODEL_SET_ID}`);
+    {
+      // large JSON is compressed when the client accepts it
+      const raw = await fetch(`${base}/triage/demo-proyecto/${MODEL_SET_ID}`, { headers: { Origin: origin, "Accept-Encoding": "gzip" } });
+      expect(raw.headers.get("content-encoding")).toBe("gzip");
+      expect(raw.headers.get("vary")).toBe("Accept-Encoding");
+      expect(((await raw.json()) as TriagePayload).groups.length).toBeGreaterThan(0);
+      const small = await fetch(`${base}/csrf`, { headers: { "Accept-Encoding": "gzip" } });
+      expect(small.headers.get("content-encoding")).toBeNull();
+    }
     expect(tri.status).toBe(200);
     expect(tri.json.test.id).toBe(testKey);
     expect(tri.json.groups.length).toBe(tri.json.proposals.length);

@@ -41,7 +41,7 @@ describe("coord MCP server (fixtures)", () => {
   it("lists every contract tool and no approve tool", async () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(TOOLS.map((t) => t.name).sort());
-    expect(tools).toHaveLength(32);
+    expect(tools).toHaveLength(34);
     const apply = tools.find((t) => t.name === "apply_approved_proposals")!;
     expect(apply.annotations?.destructiveHint).toBe(true);
     expect(JSON.stringify(apply.inputSchema)).toContain("dryRun");

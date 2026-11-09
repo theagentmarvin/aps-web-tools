@@ -9,6 +9,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { PROJECTS } from "../../src/lib/api/mock/fixtures";
 import { generateTest } from "../../src/lib/api/mock/generate";
 import { applyM1 } from "../../src/lib/api/mock/m1";
+import { applyM2 } from "../../src/lib/api/mock/m2";
 import type { Clash, TriagePayloadWithFamilies } from "../../src/lib/api/types";
 
 // The store and the mock families step use browser APIs (window, import.meta.env): they are
@@ -29,6 +30,8 @@ interface StoreLike {
     visibleByGroup: Map<string, unknown[]>;
     hiddenByGroup: Map<string, unknown[]>;
     lensCounts: { cambios: number; todo: number };
+    openQuestionByGroup: Map<string, string>;
+    groups: Map<string, { change?: string; inherited?: unknown }>;
     checked: Set<string>;
     summary: { groups: number; locations: number; clashes: number; changed?: number };
   };
@@ -54,6 +57,8 @@ function payloadFor(projectId: string): TriagePayloadWithFamilies {
   const d = generateTest({ ...opts, analyzed: true });
   const f = deriveFamilies(d.groups, d.clashes, d.proposals) as { groups: Parameters<typeof applyM1>[1]; families: unknown[] };
   const m1 = applyM1(d.test, f.groups, d.clashes, !!opts.firstTest);
+  const m2 = applyM2(d.test, f.groups, !!opts.firstTest);
+  if (m1.changeSummary) m1.changeSummary.baseVersion = m2.baseVersion;
   return {
     project: { id: project.id },
     modelSet: { id: ms.id },
@@ -69,6 +74,7 @@ function payloadFor(projectId: string): TriagePayloadWithFamilies {
     changesCursor: "0",
     changeSummary: m1.changeSummary,
     scopeChanges: m1.scopeChanges,
+    questions: m2.questions,
   } as unknown as TriagePayloadWithFamilies;
 }
 
@@ -251,5 +257,23 @@ describe("lens Qué cambió", () => {
     const l1 = tree.state.rows.filter((r) => r.kind === "node" && r.depth === 0).map((r) => tree.state.nodes.get(r.id)!);
     const flags = l1.filter((n) => n.bucket !== "unchanged").map((n) => ((n as unknown as { reappeared: number }).reappeared > 0 ? 1 : 0));
     expect(flags).toEqual([...flags].sort((a, b) => b - a));
+  });
+});
+
+describe("M2: inherited decisions and agent questions", () => {
+  it("an open question brings its ubicación into Qué cambió even when unchanged; inherited unchanged items stay under sin cambios", () => {
+    const { tree, list } = both(sandbox, q({ filters: { decision: [] }, lens: "cambios" }));
+    expect(tree.state.openQuestionByGroup.size).toBe(3);
+    const unchangedWithQuestion = [...tree.state.openQuestionByGroup.keys()].filter((g) => tree.state.groups.get(g)?.change === "unchanged");
+    expect(unchangedWithQuestion.length).toBeGreaterThan(0);
+    for (const g of tree.state.openQuestionByGroup.keys()) expect(tree.state.visibleByGroup.has(g)).toBe(true);
+    const inheritedUnchanged = [...tree.state.groups].filter(([id, g]) => g.inherited && g.change === "unchanged" && !tree.state.openQuestionByGroup.has(id)).map(([id]) => id);
+    expect(inheritedUnchanged.length).toBeGreaterThan(0);
+    for (const g of inheritedUnchanged) {
+      expect(tree.state.visibleByGroup.has(g)).toBe(false);
+      expect(tree.state.hiddenByGroup.has(g)).toBe(true);
+    }
+    // Same totals in both views with the question items included.
+    expect(tree.state.summary).toEqual(list.state.summary);
   });
 });

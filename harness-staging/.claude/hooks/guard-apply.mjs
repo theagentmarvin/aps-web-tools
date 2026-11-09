@@ -10,8 +10,8 @@
 //  4. input is exactly {batchId, dryRun?}: unknown keys -> deny; safe batch id format
 //  5. dry run (dryRun absent or === true) -> no decision (the settings `ask` rule still prompts the human)
 //     Anything else (false, "false", 0, null…) is treated as a REAL apply.
-//  6. outside dev mode: the approval code must be unmodified vs git HEAD
-//     (`git status --porcelain -- server/cli.ts server/approval server/secure server/store`, incl. untracked)
+//  6. outside dev mode: the approval code must be unmodified vs git HEAD (`git status --porcelain
+//     --untracked-files=all -- <GUARDED>`: cli, approval, secure, store, aps/write-guard.ts, aps/issues.ts)
 //  7. `node --import tsx server/cli.ts verify-approval <batchId> --json` must exit 0 and not report valid:false
 // On success: NO decision, so the permission `ask` rule always prompts the human.
 import { existsSync } from "node:fs";
@@ -21,7 +21,9 @@ import { readInput, projectRoot, decide, pass, block, isSubagent, isHarnessDev, 
 
 const APPLY_TOOL = "mcp__coord__apply_approved_proposals";
 const BATCH_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
-const GUARDED = ["server/cli.ts", "server/approval", "server/secure", "server/store"];
+// The approval verifier and the ACC write door (write-guard: the only issuer of write tokens; issues: the
+// Issues v1 client that M5's issue.update will use). Any change vs git HEAD blocks real applies outside dev mode.
+const GUARDED = ["server/cli.ts", "server/approval", "server/secure", "server/store", "server/aps/write-guard.ts", "server/aps/issues.ts"];
 
 let input;
 try {

@@ -15,11 +15,12 @@ import { useSearchParams } from "react-router";
 import { useI18n, useT, type TKey } from "~/i18n";
 import { useApi } from "~/lib/api";
 import { minConfidence } from "~/lib/api/decision-utils";
-import type { Clash, DecisionChange, ElementInfo, IssueDraft, Nature, Proposal, Validity } from "~/lib/api/types";
+import type { Clash, InheritedDecision, DecisionChange, ElementInfo, IssueDraft, Nature, Proposal, Validity } from "~/lib/api/types";
 import { categoryNoun, categoryTitle } from "~/lib/category-names";
 import { ConfidenceBadge, FlaggedChip, NatureBadge, PriorityChip, ReasonChip, SpotCheckChip, ValidityBadge } from "~/lib/components/badges";
-import { IconChevronLeft, IconChevronRight, SideASwatch, SideBSwatch } from "~/lib/components/icons";
+import { IconInherited, IconChevronLeft, IconChevronRight, SideASwatch, SideBSwatch } from "~/lib/components/icons";
 import { EmptyState, Kbd, Skeleton } from "~/lib/components/ui";
+import { useToast } from "~/lib/components/Toast";
 import { DECISION_KEY } from "~/lib/labels";
 import { useTriageContext } from "./actions";
 import {
@@ -38,6 +39,7 @@ import {
 
 import { writeQuery, type Evaluated } from "./filters";
 import { clashChange, groupChange } from "./change";
+import { answerMeaning, inheritedSummary } from "./questions";
 import { ChangeChip } from "./RowMarks";
 import { oneLine, summarizePair, type PairSummary, type SideFacts } from "./pair-summary";
 import { parseKey, useTriage } from "./store";
@@ -219,6 +221,8 @@ function InstancePanel() {
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden" id="triage-detail" tabIndex={-1}>
+        <QuestionCallout groupId={groupId} />
+        {!decision && e.s.group?.inherited && groupChange(e.s.group) === "unchanged" && <InheritedCallout targetKey={cursorKey} inherited={e.s.group.inherited} />}
         <ChangeLine e={e} members={members} />
         <ProposalBlock e={e} proposal={proposal} decisionChanges={decision?.kind === "correct" ? decision.changes : []} reasonCode={decision?.reasonCode} calibration={calibration} onSeeReasoning={openReasoning} />
 
@@ -285,15 +289,113 @@ function InstancePanel() {
   );
 }
 
+/** X3 callout at the top of the panel: the question, its options (or free text), answered state. */
+function QuestionCallout({ groupId }: { groupId: string }) {
+  const t = useT();
+  const api = useApi();
+  const toast = useToast();
+  const { store } = useTriageContext();
+  const q = useTriage(store, (s) => {
+    const id = s.openQuestionByGroup.get(groupId) ?? [...s.questions.values()].find((x) => x.groupIds.includes(groupId))?.id;
+    return id ? s.questions.get(id) : undefined;
+  });
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  if (!q) return null;
+  async function answer(value: string) {
+    if (!q || !value.trim()) return;
+    setBusy(true);
+    try {
+      const meaning = answerMeaning(q.kind, value);
+      const res = await api.answerQuestion(q.id, { answer: value.trim(), ...meaning });
+      store.applyAnswer(q.id, res);
+      if (res.decisionIds?.length) {
+        const page = await api.listDecisions({ testId: store.state.payload?.test.id, limit: 200 });
+        store.mergeServerDecisions(page.items);
+      }
+      toast.show(res.decisionIds?.length ? t("questions.answeredDecision") : t("questions.answered"));
+      setText("");
+    } catch (err) {
+      toast.show(err instanceof Error ? err.message : String(err), { tone: "error" });
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <section aria-labelledby={`q-${q.id}`} className="mx-4 mt-3 rounded-lg border border-violet-300 bg-violet-50 p-3 text-sm">
+      <h3 id={`q-${q.id}`} className="mb-1 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-violet-900">
+        <span className="flex h-4 w-4 items-center justify-center rounded-full bg-violet-600 text-[10px] text-white">?</span>
+        {t("questions.title")}
+      </h3>
+      <p className="text-gray-900" lang="es">
+        {q.question}
+      </p>
+      {q.state === "open" ? (
+        <>
+          {!!q.options?.length && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {q.options.map((o) => (
+                <button key={o} type="button" disabled={busy} onClick={() => void answer(o)} className="rounded border border-violet-300 bg-white px-2 py-1 text-xs text-violet-900 hover:border-violet-500 disabled:opacity-50">
+                  {o}
+                </button>
+              ))}
+            </div>
+          )}
+          <form
+            className="mt-2 flex gap-1.5"
+            onSubmit={(ev) => {
+              ev.preventDefault();
+              void answer(text);
+            }}
+          >
+            <input value={text} onChange={(ev) => setText(ev.target.value)} placeholder={q.options?.length ? t("questions.otherOption") : t("questions.placeholder")} aria-label={t("questions.placeholder")} maxLength={1000} className="min-w-0 flex-1 rounded border border-violet-200 px-2 py-1 text-xs" />
+            <button type="submit" disabled={busy || !text.trim()} className="rounded bg-violet-700 px-2 py-1 text-xs text-white disabled:opacity-50">
+              {t("questions.send")}
+            </button>
+          </form>
+        </>
+      ) : q.state === "stale" ? (
+        <p className="mt-1 text-xs text-gray-600">{t("questions.stale", { reason: q.staleReason ?? "" })}</p>
+      ) : (
+        <p className="mt-1 text-xs text-gray-700">{t("questions.answeredBy", { user: q.answeredBy ?? "—", answer: q.answer ?? "" })}</p>
+      )}
+    </section>
+  );
+}
+
+/** F1: "Decisión heredada de v10" with Mantener (Enter) / Revisar, for unchanged ubicaciones. */
+function InheritedCallout({ targetKey, inherited }: { targetKey: string; inherited: InheritedDecision }) {
+  const t = useT();
+  const { store, actions } = useTriageContext();
+  return (
+    <section aria-labelledby="inh-title" className="mx-4 mt-3 rounded-lg border border-gray-300 bg-gray-50 p-3 text-sm">
+      <h3 id="inh-title" className="mb-1 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-600">
+        <IconInherited size={13} />
+        {t("inherited.title", { version: inherited.fromVersion })}
+      </h3>
+      <p className="text-gray-900">{t("inherited.body", { summary: inheritedSummary(t, inherited), who: t(`inherited.source.${inherited.source}`), by: inherited.decidedBy ? ` (${inherited.decidedBy})` : "" })}</p>
+      <div className="mt-2 flex gap-1.5">
+        <button type="button" onClick={() => actions.keepInherited(targetKey)} className="flex items-center gap-1 rounded bg-brand px-2 py-1 text-xs font-medium text-white hover:bg-brand-light">
+          {t("inherited.keep")} <kbd className="rounded border border-white/40 px-1 font-mono text-[10px]">⏎</kbd>
+        </button>
+        <button type="button" onClick={() => store.setEditing(true)} className="flex items-center gap-1 rounded border border-brand-muted/30 px-2 py-1 text-xs text-gray-700 hover:border-brand-light/40">
+          {t("inherited.review")} <Kbd>E</Kbd>
+        </button>
+      </div>
+    </section>
+  );
+}
+
 /** One line under the header when the item changed: "Antes (v10): … → ahora: …", or "Nueva" / "Reapareció". */
 function ChangeLine({ e, members }: { e: Evaluated; members: Clash[] }) {
   const t = useT();
   const { fmt } = useI18n();
   const { store } = useTriageContext();
-  const prevVersion = useTriage(store, (s) => s.payload?.changeSummary?.previousVersion);
+  const prevVersion = useTriage(store, () => store.baseVersion());
   const change = e.s.clash ? clashChange(e.s.clash) : groupChange(e.s.group);
   if (!change || change === "unchanged") return null;
   const v = prevVersion ?? "—";
+  const inh = e.s.group?.inherited;
   let text: string;
   if (change === "new") text = t("detail.changeNew", { version: v });
   else if (change === "reappeared") text = t("detail.changeReappeared");
@@ -309,6 +411,8 @@ function ChangeLine({ e, members }: { e: Evaluated; members: Clash[] }) {
     const before = [countChanged ? t("list.clashesCount", { count: list.length - added }) : "", penChanged ? t("detail.beforePen", { value: fmt.number(Math.round(prevPen)) }) : ""].filter(Boolean).join(" · ");
     const now = [countChanged ? t("detail.nowCount", { count: list.length, added }) : "", penChanged ? t("detail.beforePen", { value: fmt.number(Math.round(nowPen)) }) : ""].filter(Boolean).join(" · ");
     text = before ? t("detail.before", { version: v, before, now }) : t("detail.changedOther", { version: v });
+    // The item had a decision on the baseline: show it so the coordinator re-decides quickly.
+    if (inh) text = t("inherited.beforeChanged", { version: inh.fromVersion, summary: inheritedSummary(t, inh), what: before ? `${before} → ${now}` : t("detail.changedOther", { version: v }) });
   }
   return (
     <p className="mx-4 mt-3 flex items-center gap-1.5 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-900">
@@ -410,7 +514,7 @@ function ProposalBlock({
   };
 
   const conf = proposal ? minConfidence(proposal) : null;
-  const agentMade = !!proposal && !e.d.edited && decisionChanges.length === 0 && Object.values(proposal.fields).some((f) => f.source === "llm" || f.source === "rule+llm");
+  const agentMade = !!proposal && proposal.origin === "agent" && !e.d.edited && decisionChanges.length === 0;
   return (
     // Thin violet bar = agent-prepared content; it disappears once the human edits or corrects it.
     <section

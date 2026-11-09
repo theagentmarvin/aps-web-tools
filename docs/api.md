@@ -190,7 +190,7 @@ If any edit happens after step 2 (exclusions, issue text), the approve call is r
 
 ## MCP server `coord`
 
-There are 32 tools, with names and inputs as in `docs/ai/mcp-tool-contracts.ts`. Outputs are one compact JSON envelope `{ok,data?,error?,truncated?,hint?}` capped at `agent.maxResponseTokens` (6,000 tokens × 4 chars); when the cap is hit, the largest array is cut. Model-derived text is returned as `{untrusted, flagged?}`, sanitised and limited to 120 characters; this covers group labels, element family/type/system, rule rationales and document names. Agent-written text is rejected when it contains URLs outside `issues.urlAllowlist`, emails, @mentions, control characters, or G-/C-/E-/P- ids that do not exist. Every tool call is audited (`tool.call`). No tool can approve. `apply_approved_proposals` takes `{batchId, dryRun=true}` and refuses without a valid HMAC approval.
+There are 34 tools, with names and inputs as in `docs/ai/mcp-tool-contracts.ts`. Outputs are one compact JSON envelope `{ok,data?,error?,truncated?,hint?}` capped at `agent.maxResponseTokens` (6,000 tokens × 4 chars); when the cap is hit, the largest array is cut. Model-derived text is returned as `{untrusted, flagged?}`, sanitised and limited to 120 characters; this covers group labels, element family/type/system, rule rationales and document names. Agent-written text is rejected when it contains URLs outside `issues.urlAllowlist`, emails, @mentions, control characters, or G-/C-/E-/P- ids that do not exist. Every tool call is audited (`tool.call`). No tool can approve. `apply_approved_proposals` takes `{batchId, dryRun=true}` and refuses without a valid HMAC approval.
 
 ### MCP deviations from `docs/ai/mcp-tool-contracts.ts`
 
@@ -224,6 +224,30 @@ There are 32 tools, with names and inputs as in `docs/ai/mcp-tool-contracts.ts`.
 - **Qué cambió:** `ClashGroup.change`, `FamilyInstance.change`, `TriageFamily.changeCounts` and `TriagePayload.changeSummary`, all against the previous cached version.
   - Per raw clash: `new`, `reappeared` (from the ledger), `changed` (|Δpenetration| > 10 mm or different element types), otherwise `unchanged`.
   - Per item: reappeared if any clash reappeared; new if every clash is new; changed if any clash is new or changed; otherwise unchanged.
+
+### Performance
+
+- **Compression:** JSON responses of 8 KB or more are compressed when the client accepts it (`br` quality 4, else `gzip` 6), with `Vary: Accept-Encoding`.
+- **Triage memo:** `GET /triage` is memoized per test. The key is the mtime and size of every file it reads (classification, the test records of the model set, diff, decisions, proposals, batches, questions, family decisions, ledger, disciplines) plus a 1-minute bucket. The serialized and compressed bytes of a memoized payload are reused.
+- **Short caches:** ACC reads (project, model sets, remote tests) are cached for 30–60 s; the APS user for 60 s, and logout clears it.
+- **Classification reads** are cached in-process, validated by mtime and size.
+
+### M2: decision memory, questions, capture
+
+- **F1 inheritance:** the ledger stores a decision reference per clash for HUMAN and FAMILY decisions (`entries[id].decision`: source, ref, decision, validity, effect, decidedAtVersion, decidedBy, penetrationMm, elementTypes); ACC state stays in `entries[id].acc`. Rule verdicts are recomputed and never stored.
+  - A group with no decision of its own inherits `ClashGroup.inherited`: ACC state first (D8), then its family`s approved decision from an earlier version (pending instances get `needsConfirmation`), then the earlier human decision. A human decision is inherited only when every clash carries it and is unchanged (|Δpenetration| ≤ 10 mm, same element types).
+  - A closure is never inherited by a `real` group, and a postponement is never inherited.
+  - Inherited groups count as decided (`reviewState: "decided"`), unless they need a confirmation.
+- **Baseline:** "Qué cambió" compares against the newest older version with at least one human decision (accept/correct/reject) or an approved batch; otherwise against the previous cached version (`changeSummary.baseVersion`, `baseReason`).
+- **X3 questions** (`.coordinator/questions.json`):
+  - MCP `ask_coordinator` and `list_questions`; HTTP `GET /tests/:testId/questions` and `POST H /questions/:questionId/answer` (`QuestionAnswerRequest`).
+  - A validity or action answer becomes human decisions on the question`s groups; an `other` answer is stored for the next agent run.
+  - When a newer version is ingested, an open question whose clashes changed (gone, or |Δpenetration| > 10 mm) becomes `stale`.
+- **Agent shapes** (used by `/preparar-ciclo` and `/acta`):
+  - `ingest_clash_test` and `run_classification` return `cycle: {baseVersion, baseReason ("last_reviewed" | "previous" | "first_cycle"), counts: {new, changed, reappeared, unchanged, inherited} (groups), clashCounts, needsReview, scopeChanges, accSync}`.
+  - `list_families` takes `delta[]` (new | changed | reappeared | unchanged | inherited) and `needsReview`, and returns `delta` and `needsReview` columns.
+  - `get_family` and `get_group` return `humanReview` (still needs a human), `delta {state, deltaPenetrationMm, typeChanged}` and `previousDecision {source, version, validity, action}`.
+- **Capture:** reason codes V01–V05 are accepted on decisions. Every proposal view carries `origin: "engine" | "agent"`.
 
 ### Solution families
 

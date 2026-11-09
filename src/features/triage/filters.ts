@@ -249,7 +249,7 @@ export interface DynamicFacts {
 export function dynamicFacts(s: StaticFacts, decision: Decision | undefined): DynamicFacts {
   const eff = effectiveValues(s.proposal, decision);
   return {
-    state: decisionState(decision, s.proposal),
+    state: decisionState(decision, s.proposal, !!s.group?.inherited),
     validity: eff.validity,
     priority: eff.priority,
     owner: eff.owner,

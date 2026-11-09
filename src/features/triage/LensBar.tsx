@@ -20,7 +20,9 @@ export function LensBar({ query, onChange }: { query: ListQuery; onChange: (q: L
   const counts = useTriage(store, (s) => s.lensCounts);
   const hasPrevious = useTriage(store, () => store.hasPrevious());
   const active = useTriage(store, () => store.effectiveLens());
-  const prevVersion = useTriage(store, (s) => s.payload?.changeSummary?.previousVersion);
+  const prevVersion = useTriage(store, () => store.baseVersion());
+  const baseReason = useTriage(store, (s) => s.payload?.changeSummary?.baseReason);
+  const questions = useTriage(store, (s) => s.openQuestionByGroup.size);
   const cs = useTriage(store, (s) => s.payload?.changeSummary?.clashes);
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
 
@@ -47,7 +49,7 @@ export function LensBar({ query, onChange }: { query: ListQuery; onChange: (q: L
         const on = active === l;
         const off = !enabled(l);
         const count = l === "cambios" ? counts.cambios : l === "todo" ? counts.todo : null;
-        const tip = !ENABLED[l] ? t("lens.soon") : l === "cambios" ? (hasPrevious ? [t("lens.cambiosTip", { version: prevVersion ?? "—" }), cs ? t("lens.cambiosClashes", { new: cs.new, changed: cs.changed, reappeared: cs.reappeared }) : ""].filter(Boolean).join("\n") : t("lens.noPrevious")) : t("lens.todoTip");
+        const tip = !ENABLED[l] ? t("lens.soon") : l === "cambios" ? (hasPrevious ? [t(baseReason === "last_reviewed" ? "lens.baseLastReviewed" : "lens.basePrevious", { version: prevVersion ?? "—" }), questions ? t("lens.questionsCount", { count: questions }) : "", cs ? t("lens.cambiosClashes", { new: cs.new, changed: cs.changed, reappeared: cs.reappeared }) : ""].filter(Boolean).join("\n") : t("lens.noPrevious")) : t("lens.todoTip");
         return (
           <button
             key={l}

@@ -92,6 +92,8 @@ export interface TriageActions {
   undo(): void;
   redo(): void;
   acceptInherited(): void;
+  /** F1: keep the decision inherited from the baseline (Enter). */
+  keepInherited(key?: string): void;
 }
 
 function announce(t: TFunction, label: string, store: TriageStore) {
@@ -277,6 +279,16 @@ export function createActions(store: TriageStore, settings: Settings, t: TFuncti
     redo() {
       const label = store.redo();
       if (label) toast.show(`${t("decision.redo")}: ${label}`);
+    },
+
+    keepInherited(key = cursor() ?? undefined) {
+      if (!key) return;
+      const { kind, id } = parseKey(key);
+      const gid = kind === "group" ? id : (store.state.clashes.get(id)?.groupId ?? "");
+      const inh = store.state.groups.get(gid)?.inherited;
+      if (!inh) return;
+      store.decide([key], "accept", () => [], { note: t("inherited.keptNote", { version: inh.fromVersion }), label: t("inherited.kept"), advance });
+      announce(t, t("inherited.kept"), store);
     },
 
     acceptInherited() {

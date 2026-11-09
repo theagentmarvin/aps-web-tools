@@ -214,7 +214,10 @@ describe("M0 baseline: the human-review invariant end to end", () => {
     expect(p.reviewReasons!.length).toBeGreaterThan(0);
     // payload ↔ engine: same set, the UI filter (reviewState === needs_review) sees every required group
     const flagged = new Set(tri.groups.filter((g) => g.reviewState === "needs_review").map((g) => g.id));
-    for (const g of required) expect(flagged.has(g.id)).toBe(true);
+    // A group decided in ACC (D8, M2 inheritance) or by an earlier human decision counts as decided: a human already saw it.
+    const inheritedIds = new Set(tri.groups.filter((g) => g.inherited).map((g) => g.id));
+    for (const g of required) expect(flagged.has(g.id) || inheritedIds.has(g.id)).toBe(true);
+    for (const g of tri.groups.filter((x) => x.inherited)) expect(g.inherited!.source).toBe("acc");
     expect(tri.groups.filter((g) => g.humanReview).length).toBe(cls.groups.filter((g) => g.reviewState === "needs_review").length);
     // after a human decision the group leaves the queue
     await acceptGroups(ui, key, [g0.id]);
