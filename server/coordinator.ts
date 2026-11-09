@@ -20,7 +20,10 @@ import { loadOrCreateSecret, readSecret, secureDir } from "./secure/keystore";
 import { ClashCache, type CacheKey } from "./cache/clash-cache";
 import { loadConfig, MAX_SUPPORTED_LEVEL, type AutonomyLevel, type CoordinatorConfig, type LoadedConfig } from "./config";
 import { CLOSABLE, ENGINE_NAME, ENGINE_VERSION, loadRules, runEngine } from "./engine";
-import { fixtureLedgerSeed, LedgerService } from "./ledger";
+import { fixtureLedgerSeed, LedgerService, recordAccInLedger } from "./ledger";
+import { accIndexOf, accResolvedByGroup, clashChanges, detectScopeChanges, outOfScopePredicate } from "./cycle";
+import type { AccSnapshot } from "../core/ingest/ledger";
+import type { ChangeKind, ScopeChange } from "./api/contract";
 import { familyViews, FamilyDecisionStore, type FamilyView } from "./families";
 import { PROBLEM_TYPES } from "../core/families";
 import { assertCode, DisciplineStore, inCode, outCode, suggestedToken, validCodes } from "./disciplines";
@@ -210,11 +213,9 @@ export class Coordinator {
     if (stored && stored.prevTestKey === test.previousTestKey) return stored.diff;
     const prev = await this.store.getTest(test.previousTestKey);
     if (!prev) return undefined;
-    const [prevRaw, raw] = await Promise.all([this.loadRaw(prev).catch(() => undefined), this.loadRaw(test).catch(() => undefined)]);
-    if (!prevRaw || !raw) return undefined;
-    const diff = await this.ledger.diffAndRecord(test.projectId, test.modelSetId, { version: prev.modelSetVersion, clashes: prevRaw.clashes }, { version: test.modelSetVersion, clashes: raw.clashes });
-    await this.store.withLock(() => writeJsonAtomic(file, { prevTestKey: prev.testKey, diff }));
-    return diff;
+    const raw = await this.loadRaw(test).catch(() => undefined);
+    if (!raw) return undefined;
+    return (await this.recordLedgerDiff(test, prev, raw.clashes))?.diff;
   }
 
   /** Dependencies for server/approval (the only ACC write path). */
@@ -450,6 +451,11 @@ export class Coordinator {
     if (existing && !input.refresh && existing.properties.status !== "pending" && (await this.cache.has(this.cacheKey(existing)))) {
       onPhase?.("clash_grid_ready", 0.3, `Prueba en caché (${existing.counts.clashes} interferencias)`, testKey);
       await this.relinkNewer(existing, caller);
+      const acc = await this.readAcc(projectId, modelSetId, existing.testId, existing.modelSetVersion);
+      if (acc) {
+        const raw = await this.loadRaw(existing).catch(() => undefined);
+        if (raw) await this.syncAcc(existing, raw.clashes, acc);
+      }
       return { ...this.ingestOutput(existing), durationMs: this.now() - t0, cached: true, timings };
     }
 
@@ -457,8 +463,13 @@ export class Coordinator {
     onPhase?.("downloading", 0.05, "Descargando las interferencias desde ACC…");
     progress?.("download", 0, 3);
     const data = await this.source.fetchClashes(projectId, modelSetId, input.testId);
-    const triage = await this.source.triageState(projectId, input.testId).catch(() => undefined);
-    if (triage) data.clashes = data.clashes.map((c) => ({ ...c, triage: triage.assigned.has(c.id) ? "assigned" : triage.closed.has(c.id) ? "closed" : "open" }));
+    // X1: ACC assigned/closed groups on every ingest (read-only; ACC wins, D8).
+    const acc = await this.readAcc(projectId, modelSetId, input.testId, data.test.modelSetVersion);
+    if (acc) {
+      const kind = new Map<string, "assigned" | "closed">();
+      for (const g of acc.groups) for (const id of g.existing) kind.set(id, g.kind);
+      data.clashes = data.clashes.map((c) => ({ ...c, triage: kind.get(c.id) ?? "open" }));
+    }
     const key: CacheKey = { projectId: bareProjectId(projectId), modelSetId, version: data.test.modelSetVersion, testId: input.testId };
     await this.cache.writeTest(key, { clashes: data.clashes, documents: data.documents, meta: { source: this.source.kind, warnings: data.warnings } });
     await this.cache.writeElements(key, []);
@@ -469,6 +480,7 @@ export class Coordinator {
     let rec = this.buildTestRecord(testKey, projectId, modelSetId, input.testId, data, [], wantProps ? "pending" : "skipped", previous?.testKey, data.warnings);
     await this.store.putTest(rec);
     await this.recordLedgerDiff(rec, previous, data.clashes);
+    if (acc) await this.syncAcc(rec, data.clashes, acc);
     const ctx = await this.store.getContext();
     await this.store.setContext({ ...ctx, projectId, projectName: data.project.name, modelSetId, modelSetName: data.modelSet.name, testKey });
     timings.clashesMs = this.now() - t0;
@@ -487,6 +499,7 @@ export class Coordinator {
       rec = this.buildTestRecord(testKey, projectId, modelSetId, input.testId, { ...data, clashes: p.clashes }, p.elements, p.propertiesStatus, previous?.testKey, [...data.warnings, ...p.warnings]);
       await this.store.putTest(rec);
       await this.recordLedgerDiff(rec, previous, p.clashes, p.allElementKeys);
+      if (acc) await this.syncAcc(rec, p.clashes, acc);
       timings.propertiesMs = this.now() - t1;
       timings.propertyDocsFromCache = p.cachedDocuments ?? 0;
     }
@@ -579,16 +592,85 @@ export class Coordinator {
     return out;
   }
 
-  private async recordLedgerDiff(rec: TestRecord, previous: TestRecord | undefined, clashes: readonly NormalizedClash[], allElementKeys?: string[]): Promise<void> {
-    if (!previous) return;
-    const prevRaw = await this.loadRaw(previous).catch(() => undefined);
-    if (!prevRaw) return;
+  private async recordLedgerDiff(rec: TestRecord, previous: TestRecord | undefined, clashes: readonly NormalizedClash[], allElementKeys?: string[]): Promise<{ diff: ClashDiff; scopeChanges: ScopeChange[] } | undefined> {
+    if (!previous) return undefined;
+    const [prevRaw, raw] = await Promise.all([this.loadRaw(previous).catch(() => undefined), this.loadRaw(rec).catch(() => undefined)]);
+    if (!prevRaw) return undefined;
     try {
-      const diff = await this.ledger.diffAndRecord(rec.projectId, rec.modelSetId, { version: previous.modelSetVersion, clashes: prevRaw.clashes }, { version: rec.modelSetVersion, clashes }, allElementKeys);
-      await this.store.withLock(() => writeJsonAtomic(this.store.path("tests", rec.testKey, "diff.json"), { prevTestKey: previous.testKey, diff }));
+      // X6 scope guard: documents added/removed/replaced, test view changed, mass resolution.
+      const prelim = diffTestVersions(prevRaw.clashes, clashes);
+      const scope = detectScopeChanges(
+        { viewName: previous.viewName, documents: prevRaw.documents, clashes: prevRaw.clashes },
+        { viewName: rec.viewName, documents: raw?.documents ?? [] },
+        prelim,
+      );
+      const diff = await this.ledger.diffAndRecord(
+        rec.projectId,
+        rec.modelSetId,
+        { version: previous.modelSetVersion, clashes: prevRaw.clashes },
+        { version: rec.modelSetVersion, clashes },
+        allElementKeys,
+        scope.affectedPrevDocs.size ? outOfScopePredicate(scope.affectedPrevDocs) : undefined,
+      );
+      await this.store.withLock(() => writeJsonAtomic(this.store.path("tests", rec.testKey, "diff.json"), { prevTestKey: previous.testKey, diff, scopeChanges: scope.changes }));
+      return { diff, scopeChanges: scope.changes };
     } catch (err) {
       log.warn("ledger.update_failed", { message: (err as Error).message });
+      return undefined;
     }
+  }
+
+  /** X1: read ACC's assigned/closed groups for a test; undefined (logged) when ACC cannot be read. */
+  private async readAcc(projectId: string, modelSetId: string, testId: string, version: number): Promise<AccSnapshot | undefined> {
+    try {
+      return await this.source.accState(projectId, modelSetId, testId, version);
+    } catch (err) {
+      log.warn("acc.sync_failed", { message: (err as Error).message });
+      return undefined;
+    }
+  }
+
+  /** X1: store ACC's state in the ledger (source of truth for ACC-decided clashes). */
+  private async syncAcc(rec: TestRecord, clashes: readonly NormalizedClash[], snap: AccSnapshot): Promise<void> {
+    try {
+      await recordAccInLedger(this.ledger, rec.projectId, rec.modelSetId, { version: rec.modelSetVersion, clashes }, snap);
+    } catch (err) {
+      log.warn("acc.ledger_failed", { message: (err as Error).message });
+    }
+  }
+
+  /** X6 scope changes of a test vs its previous cached version ([] without one). */
+  async scopeChangesFor(test: TestRecord): Promise<ScopeChange[]> {
+    if (!test.previousTestKey) return [];
+    const stored = await readJsonFile<{ prevTestKey: string; scopeChanges?: ScopeChange[] }>(this.store.path("tests", test.testKey, "diff.json"));
+    if (stored && stored.prevTestKey === test.previousTestKey && stored.scopeChanges) return stored.scopeChanges;
+    const prev = await this.store.getTest(test.previousTestKey);
+    const raw = await this.loadRaw(test).catch(() => undefined);
+    if (!prev || !raw) return [];
+    return (await this.recordLedgerDiff(test, prev, raw.clashes))?.scopeChanges ?? [];
+  }
+
+  /** X1: ACC state of the clashes of a test, from the ledger. */
+  async accFor(test: TestRecord, clashIds: Iterable<string>) {
+    const ledger = await this.ledger.load(test.projectId, test.modelSetId).catch(() => undefined);
+    return {
+      index: accIndexOf(ledger, clashIds),
+      resolvedByGroup: accResolvedByGroup(ledger),
+      sync: ledger?.accSync?.[String(test.modelSetVersion)],
+    };
+  }
+
+  /** "Qué cambió": change word per raw clash vs the previous cached version. */
+  async changesFor(test: TestRecord, cls: ClassificationRecord): Promise<{ byClash: Map<string, ChangeKind>; diff?: ClashDiff; previous?: TestRecord }> {
+    const diff = await this.diffForTest(test);
+    const previous = test.previousTestKey ? await this.store.getTest(test.previousTestKey) : undefined;
+    const prevCls = previous ? await this.store.getClassification(previous.testKey) : undefined;
+    const prevById = new Map((prevCls?.clashes ?? []).map((c) => [c.id, c]));
+    if (diff && !prevCls && previous) {
+      const raw = await this.loadRaw(previous).catch(() => undefined);
+      for (const c of raw?.clashes ?? []) prevById.set(c.id, { penetrationMm: c.penetrationMm, a: { type: undefined, category: "" }, b: { type: undefined, category: "" } } as unknown as ClashRecord);
+    }
+    return { byClash: clashChanges(cls.clashes, diff, prevById), ...(diff ? { diff } : {}), ...(previous ? { previous } : {}) };
   }
 
   // ── ingest jobs (asynchronous, for the web UI) ─────────────────────────────
@@ -1231,6 +1313,7 @@ export class Coordinator {
         resolved: diff.counts.resolved,
         persisting: diff.counts.persisting,
         elementDeleted: diff.counts.element_deleted,
+        outOfScope: diff.counts.out_of_scope ?? 0,
         reappeared: diff.counts.reappeared,
       },
       byDimension: {

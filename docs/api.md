@@ -207,6 +207,24 @@ There are 32 tools, with names and inputs as in `docs/ai/mcp-tool-contracts.ts`.
 - `propose_rule_change` takes `feedbackIds` OR `evidence` (at least one): `evidence = {kind: "real_data_evaluation", testKey, summary ≤ 1500, metrics: {changedUnique, changedMc, validityBefore, validityAfter, groupsBefore, groupsAfter, needsReviewBefore, needsReviewAfter, unsafeClosures, scenariosPassed, scenariosTotal}}`; `evaluation` also accepts those numeric metrics. `unsafeClosures > 0` (real conflicts closed without human review) is refused at registration. `GET /rule-suggestions` returns `evidence` and `feedbackCount`.
 - New clash fact for rules: `sameOriginFile` (both elements originate in the same file lineage, resolving linked copies; `core/pipeline.ts`).
 
+### M1: ACC sync, scope guard, "Qué cambió"
+
+- **X1 (ACC wins, D8):** every ingest, cached ones included, reads ACC (read-only):
+  - `GET tests/{t}/clashes/assigned|closed` gives the existing and resolved clashes per group.
+  - It is joined with `modelsets/{m}/clashes/assigned|closed` for the issueId and the close reason.
+
+  The result is stored in the ledger (`entries[id].acc`, `accSync[version]`). It is projected as `acc` on groups, family instances and families, and as `TriagePayload.accSync`. A clash ACC already assigned or closed is never proposed again (no action, no draft) and never goes into a batch item. Fixtures: `tests/fixtures/mc/v{N}/acc-groups.json`.
+- **X6:** documents are matched by lineage, because MC renumbers `documentId` between versions. Each version detects:
+  - `document_added` and `document_removed`;
+  - `model_replaced`: the same file name with a new lineage;
+  - `test_config_changed`: another model set view, or another viewable of the same lineage;
+  - `mass_resolution`: more than 30 % of one document's clashes gone at once, checked only for documents with at least 50 clashes.
+
+  Previous clashes of an affected document that would count as resolved become `out_of_scope` in the diff and the ledger, and are never counted as resolved. They are exposed in `TriagePayload.scopeChanges` and `changeSummary.outOfScope`.
+- **Qué cambió:** `ClashGroup.change`, `FamilyInstance.change`, `TriageFamily.changeCounts` and `TriagePayload.changeSummary`, all against the previous cached version.
+  - Per raw clash: `new`, `reappeared` (from the ledger), `changed` (|Δpenetration| > 10 mm or different element types), otherwise `unchanged`.
+  - Per item: reappeared if any clash reappeared; new if every clash is new; changed if any clash is new or changed; otherwise unchanged.
+
 ### Solution families
 
 `docs/domain/solution-families-proposal.md` (signature v6) is implemented in `core/families` (pure, per unique clash) and `server/families.ts`. Every group and clash carries `familyId`, `problemType` and `signature`; a group whose members have more than one signature is split (invariant 8; the dominant part keeps the id). Families are stored with the classification; human decisions live in `.coordinator/projects/<p>/model-sets/<m>/families.json` (versioned, audited) and carry over to later tests. Instances present when a decision was taken are `inherited`; new ones are `inherited_pending` until a human confirms them and are never put in a batch automatically. `POST /batches` turns an approved family into ONE assign (issue `[F-xxxx] …`, description ≤ 1,000 chars with locations by level, chunks of 1,000 clashes) or ONE close; `issueMode: per_instance` gives one assign per instance; a later cycle produces a follow-up `[F-xxxx · ciclo vN]`. Batch items list `validityChanges`. MCP: `list_families`, `get_family`, `propose_family_decision` (proposal only).

@@ -18,6 +18,9 @@ export type Filters = Partial<Record<FilterKey, string[]>>;
 export const SORT_KEYS = ["priority", "confidence_asc", "count_desc", "distance", "level", "pair", "delta", "updated"] as const;
 export type SortKey = (typeof SORT_KEYS)[number];
 export type ViewMode = "families" | "groups" | "clashes";
+/** Lens = saved filter + sort + first panel section (?lente=). Absent = default ("cambios" when there is a previous version, else "todo"). */
+export const LENSES = ["cambios", "incidencias", "reunion", "todo"] as const;
+export type LensId = (typeof LENSES)[number];
 
 export interface ListQuery {
   filters: Filters;
@@ -26,6 +29,7 @@ export interface ListQuery {
   view: ViewMode;
   /** Document pair "a,b" (from the clash grid): only clashes between those two models. Filtered client-side. */
   docs?: string;
+  lens?: LensId;
 }
 
 export const DEFAULT_FILTERS: Filters = { decision: ["pendiente"] };
@@ -120,6 +124,7 @@ export function parseQuery(sp: URLSearchParams): ListQuery {
     // Two views: the tree ("Grupos", internal "families") and "Interferencias". Old ?view=groups / ?view=families links open the tree.
     view: sp.get("view") === "clashes" || sp.get("view") === "interferencias" ? "clashes" : "families",
     ...(sp.get("docs") ? { docs: sp.get("docs")! } : {}),
+    ...((LENSES as readonly string[]).includes(sp.get("lente") ?? "") ? { lens: sp.get("lente") as LensId } : {}),
   };
 }
 
@@ -137,6 +142,7 @@ export function writeQuery(sp: URLSearchParams, q: ListQuery): URLSearchParams {
   q.q ? sp.set("q", q.q) : sp.delete("q");
   q.view === "families" ? sp.delete("view") : sp.set("view", q.view);
   q.docs ? sp.set("docs", q.docs) : sp.delete("docs");
+  q.lens ? sp.set("lente", q.lens) : sp.delete("lente");
   return sp;
 }
 

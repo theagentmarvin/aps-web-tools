@@ -12,6 +12,7 @@ import { HUBS, PROJECTS, SANDBOX_RULES, SANDBOX_SUGGESTIONS, SANDBOX_VIEWS, type
 import { generateTest, rng, type GenerateOptions, type GeneratedTest, type MockDocDef } from "./generate";
 import { buildReport, fakeHash, seedAudit, seedCorrections, seedSuggestions } from "./reports";
 import { deriveFamilies, refreshFamily } from "./families";
+import { applyM1, type M1Data } from "./m1";
 import { PROBLEM_TYPES } from "~/lib/problem-types";
 
 const ME = USERS[0];
@@ -30,7 +31,7 @@ export class MockCoordinatorApi implements CoordinatorApi {
 
   private tests = new Map<string, GeneratedTest>();
   /** Solution families per test (mock F1 step), derived once from the generated groups. */
-  private families = new Map<string, { families: T.TriageFamily[]; groups: T.FamilyGroup[] }>();
+  private families = new Map<string, { families: T.TriageFamily[]; groups: T.FamilyGroup[]; m1: M1Data }>();
   private decisions = new Map<string, T.Decision[]>();
   private batches = new Map<string, T.Batch>();
   private applyJobs = new Map<string, ApplyJob>();
@@ -646,7 +647,11 @@ export class MockCoordinatorApi implements CoordinatorApi {
     let f = this.families.get(testId);
     if (!f) {
       const d = this.data(testId);
-      f = deriveFamilies(d.groups, d.clashes, d.proposals);
+      const derived = deriveFamilies(d.groups, d.clashes, d.proposals);
+      const m1 = applyM1(d.test, derived.groups, d.clashes, !!this.locateTest(testId).opts.firstTest);
+      const byId = new Map(derived.groups.map((g) => [g.id, g]));
+      for (const fam of derived.families) refreshFamily(fam, byId);
+      f = { ...derived, m1 };
       this.families.set(testId, f);
     }
     return f;
@@ -761,6 +766,9 @@ export class MockCoordinatorApi implements CoordinatorApi {
       disciplines: DISCIPLINES,
       groups: this.familiesOf(opts.testId).groups,
       families: this.familiesOf(opts.testId).families,
+      changeSummary: this.familiesOf(opts.testId).m1.changeSummary,
+      scopeChanges: this.familiesOf(opts.testId).m1.scopeChanges,
+      accSync: this.familiesOf(opts.testId).m1.accSync ?? undefined,
       problemTypes: PROBLEM_TYPES,
       clashes: d.clashes,
       proposals: d.proposals,

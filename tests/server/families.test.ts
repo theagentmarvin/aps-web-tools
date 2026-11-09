@@ -181,8 +181,10 @@ describe("family decisions, inheritance and batches (fixtures)", () => {
     expect(body.description.length).toBeLessThanOrEqual(1000);
     expect(body.description).toMatch(/Ubicaciones por nivel: /);
     expect(body.description).toMatch(/Detalle típico: Pasada tipo/);
-    expect(body.clashes.length).toBe(f.rawClashCount);
-    expect(new Set(items[0]!.groupIds)).toEqual(new Set(f.groupIds));
+    // X1: clashes ACC already assigned or closed are never part of a new assign
+    expect(body.clashes.length).toBe(f.rawClashCount - (f.acc?.existing ?? 0));
+    const live = f.instances.filter((i) => (i.acc?.existing ?? 0) < i.rawClashCount).map((i) => i.groupId);
+    expect(new Set(items[0]!.groupIds)).toEqual(new Set(live));
     // the group flow does not duplicate the family's instances
     expect(b.items.filter((i) => !i.familyId && i.groupId && f.groupIds.includes(i.groupId))).toHaveLength(0);
     // the decision is versioned and audited
@@ -196,7 +198,7 @@ describe("family decisions, inheritance and batches (fixtures)", () => {
       .flatMap((r) => (Array.isArray(r.body) ? r.body : ((r.body as { groups?: unknown[] } | undefined)?.groups ?? [r.body])))
       .filter((x): x is { title: string; clashes: number[] } => typeof (x as { title?: unknown } | undefined)?.title === "string" && (x as { title: string }).title.startsWith(`[${f.id}]`));
     expect(bodies).toHaveLength(1);
-    expect(bodies[0]!.clashes).toHaveLength(f.rawClashCount);
+    expect(bodies[0]!.clashes).toHaveLength(f.rawClashCount - (f.acc?.existing ?? 0));
   });
 
   it("mixed-validity guard: approving a validity that differs from instances needs an explicit acknowledgement; real is never closed", async () => {

@@ -1,0 +1,40 @@
+{
+  "note": "ACC assigned/closed groups intersected with this clash test (GET tests/{testId}/clashes/assigned|closed joined with modelsets/{m}/clashes/assigned|closed for issueId/reason). Synthetic.",
+  "assigned": [
+    {
+      "id": "7d1f0a3e-0001-4a00-9000-00000000a001",
+      "issueId": "0b6c1f00-0000-4000-8000-00000000i001",
+      "existing": [
+        "41299469584418",
+        "41299469592337",
+        "41299469600256",
+        "41299469608175"
+      ],
+      "resolved": [
+        "41299469703203"
+      ]
+    },
+    {
+      "id": "7d1f0a3e-0003-4a00-9000-00000000a002",
+      "issueId": "0b6c1f00-0000-4000-8000-00000000i002",
+      "existing": [
+        "41299470415913",
+        "41299470431751",
+        "41299470471346"
+      ],
+      "resolved": []
+    }
+  ],
+  "closed": [
+    {
+      "id": "7d1f0a3e-0002-4a00-9000-00000000c001",
+      "reason": "MINIMAL_OVERLAP",
+      "existing": [
+        "41299471191975",
+        "41299471199894",
+        "41299471223651"
+      ],
+      "resolved": []
+    }
+  ]
+}

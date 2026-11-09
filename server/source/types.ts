@@ -5,6 +5,7 @@
  *   - fixtures (server/source/fixtures.ts): tests/fixtures served as if it were ACC;
  *     writes are recorded locally and never sent anywhere.
  */
+import type { AccSnapshot } from "../../core/ingest/ledger";
 import type { ElementProps, ModelDocument, NormalizedClash } from "../../core/types";
 import type { ApprovedWriteToken } from "../aps/write-guard";
 import type { AssignedGroupCreate, ClashGroupJob, ClosedGroupCreate } from "../aps/types";
@@ -108,6 +109,11 @@ export interface DataSource {
   fetchProperties(projectId: string, data: SourceClashData, progress?: IngestProgress): Promise<SourceProperties>;
   /** Saved model set views ("what is being clashed"): name + lineage/viewable entries. */
   listModelSetViews(projectId: string, modelSetId: string): Promise<Array<{ name: string; definition: Array<{ lineageUrn: string; viewableName?: string }> }>>;
+  /**
+   * X1: ACC assigned/closed groups intersected with a test (existing / resolved clash ids),
+   * with issueId / close reason from the model-set group lists. Read-only.
+   */
+  accState(projectId: string, modelSetId: string, testId: string, version: number): Promise<AccSnapshot>;
   /** Clash ids currently in assigned / closed groups for a test (preflight). */
   triageState(projectId: string, testId: string): Promise<{ assigned: Set<string>; closed: Set<string> }>;
   listAssignees(projectId: string): Promise<Array<{ id: string; name: string; kind: "user" | "role" | "company" }>>;

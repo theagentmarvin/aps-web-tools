@@ -8,6 +8,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { PROJECTS } from "../../src/lib/api/mock/fixtures";
 import { generateTest } from "../../src/lib/api/mock/generate";
+import { applyM1 } from "../../src/lib/api/mock/m1";
 import type { Clash, TriagePayloadWithFamilies } from "../../src/lib/api/types";
 
 // The store and the mock families step use browser APIs (window, import.meta.env): they are
@@ -17,7 +18,7 @@ const FAMILIES_MODULE: string = "../../src/lib/api/mock/families";
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let TriageStore: any;
 let deriveFamilies: any;
-type ListQuery = { filters: Record<string, string[]>; sort: string; q: string; view: string; docs?: string };
+type ListQuery = { filters: Record<string, string[]>; sort: string; q: string; view: string; docs?: string; lens?: string };
 interface TreeNode { id: string; depth: number; bucket: string; familyIds: string[]; instanceCount: number; clashCount: number; worst: number | null }
 interface StoreLike {
   state: {
@@ -26,10 +27,14 @@ interface StoreLike {
     familyStats: Map<string, { clashCount: number; instanceCount: number }>;
     families: Map<string, { groupIds: string[] }>;
     visibleByGroup: Map<string, unknown[]>;
+    hiddenByGroup: Map<string, unknown[]>;
+    lensCounts: { cambios: number; todo: number };
     checked: Set<string>;
-    summary: { groups: number; locations: number; clashes: number };
+    summary: { groups: number; locations: number; clashes: number; changed?: number };
   };
   familiesMode(): boolean;
+  effectiveLens(): string;
+  hasPrevious(): boolean;
   load(p: unknown): void;
   selectionMembers(key: string): { members: unknown[] };
   toggleCheckSubtree(key: string): void;
@@ -47,7 +52,8 @@ function payloadFor(projectId: string): TriagePayloadWithFamilies {
   const ms = project.modelSets[0];
   const opts = ms.tests[0];
   const d = generateTest({ ...opts, analyzed: true });
-  const f = deriveFamilies(d.groups, d.clashes, d.proposals) as { groups: unknown[]; families: unknown[] };
+  const f = deriveFamilies(d.groups, d.clashes, d.proposals) as { groups: Parameters<typeof applyM1>[1]; families: unknown[] };
+  const m1 = applyM1(d.test, f.groups, d.clashes, !!opts.firstTest);
   return {
     project: { id: project.id },
     modelSet: { id: ms.id },
@@ -61,6 +67,8 @@ function payloadFor(projectId: string): TriagePayloadWithFamilies {
     proposals: d.proposals,
     decisions: [],
     changesCursor: "0",
+    changeSummary: m1.changeSummary,
+    scopeChanges: m1.scopeChanges,
   } as unknown as TriagePayloadWithFamilies;
 }
 
@@ -122,17 +130,20 @@ describe("tree vs Interferencias totals", () => {
     ["búsqueda", { filters: { decision: [] }, q: "Nivel" }],
   ];
   for (const [name, fixture] of [["mock Torre B", () => mock], ["mock Sandbox v11", () => sandbox], ["v11-shaped (raw duplicates)", () => v11]] as const) {
-    for (const [label, over] of queries) {
-      it(`${name} · ${label}: same grupos · ubicaciones · interferencias`, () => {
-        const { tree, list } = both(fixture(), q(over));
+    for (const [label, over] of queries)
+      for (const lens of ["todo", "cambios"]) {
+      it(`${name} · ${label} · lente ${lens}: same grupos · ubicaciones · interferencias`, () => {
+        const { tree, list } = both(fixture(), q({ ...over, lens }));
         expect(tree.familiesMode()).toBe(true);
         expect(list.state.rows.length).toBe(list.state.summary.clashes);
         expect(tree.state.summary).toEqual(list.state.summary);
-        const roots = [...tree.state.nodes.values()].filter((n) => n.depth === 0);
+        // The collapsed "N sin cambios" row is outside the lens totals.
+        const roots = [...tree.state.nodes.values()].filter((n) => n.depth === 0 && n.bucket !== "unchanged");
         expect(roots.reduce((s, n) => s + n.clashCount, 0)).toBe(list.state.rows.length);
         expect(roots.reduce((s, n) => s + n.instanceCount, 0)).toBe(list.state.summary.locations);
+        expect(tree.state.lensCounts).toEqual(list.state.lensCounts);
       });
-    }
+      }
     it(`${name}: docs filter applies identically`, () => {
       const c = fixture().clashes[0];
       const docs = `${c.a.documentId},${c.b.documentId}`;
@@ -143,7 +154,7 @@ describe("tree vs Interferencias totals", () => {
   }
 
   it("counts raw ACC clashes, not unique pairs", () => {
-    const { tree } = both(v11, q({ filters: { decision: [] } }));
+    const { tree } = both(v11, q({ filters: { decision: [] }, lens: "todo" }));
     expect(tree.state.summary.clashes).toBe(v11.clashes.length);
     const unique = v11.groups.reduce((s, g) => s + (g.uniqueClashCount ?? 0), 0);
     expect(tree.state.summary.clashes).toBeGreaterThan(unique);
@@ -152,7 +163,7 @@ describe("tree vs Interferencias totals", () => {
 
 describe("tree structure", () => {
   it("every node is the sum of its children", () => {
-    const { tree } = both(v11, q({ filters: { decision: [] } }));
+    const { tree } = both(v11, q({ filters: { decision: [] }, lens: "todo" }));
     const s = tree.state;
     for (const n1 of [...s.nodes.values()].filter((n) => n.depth === 0 && n.bucket !== "loose")) {
       const kids = [...s.nodes.values()].filter((n) => n.depth === 1 && n.id.startsWith(`${n1.id}|`));
@@ -166,7 +177,7 @@ describe("tree structure", () => {
   });
 
   it("orders by importance across buckets (worst priority first)", () => {
-    const { tree } = both(v11, q({ filters: { decision: [] } }));
+    const { tree } = both(v11, q({ filters: { decision: [] }, lens: "todo" }));
     const l1 = tree.state.rows.filter((r) => r.kind === "node" && r.depth === 0).map((r) => tree.state.nodes.get(r.id)!);
     const worst = l1.map((n) => n.worst ?? 9);
     expect(worst).toEqual([...worst].sort((a, b) => a - b));
@@ -178,7 +189,7 @@ describe("tree structure", () => {
   });
 
   it("a node selects (viewer) and checks (checkbox) its whole subtree", () => {
-    const { tree } = both(v11, q({ filters: { decision: [] } }));
+    const { tree } = both(v11, q({ filters: { decision: [] }, lens: "todo" }));
     const s = tree.state;
     const n1 = [...s.nodes.values()].find((n) => n.depth === 0)!;
     expect(tree.selectionMembers(`n:${n1.id}`).members.length).toBe(n1.clashCount);
@@ -196,5 +207,49 @@ describe("tree structure", () => {
     }
     tree.toggleCheckSubtree(`n:${n1.id}`);
     expect(tree.checkState(`n:${n1.id}`)).toBe("all");
+  });
+});
+
+describe("lens Qué cambió", () => {
+  it("the (N nuevas) bracket equals changeSummary new + changed + reappeared, identical in both views", () => {
+    for (const fixture of [mock, sandbox]) {
+      const cs = (fixture as unknown as { changeSummary: { clashes: Record<string, number> } }).changeSummary.clashes;
+      const expected = cs.new + cs.changed + cs.reappeared;
+      const { tree, list } = both(fixture, q({ filters: { decision: [] }, lens: "cambios" }));
+      expect(tree.state.summary.changed).toBe(expected);
+      expect(list.state.summary.changed).toBe(expected);
+      expect(tree.state.lensCounts.cambios).toBe(expected);
+      expect(list.state.lensCounts.cambios).toBe(expected);
+      expect(tree.state.summary.clashes).toBeGreaterThanOrEqual(expected);
+      // No bracket outside the lens.
+      expect(both(fixture, q({ filters: { decision: [] }, lens: "todo" })).tree.state.summary.changed).toBeUndefined();
+    }
+  });
+
+  it("defaults to Qué cambió when there is a previous version", () => {
+    const { tree } = both(sandbox, q({ filters: { decision: [] } }));
+    expect(tree.hasPrevious()).toBe(true);
+    expect(tree.effectiveLens()).toBe("cambios");
+  });
+
+  it("changed + hidden (sin cambios) = Todo, in clashes and ubicaciones", () => {
+    for (const fixture of [mock, sandbox, v11]) {
+      const todo = both(fixture, q({ filters: { decision: [] }, lens: "todo" })).tree;
+      const { tree } = both(fixture, q({ filters: { decision: [] }, lens: "cambios" }));
+      const hidden = [...tree.state.hiddenByGroup.values()];
+      expect(tree.state.summary.locations + hidden.length).toBe(todo.state.summary.locations);
+      expect(tree.state.summary.clashes + hidden.reduce((n: number, l) => n + l.length, 0)).toBe(todo.state.summary.clashes);
+      // Tab count = the "(N nuevas)" bracket = clashes that actually changed.
+      expect(tree.state.lensCounts.cambios).toBe(tree.state.summary.changed);
+      const unchanged = tree.state.nodes.get("unchanged");
+      if (hidden.length) expect(unchanged?.instanceCount).toBe(hidden.length);
+    }
+  });
+
+  it("reappeared items sort first at the top level", () => {
+    const { tree } = both(sandbox, q({ filters: { decision: [] }, lens: "cambios" }));
+    const l1 = tree.state.rows.filter((r) => r.kind === "node" && r.depth === 0).map((r) => tree.state.nodes.get(r.id)!);
+    const flags = l1.filter((n) => n.bucket !== "unchanged").map((n) => ((n as unknown as { reappeared: number }).reappeared > 0 ? 1 : 0));
+    expect(flags).toEqual([...flags].sort((a, b) => b - a));
   });
 });

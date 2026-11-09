@@ -208,11 +208,24 @@ export type {
   ProblemTypeInfo,
   TriageFamily,
 } from "../../../server/api/contract";
-import type { ClashGroup as WireGroup, FamilyDecisionFields as WireDecisionFields, TriagePayload as WirePayload } from "../../../server/api/contract";
+import type { ClashGroup as WireGroup, FamilyDecisionFields as WireDecisionFields, TriageFamily as WireFamily, TriagePayload as WirePayload } from "../../../server/api/contract";
 
-/** A group as an instance of its family (the contract already carries the optional family fields). */
+/** A group as an instance of its family (the contract carries the optional family, change and ACC fields). */
 export type FamilyGroup = WireGroup;
 export type TriagePayloadWithFamilies = WirePayload;
+/** A family (grupo), including the M1 changeCounts / acc. */
+export type FamilyView = WireFamily;
+
+// M1 (docs/PLAN-core-features-simplified.md): change since the previous version (F1),
+// ACC state of assigned/closed groups (X1), scope guard (X6).
+export type { AccState, AccSyncSummary, ChangeCounts, ChangeKind, ChangeSummary, ScopeChange } from "../../../server/api/contract";
+export type AccGroupState = import("../../../server/api/contract").AccState;
+
+/** A clash delta may become "out_of_scope" (X6): never shown as resolved. Today the server only sends the count (changeSummary.outOfScope). */
+export function isOutOfScope(c: { delta: string }): boolean {
+  return c.delta === "out_of_scope";
+}
+
 export type IssueMode = "family" | "per_instance";
 
 /**

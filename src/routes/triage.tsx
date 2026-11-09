@@ -20,6 +20,7 @@ import { WorkspaceDialogs } from "~/features/triage/dialogs";
 import { FilterBar } from "~/features/triage/FilterBar";
 import { isDefaultQuery, parseQuery, writeQuery, type ListQuery } from "~/features/triage/filters";
 import { GroupList } from "~/features/triage/GroupList";
+import { LensBar } from "~/features/triage/LensBar";
 import { TriageStore, rowKey, useTriage } from "~/features/triage/store";
 import { useTriageHotkeys } from "~/features/triage/useTriageHotkeys";
 import { SelectionBar, StatusBar, WorkspaceBanners, WorkspaceHeader, useProgress } from "~/features/triage/WorkspaceChrome";
@@ -224,7 +225,7 @@ function Workspace({ loading, manualOk, onManual, onTestChange, onReload, onQuer
           ) : showNoAnalysis ? (
             <NoAnalysis command={payload?.modelSet.agentCommand ?? ""} onManual={onManual} />
           ) : (
-            <ListArea onClear={() => onQueryChange({ ...query, filters: { decision: ["pendiente"] }, q: "", docs: undefined })} onSend={() => setSendOpen(true)} readyCount={progress.ready} />
+            <ListArea onQueryChange={onQueryChange} onClear={() => onQueryChange({ ...query, filters: { decision: ["pendiente"] }, q: "", docs: undefined })} onSend={() => setSendOpen(true)} readyCount={progress.ready} />
           )}
         </section>
         <ResizeHandle label={t("workspace.resizeList")} value={layout.list} onChange={(v) => resize("list", v)} />
@@ -264,7 +265,7 @@ function Workspace({ loading, manualOk, onManual, onTestChange, onReload, onQuer
   );
 }
 
-function ListArea({ onClear, onSend, readyCount }: { onClear: () => void; onSend: () => void; readyCount: number }) {
+function ListArea({ onClear, onSend, readyCount, onQueryChange }: { onClear: () => void; onSend: () => void; readyCount: number; onQueryChange: (q: ListQuery) => void }) {
   const t = useT();
   const { store } = useTriageContext();
   const rows = useTriage(store, (s) => s.rows.length);
@@ -272,9 +273,13 @@ function ListArea({ onClear, onSend, readyCount }: { onClear: () => void; onSend
   const summary = useTriage(store, (s) => s.summary);
   const manual = useTriage(store, (s) => s.manual);
   const progress = useProgress();
+  const lens = useTriage(store, () => store.effectiveLens());
+  const lensBar = !manual && <LensBar query={query} onChange={onQueryChange} />;
   if (rows === 0) {
     const allDone = progress.total > 0 && progress.done + progress.breakdown.postponed >= progress.total;
     return allDone && isDefaultQuery(query) ? (
+      <>
+      {lensBar}
       <EmptyState
         title={t("list.allDone", { count: readyCount })}
         action={
@@ -283,16 +288,32 @@ function ListArea({ onClear, onSend, readyCount }: { onClear: () => void; onSend
           </Button>
         }
       />
+      </>
     ) : (
-      <EmptyState title={t("list.emptyFiltered")} action={<Button onClick={onClear}>{t("list.clearFilters")}</Button>} />
+      <>
+        {lensBar}
+        <EmptyState title={t("list.emptyFiltered")} action={<Button onClick={onClear}>{t("list.clearFilters")}</Button>} />
+      </>
     );
   }
   return (
     <>
+      {lensBar}
       <div className="flex-shrink-0 border-b border-brand-muted/10 px-3 py-1 text-[11px] text-gray-500">
         {manual && <span className="mr-2 text-amber-800">{t("workspace.manualMode")}</span>}
         {/* Same line in both views for the same filters: grupos · ubicaciones · interferencias (ACC clashes). */}
-        <span data-testid="list-summary">{t("families.summaryClashes", { count: summary.groups, groups: summary.groups, locations: summary.locations, clashes: summary.clashes })}</span>
+        <span data-testid="list-summary">
+          {t("families.summaryClashes", { count: summary.groups, groups: summary.groups, locations: summary.locations, clashes: summary.clashes })}
+          {summary.changed !== undefined && ` ${t("lens.changedBracket", { count: summary.changed })}`}
+        </span>
+        {lens === "cambios" && summary.locations === 0 && (
+          <span className="ml-2">
+            {t("lens.empty")}{" "}
+            <button type="button" className="text-brand hover:underline" onClick={() => onQueryChange({ ...query, lens: "todo" })}>
+              {t("lens.showAll")}
+            </button>
+          </span>
+        )}
       </div>
       <GroupList />
       <SelectionBar />

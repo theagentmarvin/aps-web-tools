@@ -189,7 +189,9 @@
     "expand": "Expand",
     "collapse": "Collapse",
     "check": "Check row",
-    "viewFamilies": "Groups"
+    "viewFamilies": "Groups",
+    "tipConfidence": "Confidence {pct} %",
+    "tipFlagged": "Model text flagged for review"
   },
   "filters": {
     "add": "Filter",
@@ -401,7 +403,15 @@
     },
     "familyLabel": "Group:",
     "familyCount_one": "({count} location)",
-    "familyCount_other": "({count} locations)"
+    "familyCount_other": "({count} locations)",
+    "before": "Before (v{version}): {before} → now: {now}",
+    "beforePen": "max penetration {value} mm",
+    "changeNew": "New in this version (not in v{version})",
+    "changeReappeared": "Reappeared: it had been resolved in an earlier version",
+    "prevDecision": "{decision} by {user}",
+    "agentPrepared": "Prepared by the agent (goes away when you edit it)",
+    "nowCount": "{count} clashes ({added} new)",
+    "changedOther": "Changed since v{version}: element types or details differ (see Changes)"
   },
   "issue": {
     "title": "Title",
@@ -1131,6 +1141,47 @@
     "counts_one": "{count} group · {instances} loc. · {clashes} clashes",
     "counts_other": "{count} groups · {instances} loc. · {clashes} clashes",
     "summaryClashes_one": "{groups} group · {locations} locations · {clashes} clashes",
-    "summaryClashes_other": "{groups} groups · {locations} locations · {clashes} clashes"
+    "summaryClashes_other": "{groups} groups · {locations} locations · {clashes} clashes",
+    "changeLine": "Since v{version}: {parts}",
+    "changeNew": "{count} new",
+    "changeChanged": "{count} changed",
+    "changeReappeared": "{count} reappeared",
+    "changeUnchanged": "{count} unchanged"
+  },
+  "change": {
+    "new": "New",
+    "changed": "Changed",
+    "reappeared": "Reappeared"
+  },
+  "acc": {
+    "closedTip": "Closed in ACC · reason: {reason}",
+    "assignedTip": "ACC issue: {ids} · {existing} still clash · {resolved} resolved"
+  },
+  "lens": {
+    "label": "Lenses",
+    "cambios": "What changed",
+    "incidencias": "Issues",
+    "reunion": "Meeting",
+    "todo": "All",
+    "soon": "Coming soon",
+    "noPrevious": "No previous version to compare with",
+    "cambiosTip": "Locations that are new, changed or reappeared since v{version}",
+    "todoTip": "Every location under the active filters",
+    "unchangedRow_one": "{count} location unchanged",
+    "unchangedRow_other": "{count} locations unchanged",
+    "empty": "Nothing changed since the previous version with these filters.",
+    "showAll": "Show all",
+    "cambiosClashes": "{new} new clashes · {changed} changed · {reappeared} reappeared",
+    "changedBracket": "({count} new)"
+  },
+  "scope": {
+    "title": "Scope change since v{version}",
+    "outOfScope": "{count} clashes out of scope: not counted as resolved, not proposed",
+    "outOfScopeTip": "Out of scope: the document changed; not counted as resolved"
+  },
+  "header": {
+    "preparedBy": "Prepared by the agent · {time}",
+    "preparedTip": "Last agent activity or newest proposal",
+    "accSync": "ACC synced {time} · {assigned} assigned · {closed} closed"
   }
 }

@@ -180,7 +180,7 @@ describe("clash-id ledger", () => {
     let ledger = updateLedger(emptyLedger(truth().modelSetId), { version: 40, clashes: v40 });
     const { diff, ledger: l2 } = diffWithLedger(ledger, { version: 41, clashes: p.clashes }, { version: 42, clashes: n.clashes }, { nextElementKeys: n.externalIds });
     ledger = l2;
-    expect(diff.counts).toEqual({ new: 70, persisting: 220, resolved: 65, element_deleted: 15, reappeared: 13 });
+    expect(diff.counts).toEqual({ new: 70, persisting: 220, resolved: 65, element_deleted: 15, reappeared: 13, out_of_scope: 0 });
     expect(diff.reappeared).toEqual(truth().expectedDiff.reappeared);
     expect(reappearedIn(ledger, 42)).toEqual(diff.reappeared);
     expect(ledger.versions).toEqual([40, 41, 42]);

@@ -32,6 +32,26 @@ export interface LedgerEntry {
   states: Array<{ version: number; state: DiffState }>;
   /** Earlier MC ids of the same clash, when matched by pairKey. */
   previousIds?: string[];
+  /** ACC-decided state (X1, D8: ACC wins), as last read from ACC. */
+  acc?: LedgerAccState;
+}
+
+export interface LedgerAccState {
+  status: "assigned" | "closed";
+  groupId: string;
+  issueId?: string;
+  reason?: string;
+  /** ACC reports this clash as resolved in the version it was read for. */
+  resolved?: boolean;
+  /** Model set version whose test it was read for. */
+  version: number;
+}
+
+/** ACC assigned/closed groups intersected with one clash test (X1). */
+export interface AccSnapshot {
+  version: number;
+  at: string;
+  groups: Array<{ groupId: string; kind: "assigned" | "closed"; issueId?: string; reason?: string; existing: string[]; resolved: string[] }>;
 }
 
 export interface ClashLedger {
@@ -40,6 +60,8 @@ export interface ClashLedger {
   /** Versions recorded (ascending). */
   versions: number[];
   entries: Record<string, LedgerEntry>;
+  /** ACC sync summaries per model set version (X1). */
+  accSync?: Record<string, { at: string; assignedGroups: number; closedGroups: number; issues: number }>;
 }
 
 export interface LedgerVersion<T extends DiffableClash = DiffableClash> {
@@ -81,7 +103,7 @@ function clone(l: ClashLedger): ClashLedger {
   for (const [k, e] of Object.entries(l.entries)) {
     entries[k] = { ...e, seenIn: [...e.seenIn], states: e.states.map((s) => ({ ...s })), ...(e.previousIds ? { previousIds: [...e.previousIds] } : {}) };
   }
-  return { schema: LEDGER_SCHEMA, modelSetId: l.modelSetId, versions: [...l.versions], entries };
+  return { schema: LEDGER_SCHEMA, modelSetId: l.modelSetId, versions: [...l.versions], entries, ...(l.accSync ? { accSync: { ...l.accSync } } : {}) };
 }
 
 /** Remove everything recorded for `version` (makes updates idempotent). */
@@ -107,6 +129,8 @@ function stripVersion(l: ClashLedger, version: number): void {
  */
 export function updateLedger(ledger: ClashLedger, current: LedgerVersion, diff?: ClashDiff): ClashLedger {
   const l = clone(ledger);
+  // ACC state is per clash id, not per version: keep it across a re-record (X1).
+  const accById = new Map(Object.values(l.entries).filter((e) => e.acc).map((e) => [e.id, e.acc!]));
   stripVersion(l, current.version);
   const v = current.version;
   const idx = diff ? diffStateIndex(diff) : undefined;
@@ -141,6 +165,10 @@ export function updateLedger(ledger: ClashLedger, current: LedgerVersion, diff?:
       }
     }
   }
+  for (const [id, acc] of accById) {
+    const e = l.entries[id];
+    if (e && !e.acc) e.acc = acc;
+  }
   l.versions = [...l.versions, v].sort((x, y) => x - y);
   return l;
 }
@@ -161,6 +189,36 @@ export function diffWithLedger<T extends DiffableClash>(
   const diff = diffTestVersions(prev.clashes, next.clashes, { ...options, history: historyBefore(l, prev.version) });
   l = updateLedger(l, next, diff);
   return { diff, ledger: l };
+}
+
+/**
+ * Record what ACC says for one version (X1, D8: ACC wins). Clashes of `currentIds`
+ * (the version's clashes) that are in no ACC group lose a stale ACC state; ids not
+ * in the ledger yet are skipped (the version must be recorded first). Pure.
+ */
+export function applyAccSnapshot(ledger: ClashLedger, snap: AccSnapshot, currentIds: Iterable<string>): ClashLedger {
+  const l = clone(ledger);
+  const seen = new Set<string>();
+  for (const g of snap.groups) {
+    for (const [ids, resolved] of [[g.existing, false], [g.resolved, true]] as const) {
+      for (const id of ids) {
+        const e = l.entries[id];
+        if (!e) continue;
+        seen.add(id);
+        e.acc = { status: g.kind, groupId: g.groupId, ...(g.issueId ? { issueId: g.issueId } : {}), ...(g.reason ? { reason: g.reason } : {}), ...(resolved ? { resolved: true } : {}), version: snap.version };
+      }
+    }
+  }
+  for (const id of currentIds) {
+    const e = l.entries[id];
+    if (e?.acc && !seen.has(id)) delete e.acc;
+  }
+  const issues = new Set(snap.groups.filter((g) => g.kind === "assigned" && g.issueId).map((g) => g.issueId!));
+  l.accSync = {
+    ...(l.accSync ?? {}),
+    [String(snap.version)]: { at: snap.at, assignedGroups: snap.groups.filter((g) => g.kind === "assigned").length, closedGroups: snap.groups.filter((g) => g.kind === "closed").length, issues: issues.size },
+  };
+  return l;
 }
 
 /** Ids that reappeared in `version` according to the recorded states. */

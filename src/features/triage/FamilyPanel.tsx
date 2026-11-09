@@ -19,6 +19,8 @@ import { useTriageContext } from "./actions";
 import { Section, useSectionPrefs } from "./detail-accordion";
 import { FamilyTags, InheritanceMark, levelRange, useNodeLabel } from "./FamilyRows";
 import { oneLine } from "./pair-summary";
+import { familyChangeCounts, topChange } from "./change";
+import { ChangeChip } from "./RowMarks";
 import { rowKey, useTriage, type FamilyDraft, type TriageStore } from "./store";
 
 export const FAMILY_ACTION_KEY: Record<FamilyAction, TKey> = {
@@ -146,6 +148,7 @@ ${f.signature}`}>
       <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden" id="triage-detail" tabIndex={-1}>
         <FamilyProposal f={f} draft={draft} options={pt?.options ?? []} impact={impact} />
 
+        <FamilyChangeLine f={f} />
         {f.tags.includes("validez_mixta") && <ValidityMixLine f={f} />}
         <EvidenceLine f={f} />
 
@@ -320,6 +323,29 @@ function EvidenceLine({ f }: { f: TriageFamily }) {
     <p className="mx-4 mt-2 truncate text-[11px] text-gray-600" title={f.evidence.sizeHistogram.map((x) => `${x.size} ×${x.count}`).join("\n")}>
       {t("families.evidence", { min: Math.round(pen.min), max: Math.round(pen.max) })}
       {sizes && ` · ${sizes}`}
+    </p>
+  );
+}
+
+/** "Respecto de v10: 3 nuevas · 1 reapareció · 8 sin cambios" (ubicaciones). */
+function FamilyChangeLine({ f }: { f: TriageFamily }) {
+  const t = useT();
+  const { store } = useTriageContext();
+  const groups = useTriage(store, (s) => s.groups);
+  const prev = useTriage(store, (s) => s.payload?.changeSummary?.previousVersion);
+  const counts = familyChangeCounts(f, groups);
+  const top = topChange(counts);
+  if (!top || prev === undefined) return null;
+  const parts = [
+    counts.reappeared ? t("families.changeReappeared", { count: counts.reappeared }) : "",
+    counts.changed ? t("families.changeChanged", { count: counts.changed }) : "",
+    counts.new ? t("families.changeNew", { count: counts.new }) : "",
+    counts.unchanged ? t("families.changeUnchanged", { count: counts.unchanged }) : "",
+  ].filter(Boolean);
+  return (
+    <p className="mx-4 mt-2 flex items-center gap-1.5 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-900">
+      <ChangeChip change={top} />
+      <span>{t("families.changeLine", { version: prev, parts: parts.join(" · ") })}</span>
     </p>
   );
 }

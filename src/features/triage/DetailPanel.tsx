@@ -15,7 +15,7 @@ import { useSearchParams } from "react-router";
 import { useI18n, useT, type TKey } from "~/i18n";
 import { useApi } from "~/lib/api";
 import { minConfidence } from "~/lib/api/decision-utils";
-import type { DecisionChange, ElementInfo, IssueDraft, Nature, Proposal, Validity } from "~/lib/api/types";
+import type { Clash, DecisionChange, ElementInfo, IssueDraft, Nature, Proposal, Validity } from "~/lib/api/types";
 import { categoryNoun, categoryTitle } from "~/lib/category-names";
 import { ConfidenceBadge, FlaggedChip, NatureBadge, PriorityChip, ReasonChip, SpotCheckChip, ValidityBadge } from "~/lib/components/badges";
 import { IconChevronLeft, IconChevronRight, SideASwatch, SideBSwatch } from "~/lib/components/icons";
@@ -37,6 +37,8 @@ import {
 } from "./detail-sections";
 
 import { writeQuery, type Evaluated } from "./filters";
+import { clashChange, groupChange } from "./change";
+import { ChangeChip } from "./RowMarks";
 import { oneLine, summarizePair, type PairSummary, type SideFacts } from "./pair-summary";
 import { parseKey, useTriage } from "./store";
 import { Section, useCalibrationText, useSectionPrefs, type SectionId } from "./detail-accordion";
@@ -130,6 +132,7 @@ function InstancePanel() {
   const issueEdits = useTriage(store, (s) => (cursorKey ? s.edits.get(cursorKey.slice(2))?.issue : undefined));
   const calibration = useCalibrationText();
   const { prefs, set } = useSectionPrefs();
+  const lens = useTriage(store, () => store.effectiveLens());
 
   const parsed = cursorKey ? parseKey(cursorKey) : null;
   const e = parsed ? store.evaluate(parsed.kind, parsed.id) : undefined;
@@ -163,6 +166,7 @@ function InstancePanel() {
   const reasoningOpen = rationaleOpen ?? !!prefs.reasoning;
   const toggle = (sid: SectionId) => set(sid, !prefs[sid]);
   const clashCount = kind === "group" ? members.length : 1;
+  const changesFirst = lens === "cambios" && hasChanges(e, members);
 
   function pinView() {
     let state: unknown = true;
@@ -215,6 +219,7 @@ function InstancePanel() {
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden" id="triage-detail" tabIndex={-1}>
+        <ChangeLine e={e} members={members} />
         <ProposalBlock e={e} proposal={proposal} decisionChanges={decision?.kind === "correct" ? decision.changes : []} reasonCode={decision?.reasonCode} calibration={calibration} onSeeReasoning={openReasoning} />
 
         {pair && (
@@ -225,6 +230,12 @@ function InstancePanel() {
         )}
 
         <div className="mt-1">
+          {/* Lens "Qué cambió": the changes section opens first. */}
+          {changesFirst && (
+            <Section id="changes" title={t("detail.sections.changes")} open={prefs.changes !== false} onToggle={() => set("changes", prefs.changes === false)}>
+              <ChangesContent e={e} members={members} />
+            </Section>
+          )}
           {pair && (
             <Section id="elements" title={t("detail.sections.elements")} open={!!prefs.elements} onToggle={() => toggle("elements")}>
               <ElementDetails pair={pair} focusId={e.s.clash?.id ?? members[0]?.id ?? ""} />
@@ -248,7 +259,7 @@ function InstancePanel() {
               <ReasoningContent proposal={proposal} calibration={calibration} />
             </Section>
           )}
-          {hasChanges(e, members) && (
+          {!changesFirst && hasChanges(e, members) && (
             <Section id="changes" title={t("detail.sections.changes")} open={!!prefs.changes} onToggle={() => toggle("changes")}>
               <ChangesContent e={e} members={members} />
             </Section>
@@ -274,7 +285,40 @@ function InstancePanel() {
   );
 }
 
-/** "Familia: … (N instancias)": jumps to the family row in the Familias view. */
+/** One line under the header when the item changed: "Antes (v10): … → ahora: …", or "Nueva" / "Reapareció". */
+function ChangeLine({ e, members }: { e: Evaluated; members: Clash[] }) {
+  const t = useT();
+  const { fmt } = useI18n();
+  const { store } = useTriageContext();
+  const prevVersion = useTriage(store, (s) => s.payload?.changeSummary?.previousVersion);
+  const change = e.s.clash ? clashChange(e.s.clash) : groupChange(e.s.group);
+  if (!change || change === "unchanged") return null;
+  const v = prevVersion ?? "—";
+  let text: string;
+  if (change === "new") text = t("detail.changeNew", { version: v });
+  else if (change === "reappeared") text = t("detail.changeReappeared");
+  else {
+    const list = e.s.clash ? [e.s.clash] : members;
+    const prevPen = Math.max(0, ...list.filter((c) => c.previousDistanceMm !== undefined).map((c) => -(c.previousDistanceMm ?? 0)));
+    const nowPen = e.s.clash ? Math.max(0, -e.s.clash.distanceMm) : (e.s.group?.penetrationMaxMm ?? 0);
+    // Only the fields that changed: clash count (when clashes were added) and max penetration (when it moved).
+    const added = list.filter((c) => c.delta === "new").length;
+    const countChanged = !e.s.clash && added > 0;
+    const hasPrevPen = list.some((c) => c.previousDistanceMm !== undefined);
+    const penChanged = hasPrevPen && Math.round(prevPen) !== Math.round(nowPen);
+    const before = [countChanged ? t("list.clashesCount", { count: list.length - added }) : "", penChanged ? t("detail.beforePen", { value: fmt.number(Math.round(prevPen)) }) : ""].filter(Boolean).join(" · ");
+    const now = [countChanged ? t("detail.nowCount", { count: list.length, added }) : "", penChanged ? t("detail.beforePen", { value: fmt.number(Math.round(nowPen)) }) : ""].filter(Boolean).join(" · ");
+    text = before ? t("detail.before", { version: v, before, now }) : t("detail.changedOther", { version: v });
+  }
+  return (
+    <p className="mx-4 mt-3 flex items-center gap-1.5 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-900">
+      <ChangeChip change={change} />
+      <span className="min-w-0">{text}</span>
+    </p>
+  );
+}
+
+/** "Grupo: … (N ubicaciones)": jumps to the grupo row in the tree. */
 function FamilyChip({ groupId }: { groupId: string }) {
   const t = useT();
   const { store } = useTriageContext();
@@ -366,8 +410,14 @@ function ProposalBlock({
   };
 
   const conf = proposal ? minConfidence(proposal) : null;
+  const agentMade = !!proposal && !e.d.edited && decisionChanges.length === 0 && Object.values(proposal.fields).some((f) => f.source === "llm" || f.source === "rule+llm");
   return (
-    <section aria-labelledby="dp-proposal" className="mx-4 mt-3 rounded-lg border border-brand-muted/30 bg-white p-3">
+    // Thin violet bar = agent-prepared content; it disappears once the human edits or corrects it.
+    <section
+      aria-labelledby="dp-proposal"
+      className={`mx-4 mt-3 rounded-lg border border-brand-muted/30 bg-white p-3 ${agentMade ? "border-l-4 border-l-violet-400" : ""}`}
+      title={agentMade ? t("detail.agentPrepared") : undefined}
+    >
       <div className="mb-2 flex flex-wrap items-center gap-1.5">
         <h3 id="dp-proposal" className="mr-auto text-xs font-semibold uppercase tracking-wide text-gray-500">
           {t("detail.proposal")}

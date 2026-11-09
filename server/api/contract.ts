@@ -270,6 +270,56 @@ export interface ClashGroup {
   /** "Entretecho P1 (viga nivel 201)". */
   hostLevelLabel?: string;
   inheritance?: InstanceInheritance;
+  /** ACC-decided state of the group's clashes (X1, D8: ACC wins). Absent when ACC has no group for them. */
+  acc?: AccState;
+  /** "Qué cambió" vs the previous cached version (M1; M2 switches to the last reviewed version). */
+  change?: ChangeKind;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M1: ACC sync (X1), scope guard (X6), "Qué cambió" (F1 support)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** ACC assigned/closed groups touching these clashes. Counts are RAW (MC) clashes. */
+export interface AccState {
+  /** "mixed" when some clashes are in assigned groups and others in closed groups. */
+  status: "assigned" | "closed" | "mixed";
+  /** ACC issue ids of the assigned groups (deduplicated). */
+  issueIds: string[];
+  /** Clashes of this item that are in an ACC assigned/closed group (still present in the test). */
+  existing: number;
+  /** Clashes of those ACC groups that ACC reports as resolved in this test. */
+  resolved: number;
+  /** Close reason when all closed groups share one. */
+  closedReason?: string;
+}
+/**
+ * One change word per item (raw-clash based, vs the previous cached version):
+ * new = every clash is new; reappeared = at least one clash reappeared (ledger);
+ * changed = at least one clash is new or changed (|Δpenetration| > 10 mm or different element types);
+ * unchanged = otherwise.
+ */
+export type ChangeKind = "new" | "changed" | "reappeared" | "unchanged";
+export type ChangeCounts = Record<ChangeKind, number>;
+export interface ScopeChange {
+  documentId?: number;
+  fileName?: string;
+  kind: "document_added" | "document_removed" | "model_replaced" | "test_config_changed" | "mass_resolution";
+  /** Spanish, one line. */
+  message: string;
+}
+export interface AccSyncSummary { at: string; assignedGroups: number; closedGroups: number; issues: number }
+export interface ChangeSummary {
+  previousVersion?: number;
+  previousTestKey?: string;
+  /** Groups per change word. */
+  groups: ChangeCounts;
+  /** Raw clashes per change word. */
+  clashes: ChangeCounts;
+  /** Raw clashes of the previous version that are resolved (excluding out-of-scope). */
+  resolved: number;
+  /** Raw clashes that would be resolved but belong to a document with a scope change: never counted as resolved, never proposed. */
+  outOfScope: number;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -332,6 +382,8 @@ export interface FamilyInstance {
   rawClashCount: number;
   delta: Delta;
   inheritance: InstanceInheritance;
+  acc?: AccState;
+  change?: ChangeKind;
 }
 export interface TriageFamily {
   /** F-xxxxxxxxxx (merge aliases resolved server-side). */
@@ -366,6 +418,10 @@ export interface TriageFamily {
   instances: FamilyInstance[];
   /** Agent suggestions (propose_family_decision) waiting for a human. */
   pendingProposals: Array<{ id: string; createdAt: string; rationale: string; payload: Record<string, unknown> }>;
+  /** Aggregated ACC state of the family's instances. */
+  acc?: AccState;
+  /** Instances per change word. */
+  changeCounts?: ChangeCounts;
 }
 /** GET /tests/:testId/families */
 export interface FamiliesPayload { testId: string; families: TriageFamily[]; problemTypes: ProblemTypeInfo[] }
@@ -503,6 +559,12 @@ export interface TriagePayload {
   changesCursor: string;
   families?: TriageFamily[];
   problemTypes?: ProblemTypeInfo[];
+  /** Last ACC sync of this test; absent when it was never synced. */
+  accSync?: AccSyncSummary;
+  /** Scope changes vs the previous cached version (X6). Always sent by the server ([] when none). */
+  scopeChanges?: ScopeChange[];
+  /** "Qué cambió" summary. Always sent by the server. */
+  changeSummary?: ChangeSummary;
 }
 export interface TriageChanges { cursor: string; proposals: Proposal[] }
 

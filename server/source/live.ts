@@ -7,7 +7,8 @@ import { attachPairKeys, elementLookupFromTables, normalizeClashTest } from "../
 import type { ElementProps } from "../../core/types";
 import { ApsAuth } from "../aps/auth";
 import { ApsError } from "../aps/errors";
-import { fetchClashResults, intersectAssignedGroups, intersectClosedGroups, listClashTests } from "../aps/clash";
+import { fetchClashResults, intersectAssignedGroups, intersectClosedGroups, listAssignedGroups, listClashTests, listClosedGroups } from "../aps/clash";
+import type { AccSnapshot } from "../../core/ingest/ledger";
 import { assignClashes, closeClashes, waitClashJob } from "../aps/clash-writes";
 import { apsRequest, type ApsCtx } from "../aps/http";
 import {
@@ -327,6 +328,26 @@ export class LiveSource implements DataSource {
   async listModelSetViews(projectId: string, modelSetId: string) {
     const views = await listModelSetViews(this.ctx, projectId, modelSetId);
     return views.map((v) => ({ name: v.name, definition: (v.definition ?? []).map((d) => ({ lineageUrn: d.lineageUrn, ...(d.viewableName ? { viewableName: d.viewableName } : {}) })) }));
+  }
+
+  async accState(projectId: string, modelSetId: string, testId: string, version: number): Promise<AccSnapshot> {
+    const [ia, ic, la, lc] = await Promise.all([
+      intersectAssignedGroups(this.ctx, projectId, testId),
+      intersectClosedGroups(this.ctx, projectId, testId),
+      listAssignedGroups(this.ctx, projectId, modelSetId),
+      listClosedGroups(this.ctx, projectId, modelSetId),
+    ]);
+    const issueOf = new Map(la.map((g) => [g.id, g.issueId]));
+    const reasonOf = new Map(lc.map((g) => [g.id, g.reason]));
+    const ids = (xs: readonly number[] | undefined) => (xs ?? []).map(String);
+    return {
+      version,
+      at: new Date().toISOString(),
+      groups: [
+        ...ia.map((g) => ({ groupId: g.id, kind: "assigned" as const, ...(issueOf.get(g.id) ? { issueId: issueOf.get(g.id)! } : {}), existing: ids(g.existing), resolved: ids(g.resolved) })),
+        ...ic.map((g) => ({ groupId: g.id, kind: "closed" as const, ...(reasonOf.get(g.id) ? { reason: String(reasonOf.get(g.id)) } : {}), existing: ids(g.existing), resolved: ids(g.resolved) })),
+      ],
+    };
   }
 
   async triageState(projectId: string, testId: string) {

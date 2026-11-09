@@ -10,6 +10,7 @@ import { categoryNoun } from "~/lib/category-names";
 import { PROBLEM_TYPES } from "~/lib/problem-types";
 import type { Clash, ClashGroup, FamilyAction, FamilyGroup, Priority, ProblemTypeCode, Proposal, TriageFamily, Validity } from "../types";
 import { fakeHash } from "./reports";
+import { familyM1 } from "./m1";
 
 const STRUCT = new Set(["Structural Framing", "Floors", "Structural Columns", "Structural Foundations"]);
 const EQUIP = new Set(["Mechanical Equipment", "Plumbing Fixtures", "Electrical Equipment", "Specialty Equipment"]);
@@ -259,5 +260,6 @@ export function refreshFamily(f: TriageFamily, groups: Map<string, FamilyGroup>)
   f.state = !f.decision ? "sin_decidir" : f.decision.status === "rejected" ? "rechazada" : "decidida";
   const target = f.decision?.status === "approved" ? f.decision.validity : f.proposed.validity;
   f.validityConflicts = inst.filter((g) => g.validity !== target).map((g) => ({ groupId: g.id, title: g.title, from: g.validity, to: target }));
+  familyM1(f, groups);
   return f;
 }

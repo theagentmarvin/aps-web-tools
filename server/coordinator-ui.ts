@@ -13,6 +13,17 @@ import { CLOSABLE, loadRules } from "./engine";
 import { assertCode, modelLevelDiscipline, outCode, ruleMatches, SIN, suggestedToken, validCodes, type DisciplineRule } from "./disciplines";
 import { sanitizeModelText } from "./sanitize";
 import { PROBLEM_TYPES } from "../core/families";
+import { aggregateAcc, emptyCounts, itemChange, mergeAcc, type AccIndex } from "./cycle";
+import type { ClashDiff } from "../core/types";
+
+interface CycleCtx {
+  acc: AccIndex;
+  resolvedByGroup: ReadonlyMap<string, number>;
+  sync?: C.AccSyncSummary;
+  changes: ReadonlyMap<string, C.ChangeKind>;
+  diff?: ClashDiff;
+  previous?: TestRecord;
+}
 import { assertFamilyInTest, familyIssueDescription, familyViews, type FamilyDecisionFields, type FamilyView } from "./families";
 import type {
   Actor,
@@ -317,6 +328,12 @@ export class CoordinatorUi {
       ruleIds: g.ruleIds,
       humanReview: g.reviewState === "needs_review",
       reviewReasons: g.reviewReasons,
+      ...((): Partial<C.ClashGroup> => {
+        const c = this.cycles.get(test.testKey);
+        if (!c) return {};
+        const acc = aggregateAcc(g.clashIds, c.acc, c.resolvedByGroup);
+        return { ...(acc ? { acc } : {}), change: itemChange(g.clashIds, c.changes) };
+      })(),
       ...(g.familyId ? { familyId: g.familyId, problemType: g.problemType as C.ProblemTypeCode, signature: g.signature ?? "", uniqueClashCount: g.uniqueClashCount ?? g.clashIds.length } : {}),
       ...(g.hostLevelLabel ? { hostLevelLabel: g.hostLevelLabel } : {}),
     };
@@ -350,16 +367,22 @@ export class CoordinatorUi {
     }
     if (cl && cl.payload.kind === "classification" && cl.payload.responsibleDiscipline) owner = cl.payload.responsibleDiscipline;
     const effValidity = validity.value;
-    const createIssue = !!iss || (effValidity === "real" && (g.suggestedAction === "create_issue" || !!engineIssue)) || (g.engineStrategy === "hygiene" && g.suggestedAction === "hygiene_issue" && !!engineIssue);
+    // X1 (D8): clashes ACC already assigned or closed are never re-proposed as an issue or a closure.
+    const inAcc = this.accDecided(test.testKey, g.clashIds);
+    const createIssue = !inAcc && (!!iss || (effValidity === "real" && (g.suggestedAction === "create_issue" || !!engineIssue)) || (g.engineStrategy === "hygiene" && g.suggestedAction === "hygiene_issue" && !!engineIssue));
     let setStatus: C.AccStatus | null = null;
-    if (st && st.payload.kind === "status_change") setStatus = st.payload.action === "close_not_issue" ? "closed" : st.payload.action === "mark_reviewed" ? "reviewed" : "active";
+    if (inAcc) setStatus = null;
+    else if (st && st.payload.kind === "status_change") setStatus = st.payload.action === "close_not_issue" ? "closed" : st.payload.action === "mark_reviewed" ? "reviewed" : "active";
     else if ((CLOSABLE as string[]).includes(effValidity) && g.suggestedAction === "close_not_issue") setStatus = "closed";
     else if ((CLOSABLE as string[]).includes(effValidity) && g.suggestedAction === "mark_reviewed") setStatus = "reviewed";
     const actionSource: C.FieldSource = st || iss ? (cl ? "llm" : "rule+llm") : "rule";
 
     let issueDraft: C.IssueDraft | undefined;
+    const accState = this.accOfGroup(test.testKey, g.clashIds);
     const due = (days: number) => new Date(this.core.now() + days * 86_400_000).toISOString().slice(0, 10);
-    if (iss && iss.payload.kind === "issue_draft") {
+    if (inAcc) {
+      // ACC decided: no draft.
+    } else if (iss && iss.payload.kind === "issue_draft") {
       const d = iss.payload.issue;
       issueDraft = {
         title: d.title,
@@ -410,6 +433,7 @@ export class CoordinatorUi {
         { label: "Par", value: g.disciplinePair },
         { label: "Naturaleza", value: g.nature },
         ...(g.reviewReasons.length ? [{ label: "Revisión", value: g.reviewReasons.join("; ") }] : []),
+        ...(accState ? [{ label: "ACC", value: `${accState.status === "assigned" ? "asignada" : accState.status === "closed" ? "cerrada" : "mixta"} (${accState.existing} interf.${accState.issueIds.length ? `, ${accState.issueIds.length} incidencia(s)` : ""})` }] : []),
       ],
       ruleIds: g.ruleIds,
       spotCheck: spotCheck(id + g.id, validity.confidence, this.bands.high),
@@ -428,7 +452,31 @@ export class CoordinatorUi {
     const { test, cls } = await this.core.requireClassified(testKey);
     const states = await this.core.groupStates(test.testKey, cls);
     const byGroup = await this.core.proposalsByGroup(test.testKey, cls);
-    return { test, cls, states, byGroup };
+    const cycle = await this.cycleCtx(test, cls);
+    return { test, cls, states, byGroup, cycle };
+  }
+
+  /** M1 per-test context: ACC state (X1, from the ledger) and change words (vs the previous version). */
+  private readonly cycles = new Map<string, CycleCtx>();
+  private async cycleCtx(test: TestRecord, cls: ClassificationRecord): Promise<CycleCtx> {
+    const acc = await this.core.accFor(test, cls.clashes.map((c) => c.id));
+    const ch = await this.core.changesFor(test, cls);
+    const ctx: CycleCtx = { acc: acc.index, resolvedByGroup: acc.resolvedByGroup, ...(acc.sync ? { sync: acc.sync } : {}), changes: ch.byClash, ...(ch.diff ? { diff: ch.diff } : {}), ...(ch.previous ? { previous: ch.previous } : {}) };
+    this.cycles.set(test.testKey, ctx);
+    return ctx;
+  }
+  private accOfGroup(testKey: string, clashIds: readonly string[]): C.AccState | undefined {
+    const c = this.cycles.get(testKey);
+    return c ? aggregateAcc(clashIds, c.acc, c.resolvedByGroup) : undefined;
+  }
+  /** Every clash of the group is decided in ACC (assigned or closed): never re-proposed. */
+  private accDecided(testKey: string, clashIds: readonly string[]): boolean {
+    const c = this.cycles.get(testKey);
+    return !!c && clashIds.length > 0 && clashIds.every((id) => c.acc.has(id));
+  }
+  private notInAcc(testKey: string): (c: ClashRecord) => boolean {
+    const idx = this.cycles.get(testKey)?.acc;
+    return (c) => !idx?.has(c.id);
   }
 
   async triage(projectId: string, modelSetId: string, testKey?: string): Promise<C.TriagePayload> {
@@ -438,7 +486,7 @@ export class CoordinatorUi {
       for (const t of mine) if (await this.store.getClassification(t.testKey)) { key = t.testKey; break; }
       if (!key) throw new CoordError("not_ingested", "No hay pruebas analizadas para este conjunto.", "Pide al agente: ingesta y clasifica la prueba más reciente.");
     }
-    const { test, cls, states, byGroup } = await this.testContext(key);
+    const { test, cls, states, byGroup, cycle } = await this.testContext(key);
     const project = await this.project(projectId).catch(() => ({ id: bareProjectId(projectId), name: test.projectName, hubId: "", hubName: "", modelSetCount: 1, pendingDecisions: 0 }));
     const modelSet = (await this.modelSets(projectId).catch(() => [])).find((m) => m.id === modelSetId) ?? {
       id: modelSetId, projectId: bareProjectId(projectId), name: test.modelSetName, latestVersion: test.modelSetVersion, analyzedVersion: test.modelSetVersion,
@@ -452,15 +500,23 @@ export class CoordinatorUi {
     if (cls.families) {
       const views = familyViews(cls.families, cls.groups, await this.core.families.load(test.projectId, test.modelSetId));
       const props = await this.familyProposals(test.testKey);
-      families = views.map((v) => this.familyUi(v, props));
+      this.familyClashIds.set(test.testKey, new Map(cls.groups.map((g) => [g.id, g.clashIds])));
+      families = views.map((v) => this.familyUi(v, props, test.testKey));
       const inh = new Map(views.flatMap((v) => v.instances.map((i) => [i.groupId, i.inheritance] as const)));
       for (const g of groups) {
         const x = inh.get(g.id);
         if (x) g.inheritance = x;
       }
     }
+    const changeSummary: C.ChangeSummary = { groups: emptyCounts(), clashes: emptyCounts(), resolved: (cycle.diff?.counts.resolved ?? 0) + (cycle.diff?.counts.element_deleted ?? 0), outOfScope: cycle.diff?.counts.out_of_scope ?? 0 };
+    if (cycle.previous) Object.assign(changeSummary, { previousVersion: cycle.previous.modelSetVersion, previousTestKey: cycle.previous.testKey });
+    for (const g of groups) changeSummary.groups[g.change ?? "unchanged"]++;
+    for (const k of cycle.changes.values()) changeSummary.clashes[k]++;
     return {
       ...(families ? { families, problemTypes: PROBLEM_TYPES.map((p) => ({ ...p, options: [...p.options] })) } : {}),
+      ...(cycle.sync ? { accSync: cycle.sync } : {}),
+      scopeChanges: await this.core.scopeChangesFor(test),
+      changeSummary,
       project,
       modelSet,
       test: this.testRun(test, true),
@@ -646,7 +702,7 @@ export class CoordinatorUi {
 
   private buildItems(batchId: string, test: TestRecord, cls: ClassificationRecord, g: GroupRecord, view: C.Proposal, d: DecisionRecord, accReason?: string): BatchItemRecord[] {
     const eff = this.effective(view, d);
-    const members = cls.clashes.filter((c) => c.groupId === g.id);
+    const members = cls.clashes.filter((c) => c.groupId === g.id).filter(this.notInAcc(test.testKey));
     const origin: BatchItemRecord["origin"] = d.kind === "accept" ? "ai_accepted" : "ai_corrected";
     const proposalIds = view.sourceProposalIds;
     const common = {
@@ -1539,10 +1595,26 @@ export class CoordinatorUi {
 
 // ── solution families (docs/domain/solution-families-proposal.md) ───────
 
-  private familyUi(v: FamilyView, proposals: readonly ProposalRecord[]): C.TriageFamily {
+  private familyUi(v: FamilyView, proposals: readonly ProposalRecord[], testKey?: string): C.TriageFamily {
     const pending = proposals.filter((p) => p.payload.kind === "family_decision" && p.payload.familyId === v.id && PENDING.has(p.state));
+    const c = testKey ? this.cycles.get(testKey) : undefined;
+    const clsOf = c ? this.familyClashIds.get(testKey!) : undefined;
+    let extra: Partial<C.TriageFamily> = {};
+    if (c && clsOf) {
+      const counts = emptyCounts();
+      const instances = v.instances.map((i) => {
+        const ids = clsOf.get(i.groupId) ?? [];
+        const acc = aggregateAcc(ids, c.acc, c.resolvedByGroup);
+        const change = itemChange(ids, c.changes);
+        counts[change]++;
+        return { ...i, ...(acc ? { acc } : {}), change };
+      });
+      const acc = mergeAcc(instances.map((i) => (i as { acc?: C.AccState }).acc));
+      extra = { instances: instances as unknown as C.FamilyInstance[], changeCounts: counts, ...(acc ? { acc } : {}) };
+    }
     return {
       ...(v as unknown as Omit<C.TriageFamily, "pendingProposals">),
+      ...extra,
       pendingProposals: pending.map((p) => ({ id: p.id, createdAt: p.createdAt, rationale: p.rationale, payload: p.payload as unknown as Record<string, unknown> })),
     };
   }
@@ -1551,15 +1623,24 @@ export class CoordinatorUi {
     return this.store.listProposals((p) => p.kind === "family_decision" && p.testKey === testKey);
   }
 
+  /** groupId → raw clash ids, per test (families projection). */
+  private readonly familyClashIds = new Map<string, Map<string, string[]>>();
+  private async familyContext(testKey: string) {
+    const r = await this.core.familyViewsFor(testKey);
+    await this.cycleCtx(r.test, r.cls);
+    this.familyClashIds.set(r.test.testKey, new Map(r.cls.groups.map((g) => [g.id, g.clashIds])));
+    return r;
+  }
+
   async families(testKey: string): Promise<C.FamiliesPayload> {
-    const { test, views } = await this.core.familyViewsFor(testKey);
+    const { test, views } = await this.familyContext(testKey);
     const props = await this.familyProposals(test.testKey);
-    return { testId: test.testKey, families: views.map((v) => this.familyUi(v, props)), problemTypes: PROBLEM_TYPES.map((p) => ({ ...p, options: [...p.options] })) };
+    return { testId: test.testKey, families: views.map((v) => this.familyUi(v, props, test.testKey)), problemTypes: PROBLEM_TYPES.map((p) => ({ ...p, options: [...p.options] })) };
   }
 
   async family(testKey: string, familyId: string): Promise<C.TriageFamily> {
-    const { test, views } = await this.core.familyViewsFor(testKey);
-    return this.familyUi(assertFamilyInTest(views, familyId), await this.familyProposals(test.testKey));
+    const { test, views } = await this.familyContext(testKey);
+    return this.familyUi(assertFamilyInTest(views, familyId), await this.familyProposals(test.testKey), test.testKey);
   }
 
   private decisionFields(v: FamilyView, req: Partial<C.FamilyDecisionRequest>): FamilyDecisionFields {
@@ -1834,7 +1915,7 @@ export class CoordinatorUi {
       const units: Array<{ key: string; instances: typeof todo; label: string }> =
         issue && dec.issueMode === "per_instance" ? todo.map((i) => ({ key: i.groupId, instances: [i], label: `${cycle} ${i.title}` })) : [{ key: "family", instances: todo, label: `${cycle} ${v.title}` }];
       for (const u of units) {
-        const clashes = u.instances.flatMap((i) => byGroup.get(i.groupId) ?? []);
+        const clashes = u.instances.flatMap((i) => byGroup.get(i.groupId) ?? []).filter(this.notInAcc(test.testKey));
         const chunks: ClashRecord[][] = [];
         for (let k = 0; k < clashes.length; k += 1000) chunks.push(clashes.slice(k, k + 1000));
         chunks.forEach((chunk, ci) => {

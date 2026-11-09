@@ -6,11 +6,13 @@
 import { memo, useEffect, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useI18n, useT } from "~/i18n";
-import { ConfidenceDots, DecisionStateIcon, DeltaBadge, DisciplinePairChip, FlaggedChip, PriorityChip, SpotCheckChip, StatusBadge } from "~/lib/components/badges";
-import { IconChevronDown, IconChevronRight, IconFlag, IconNoCube } from "~/lib/components/icons";
+import { DecisionStateIcon, DisciplinePairChip, PriorityChip, StatusBadge } from "~/lib/components/badges";
+import { IconChevronDown, IconChevronRight } from "~/lib/components/icons";
 import type { FamilyGroup } from "~/lib/api/types";
 import { useTriageContext } from "./actions";
-import { FAMILY_H, FamilyRow, InheritanceMark, NODE_H, NodeRow, indent } from "./FamilyRows";
+import { clashChange, groupChange } from "./change";
+import { FAMILY_H, FamilyRow, NODE_H, NodeRow, indent } from "./FamilyRows";
+import { ChangeChip, RowStateIcon } from "./RowMarks";
 import { useTriage, type Row, type RowKind } from "./store";
 
 const GROUP_H = 56;
@@ -121,11 +123,26 @@ const GroupRow = memo(function GroupRow({ row }: { row: Row }) {
   const t = useT();
   const { store, isCursor, isChecked, anyChecked, e, flagged, noViewer } = useRowState(row);
   const expanded = useTriage(store, (s) => s.expanded.has(row.id));
+  const pendingException = useTriage(store, (s) => {
+    const fid = s.familyOf.get(row.id);
+    return !!fid && !!s.familyExceptions.get(fid)?.has(row.id);
+  });
   if (!e?.s.group) return null;
   const g = e.s.group;
   const decided = e.d.state !== "pending" && e.d.state !== "inherited";
+  // Secondary signals live in the tooltip (row cap: 3 chips + 1 icon).
+  const tip = [
+    g.title,
+    e.d.confidence !== null ? t("list.tipConfidence", { pct: Math.round(e.d.confidence * 100) }) : "",
+    e.s.proposal?.spotCheck ? t("guard.spotCheck") : "",
+    e.s.proposal?.flagged ? t("list.tipFlagged") : "",
+    flagged ? t("detail.agentUpdated") : "",
+    noViewer ? t("list.noViewer") : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
   return (
-    <div id={`row-${row.key}`} role={row.depth !== undefined ? "treeitem" : "option"} aria-selected={isChecked} aria-expanded={expanded} className={rowCls(isCursor, isChecked, decided)} style={row.depth !== undefined ? { paddingLeft: indent(row.depth) } : undefined} onClick={() => store.setCursor(row.key)} onDoubleClick={() => store.toggleExpand(row.id)}>
+    <div id={`row-${row.key}`} title={tip} role={row.depth !== undefined ? "treeitem" : "option"} aria-selected={isChecked} aria-expanded={expanded} className={rowCls(isCursor, isChecked, decided)} style={row.depth !== undefined ? { paddingLeft: indent(row.depth) } : undefined} onClick={() => store.setCursor(row.key)} onDoubleClick={() => store.toggleExpand(row.id)}>
       <div className="flex w-7 shrink-0 flex-col items-center justify-center gap-1">
         <CheckBox rowKey={row.key} checked={isChecked} visible={anyChecked} />
         <button
@@ -143,21 +160,16 @@ const GroupRow = memo(function GroupRow({ row }: { row: Row }) {
       </div>
       <div className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
         <div className="flex items-center gap-1.5">
+          {/* 3 chips max: priority · pair · one change word (precedence in RowMarks.tsx) */}
           {e.d.priority && <PriorityChip value={e.d.priority} edited={e.d.edited && e.d.priority !== e.s.proposal?.fields.priority.value} />}
-          {e.d.confidence !== null && <ConfidenceDots value={e.d.confidence} />}
           <DisciplinePairChip a={g.pair[0]} b={g.pair[1]} />
+          <ChangeChip change={groupChange(g)} />
           <GroupCount groupId={g.id} total={g.clashIds.length} unique={(g as FamilyGroup).uniqueClashCount} />
-          <DeltaBadge delta={g.delta} />
-          {e.s.proposal?.spotCheck && <SpotCheckChip />}
-          {e.s.proposal?.flagged && <FlaggedChip />}
-          <span className="ml-auto flex items-center gap-1">
-            {noViewer && <IconNoCube size={13} label={t("list.noViewer")} className="text-gray-400" />}
-            {flagged && <IconFlag size={13} label={t("detail.agentUpdated")} className="text-amber-700" />}
-            {row.depth !== undefined && <InheritanceMark group={g as FamilyGroup} />}
-            <DecisionStateIcon state={e.d.state} />
+          <span className="ml-auto flex items-center">
+            <RowStateIcon state={e.d.state} acc={(g as FamilyGroup).acc} inheritance={(g as FamilyGroup).inheritance} pendingException={pendingException} />
           </span>
         </div>
-        <div className={`truncate text-sm ${g.elementMissing ? "text-gray-400" : ""}`} title={g.title}>
+        <div className={`truncate text-sm ${g.elementMissing ? "text-gray-400" : ""}`}>
           {row.depth !== undefined && (g as FamilyGroup).hostLevelLabel ? `${(g as FamilyGroup).hostLevelLabel} · ${g.title}` : g.title}
         </div>
       </div>
@@ -211,12 +223,11 @@ const FlatClashRow = memo(function FlatClashRow({ row }: { row: Row }) {
       <div className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
         <div className="flex items-center gap-1.5">
           {e.d.priority && <PriorityChip value={e.d.priority} edited={e.d.edited} />}
-          {e.d.confidence !== null && <ConfidenceDots value={e.d.confidence} />}
           <span className="min-w-0 flex-1 truncate text-xs text-gray-600" title={e.s.group?.title}>
             {e.s.group?.title}
           </span>
-          <DeltaBadge delta={e.s.clash.delta} />
-          <DecisionStateIcon state={e.d.state} />
+          <ChangeChip change={clashChange(e.s.clash)} />
+          <RowStateIcon state={e.d.state} acc={(e.s.group as FamilyGroup | undefined)?.acc} />
         </div>
         <div className="flex items-center gap-2">
           <ClashLine row={row} />
@@ -230,7 +241,7 @@ const FlatClashRow = memo(function FlatClashRow({ row }: { row: Row }) {
 function GroupCount({ groupId, total, unique }: { groupId: string; total: number; unique?: number }) {
   const t = useT();
   const { store } = useTriageContext();
-  const visible = useTriage(store, (s) => (store.familiesMode() ? (s.visibleByGroup.get(groupId)?.length ?? 0) : total));
+  const visible = useTriage(store, (s) => (store.familiesMode() ? (s.visibleByGroup.get(groupId)?.length ?? s.hiddenByGroup.get(groupId)?.length ?? 0) : total));
   return (
     <span className="font-mono text-xs text-gray-500" title={t("families.uniqueTooltip", { raw: total, unique: unique ?? total })}>
       ×{visible}

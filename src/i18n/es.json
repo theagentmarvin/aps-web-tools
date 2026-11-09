@@ -189,7 +189,9 @@
     "expand": "Desplegar",
     "collapse": "Plegar",
     "check": "Marcar fila",
-    "viewFamilies": "Grupos"
+    "viewFamilies": "Grupos",
+    "tipConfidence": "Confianza {pct} %",
+    "tipFlagged": "Texto del modelo marcado para revisión"
   },
   "filters": {
     "add": "Filtro",
@@ -401,7 +403,15 @@
     },
     "familyLabel": "Grupo:",
     "familyCount_one": "({count} ubicación)",
-    "familyCount_other": "({count} ubicaciones)"
+    "familyCount_other": "({count} ubicaciones)",
+    "before": "Antes (v{version}): {before} → ahora: {now}",
+    "beforePen": "penetración máx. {value} mm",
+    "changeNew": "Nueva en esta versión (no existía en v{version})",
+    "changeReappeared": "Reapareció: estaba resuelta en una versión anterior",
+    "prevDecision": "{decision} por {user}",
+    "agentPrepared": "Preparado por el agente (desaparece cuando lo editas)",
+    "nowCount": "{count} interferencias ({added} nuevas)",
+    "changedOther": "Cambió respecto de v{version}: tipos de elemento o detalle distinto (ver Cambios)"
   },
   "issue": {
     "title": "Título",
@@ -1131,6 +1141,47 @@
     "counts_one": "{count} grupo · {instances} ubic. · {clashes} interf.",
     "counts_other": "{count} grupos · {instances} ubic. · {clashes} interf.",
     "summaryClashes_one": "{groups} grupo · {locations} ubicaciones · {clashes} interferencias",
-    "summaryClashes_other": "{groups} grupos · {locations} ubicaciones · {clashes} interferencias"
+    "summaryClashes_other": "{groups} grupos · {locations} ubicaciones · {clashes} interferencias",
+    "changeLine": "Respecto de v{version}: {parts}",
+    "changeNew": "{count} nuevas",
+    "changeChanged": "{count} cambiaron",
+    "changeReappeared": "{count} reaparecieron",
+    "changeUnchanged": "{count} sin cambios"
+  },
+  "change": {
+    "new": "Nuevo",
+    "changed": "Cambió",
+    "reappeared": "Reapareció"
+  },
+  "acc": {
+    "closedTip": "Cerrada en ACC · motivo: {reason}",
+    "assignedTip": "Incidencia en ACC: {ids} · {existing} siguen · {resolved} resueltas"
+  },
+  "lens": {
+    "label": "Lentes",
+    "cambios": "Qué cambió",
+    "incidencias": "Incidencias",
+    "reunion": "Reunión",
+    "todo": "Todo",
+    "soon": "Próximamente",
+    "noPrevious": "No hay una versión anterior con la cual comparar",
+    "cambiosTip": "Ubicaciones nuevas, que cambiaron o reaparecieron respecto de v{version}",
+    "todoTip": "Todas las ubicaciones con los filtros activos",
+    "unchangedRow_one": "{count} ubicación sin cambios",
+    "unchangedRow_other": "{count} ubicaciones sin cambios",
+    "empty": "Nada cambió desde la versión anterior con estos filtros.",
+    "showAll": "Ver todo",
+    "cambiosClashes": "{new} interferencias nuevas · {changed} cambiaron · {reappeared} reaparecieron",
+    "changedBracket": "({count} nuevas)"
+  },
+  "scope": {
+    "title": "Cambio de alcance respecto de v{version}",
+    "outOfScope": "{count} interferencias fuera de alcance: no se cuentan como resueltas ni se proponen",
+    "outOfScopeTip": "Fuera de alcance: el documento cambió; no se cuenta como resuelta"
+  },
+  "header": {
+    "preparedBy": "Preparado por el agente · {time}",
+    "preparedTip": "Última actividad del agente o propuesta más reciente",
+    "accSync": "ACC sincronizado {time} · {assigned} asignados · {closed} cerrados"
   }
 }

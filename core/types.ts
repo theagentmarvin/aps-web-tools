@@ -206,7 +206,7 @@ export interface ElementProps {
  *   (externalId) no longer exists in next ("resolved by deletion", flag for review).
  * - reappeared: absent from prev but seen in an older version (regression).
  */
-export type DiffState = "new" | "persisting" | "resolved" | "element_deleted" | "reappeared";
+export type DiffState = "new" | "persisting" | "resolved" | "element_deleted" | "reappeared" | "out_of_scope";
 
 export interface ClashDiff {
   /** Ids of `next` clashes. */
@@ -219,6 +219,11 @@ export interface ClashDiff {
   element_deleted: string[];
   /** Ids of `next` clashes. */
   reappeared: string[];
+  /**
+   * Ids of `prev` clashes that would be resolved but belong to a document with a scope change
+   * (X6: document removed/replaced, test config changed, mass resolution). Never counted as resolved.
+   */
+  out_of_scope: string[];
   /** Persisting clashes whose id changed and were matched by pairKey. */
   matchedByPairKey: Array<{ prevId: string; nextId: string; pairKey: string }>;
   counts: Record<DiffState, number>;

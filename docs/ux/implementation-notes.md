@@ -169,3 +169,34 @@ Built against `server/api/contract.ts` (families types by Coder C) and `docs/dom
   - Selecting any node (par, tipo, grupo, ubicación) shows in the viewer the union of its subtree's clashes under the filters. The models loaded are every document involved, or only the `docs=` pair when that filter is set.
   - Markers cap at 60, with "+N más" in the legend. The view fits to the union.
   - Node checkboxes are tri-state and check every ubicación below; Space does the same on the cursor row. Bulk actions apply to the checked ubicaciones.
+
+## M1: lenses, "Qué cambió", ACC state, scope banner (2026-11-09)
+
+Plan: `docs/PLAN-core-features-simplified.md` (approved). Contract: `ClashGroup.change` / `.acc`, `TriageFamily.changeCounts` / `.acc`, `TriagePayload.changeSummary` / `.scopeChanges` / `.accSync` in `server/api/contract.ts`.
+
+- **Lens row** (`LensBar.tsx`) above the tree: `[Qué cambió N] [Incidencias] [Reunión] [Todo N]`, a `role=tablist` navigated with ←/→, and encoded in the URL as `?lente=cambios|todo`.
+  - Default: "Qué cambió" when the test has a previous version (`changeSummary.previousVersion` or `test.delta`), else "Todo".
+  - "Incidencias" (M3) and "Reunión" (M4) are visible but disabled ("Próximamente").
+  - Tab counts are ACC clashes under the other filters: "Qué cambió" counts the clashes that actually changed (new + changed + reappeared, 334 on v11); "Todo" counts all of them.
+  - In "Qué cambió" the summary line adds that number in brackets, identical in both views: "10 grupos · 51 ubicaciones · 432 interferencias (334 nuevas)". The 432 is every clash of the 51 changed ubicaciones; the bracket is what actually changed.
+- **Qué cambió.**
+  - Keeps the ubicaciones whose `change` is new, changed or reappeared, with the same predicate in both views, so the summary line stays equal between Grupos and Interferencias.
+  - Unchanged ubicaciones sit in one collapsed row at the end, "↺ N ubicaciones sin cambios", outside the lens totals (lens + sin cambios = Todo).
+  - Anything that reappeared sorts first at every tree level, replacing the regression banner.
+  - The panel opens on "Cambios desde la prueba anterior" and shows one line: "Antes (v10): … → ahora: …" (penetration, clash counts when the change is added clashes, and the previous decision), or "Nueva en esta versión" / "Reapareció".
+  - The grupo panel shows "Respecto de v10: N nuevas · M cambiaron · K reaparecieron · J sin cambios".
+- **Scope banner (X6).** One banner, with one line per `scopeChanges` entry and the out-of-scope count. Out-of-scope clashes are never shown as resolved. Today the server sends only a count (`changeSummary.outOfScope`); `isOutOfScope()` is ready if clashes start carrying it.
+- **At most 2 banners**, by priority: scope change > stale version > new agent proposals ("Actualizar") > pace nudge.
+- **Header:** "Preparado por el agente · hh:mm", taking the newest of the agent's last activity and the newest proposal. Its tooltip carries the ACC sync line ("ACC sincronizado hh:mm · N asignados · M cerrados").
+- **Violet bar:** a thin violet left bar on the proposal block when any field came from the agent (llm / rule+llm). It disappears once the coordinator edits or corrects it.
+
+### Row cap: max 3 chips + counts + 1 state icon (`RowMarks.tsx`)
+
+| Row | Chip 1 | Chip 2 | Chip 3 (one status chip, by precedence) | State icon (one, by precedence) |
+|---|---|---|---|---|
+| Ubicación | Priority | Discipline pair | Reapareció > Cambió > Nuevo | Your decision in this version (✓ ✎ ✕ ⏸) > ACC: closed ⊘ / assigned or mixed (issue icon; tooltip with issue ids, "siguen" / "resueltas") > exception ⚑ > inherited ↺ / ◌ > pending ○ |
+| Grupo | Worst priority | Validity | Reapareció > Cambió > Nuevo > validez mixta > orientación por confirmar > Típico | Decided ✓ > ACC (aggregated) |
+| Interferencia (flat) | Priority | — | Reapareció > Cambió > Nuevo | Same as ubicación (ACC from its group) |
+| Nodes (par / tipo) | Worst priority | — | — | — (counts and "N por revisar" as text) |
+
+**Removed from rows, still in the tooltip or panel:** confidence dots, the "Revisión aleatoria" chip (the spot-check guard still applies), the flagged-text chip, the agent-updated flag icon, the "no 3D" icon, and DeltaBadge (replaced by the change word). The other grupo tags (Típico, validez mixta, orientación) stay in the grupo panel header.

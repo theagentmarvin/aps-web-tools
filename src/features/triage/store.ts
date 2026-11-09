@@ -18,6 +18,7 @@ import type {
   DecisionChange,
   DecisionField,
   DecisionKind,
+  ChangeKind,
   Discipline,
   FamilyAction,
   FamiliesPayload,
@@ -34,6 +35,7 @@ import type {
   Validity,
 } from "~/lib/api/types";
 import { readJson, writeJson } from "~/lib/storage";
+import { CHANGED, clashChange, groupChange } from "./change";
 import {
   clashFacts,
   dynamicFacts,
@@ -42,6 +44,7 @@ import {
   passes,
   sortItems,
   type Evaluated,
+  type LensId,
   type ListQuery,
   type StaticFacts,
 } from "./filters";
@@ -68,7 +71,7 @@ export interface Row {
 export interface TreeNode {
   id: string;
   depth: 0 | 1;
-  bucket: TriageFamily["bucket"] | "loose";
+  bucket: TriageFamily["bucket"] | "loose" | "unchanged";
   pair?: [string, string];
   problemType?: string;
   familyIds: string[];
@@ -77,6 +80,8 @@ export interface TreeNode {
   clashCount: number;
   worst: Priority | null;
   needsReview: number;
+  /** Ubicaciones that reappeared (lens "Qué cambió" sorts them first). */
+  reappeared: number;
 }
 
 /** A family (grupo) under the active filters. */
@@ -85,6 +90,7 @@ export interface FamilyStats {
   clashCount: number;
   worst: Priority | null;
   needsReview: number;
+  reappeared: number;
   levels: number;
 }
 
@@ -93,6 +99,8 @@ export interface ListSummary {
   groups: number;
   locations: number;
   clashes: number;
+  /** Lens "Qué cambió": clashes that actually changed (new + changed + reappeared), shown as "(N nuevas)". */
+  changed?: number;
 }
 
 /** Family decision as edited in the family panel ("Cambiar"). */
@@ -163,6 +171,10 @@ export interface TriageState {
   /** Tree view: clashes of each ubicación that pass the filters (clash-level filtering). */
   visibleByGroup: Map<string, Clash[]>;
   summary: ListSummary;
+  /** Lens "Qué cambió": ubicaciones without change, hidden behind the collapsed "N sin cambios" row. */
+  hiddenByGroup: Map<string, Clash[]>;
+  /** Ubicaciones per lens under the other filters (lens tab counts). */
+  lensCounts: { cambios: number; todo: number };
   collapsedNodes: Set<string>;
   /** Instances (group ids) opened this session, per family: the spot-check record. */
   familyVisits: Map<string, Set<string>>;
@@ -249,7 +261,9 @@ export class TriageStore {
       familyStats: new Map(),
       visibleByGroup: new Map(),
       summary: { groups: 0, locations: 0, clashes: 0 },
-      collapsedNodes: new Set(),
+      hiddenByGroup: new Map(),
+      lensCounts: { cambios: 0, todo: 0 },
+      collapsedNodes: new Set(["unchanged"]),
       familyVisits: new Map(),
       familyExceptions: new Map(),
       familyDrafts: new Map(),
@@ -350,7 +364,7 @@ export class TriageStore {
       families,
       problemTypes: p.problemTypes ?? [],
       familyOf,
-      collapsedNodes: new Set(),
+      collapsedNodes: new Set(["unchanged"]),
       familyVisits: new Map(),
       familyExceptions: new Map(familyExceptionsFrom(families)),
       familyDrafts: new Map(),
@@ -481,6 +495,7 @@ export class TriageStore {
     const node = s.nodes.get(key.slice(2));
     if (!node) return [];
     if (node.bucket === "loose") return [...s.visibleByGroup.keys()].filter((g) => !s.familyOf.has(g));
+    if (node.bucket === "unchanged") return [...s.hiddenByGroup.keys()];
     return node.familyIds.flatMap((fid) => (s.families.get(fid)?.groupIds ?? []).filter(visible));
   }
 
@@ -488,7 +503,7 @@ export class TriageStore {
   selectionMembers(key: string | null): { focus: Clash | undefined; members: Clash[] } {
     const s = this.state;
     if (!key) return { focus: undefined, members: [] };
-    const membersOf = (gid: string) => (this.familiesMode() ? s.visibleByGroup.get(gid) : undefined) ?? s.clashesByGroup.get(gid) ?? [];
+    const membersOf = (gid: string) => (this.familiesMode() ? (s.visibleByGroup.get(gid) ?? s.hiddenByGroup.get(gid)) : undefined) ?? s.clashesByGroup.get(gid) ?? [];
     if (key.startsWith("c:")) {
       const c = s.clashes.get(key.slice(2));
       return { focus: c, members: c ? membersOf(c.groupId) : [] };
@@ -501,7 +516,25 @@ export class TriageStore {
     return key;
   }
 
-  private buildTree(sortedGroups: Evaluated[], rows: Row[]) {
+  /** The test has a previous cached version to compare with. */
+  hasPrevious(): boolean {
+    const p = this.state.payload;
+    return !!p && (p.changeSummary?.previousVersion !== undefined || !!p.test.delta);
+  }
+
+  /** Active lens: the URL's, else "Qué cambió" when there is a previous version, else "Todo". M3/M4 lenses fall back to "Todo". */
+  effectiveLens(): LensId {
+    const l = this.state.query.lens ?? (this.hasPrevious() ? "cambios" : "todo");
+    return l === "cambios" && this.hasPrevious() ? "cambios" : "todo";
+  }
+
+  /** Change word of the ubicación an item belongs to. */
+  changeOf(e: Evaluated): ChangeKind {
+    const gid = e.s.kind === "group" ? e.s.id : (e.s.clash?.groupId ?? "");
+    return groupChange(this.state.groups.get(gid));
+  }
+
+  private buildTree(sortedGroups: Evaluated[], rows: Row[], hidden: Evaluated[] = []) {
     const s = this.state;
     const nodes = new Map<string, TreeNode>();
     const familyStats = new Map<string, FamilyStats>();
@@ -515,6 +548,7 @@ export class TriageStore {
     const count = (e: Evaluated) => s.visibleByGroup.get(e.s.id)?.length ?? 0;
     const worstOf = (items: Evaluated[]) => items.reduce<Priority | null>((w, e) => (e.d.priority && (!w || e.d.priority < w) ? e.d.priority : w), null);
     const reviewOf = (items: Evaluated[]) => items.filter((e) => e.s.group?.reviewState === "needs_review").length;
+    const reappearedOf = (items: Evaluated[]) => items.filter((e) => groupChange(e.s.group) === "reappeared").length;
     const clashesOf = (items: Evaluated[]) => items.reduce((n, e) => n + count(e), 0);
     const famInfo = [...byFamily].map(([fid, items]) => {
       const st: FamilyStats = {
@@ -522,6 +556,7 @@ export class TriageStore {
         clashCount: clashesOf(items),
         worst: worstOf(items),
         needsReview: reviewOf(items),
+        reappeared: reappearedOf(items),
         levels: levelsOf(s.families.get(fid)!, items),
       };
       familyStats.set(fid, st);
@@ -529,11 +564,12 @@ export class TriageStore {
     });
     type FamInfo = (typeof famInfo)[number];
     const add = (id: string, depth: 0 | 1, init: Pick<TreeNode, "bucket" | "pair" | "problemType">, fi: FamInfo) => {
-      const n = nodes.get(id) ?? { id, depth, ...init, familyIds: [], instanceCount: 0, clashCount: 0, worst: null, needsReview: 0 };
+      const n = nodes.get(id) ?? { id, depth, ...init, familyIds: [], instanceCount: 0, clashCount: 0, worst: null, needsReview: 0, reappeared: 0 };
       n.familyIds.push(fi.f.id);
       n.instanceCount += fi.st.instanceCount;
       n.clashCount += fi.st.clashCount;
       n.needsReview += fi.st.needsReview;
+      n.reappeared += fi.st.reappeared;
       if (fi.st.worst && (!n.worst || fi.st.worst < n.worst)) n.worst = fi.st.worst;
       nodes.set(id, n);
     };
@@ -542,11 +578,14 @@ export class TriageStore {
       add(TriageStore.l2Of(fi.f), 1, { bucket: fi.f.bucket, pair: fi.f.pair, problemType: fi.f.parts.problemType }, fi);
     }
     if (loose.length) {
-      nodes.set("loose", { id: "loose", depth: 0, bucket: "loose", familyIds: [], instanceCount: loose.length, clashCount: clashesOf(loose), worst: worstOf(loose), needsReview: reviewOf(loose) });
+      nodes.set("loose", { id: "loose", depth: 0, bucket: "loose", familyIds: [], instanceCount: loose.length, clashCount: clashesOf(loose), worst: worstOf(loose), needsReview: reviewOf(loose), reappeared: reappearedOf(loose) });
     }
     // Importance at every level, across buckets: worst priority, then needs-review, then clash count.
-    type Rank = { worst: Priority | null; needsReview: number; clashCount: number };
-    const important = (a: Rank, b: Rank) => PRIORITY_ORDER(a.worst) - PRIORITY_ORDER(b.worst) || b.needsReview - a.needsReview || b.clashCount - a.clashCount;
+    // In "Qué cambió", anything that reappeared goes first (it replaces a regression banner).
+    type Rank = { worst: Priority | null; needsReview: number; clashCount: number; reappeared: number };
+    const regressionsFirst = this.effectiveLens() === "cambios";
+    const important = (a: Rank, b: Rank) =>
+      (regressionsFirst ? Number(b.reappeared > 0) - Number(a.reappeared > 0) : 0) || PRIORITY_ORDER(a.worst) - PRIORITY_ORDER(b.worst) || b.needsReview - a.needsReview || b.clashCount - a.clashCount;
     const l1 = [...nodes.values()].filter((n) => n.depth === 0).sort((a, b) => important(a, b) || a.id.localeCompare(b.id));
     const pushInstances = (items: Evaluated[], depth: number, parent: string) => {
       for (const e of items) {
@@ -576,6 +615,19 @@ export class TriageStore {
         }
       }
     }
+    if (hidden.length) {
+      // "N sin cambios" (↺): one collapsed row at the end; its ubicaciones are listed flat when opened.
+      const id = "unchanged";
+      const hiddenClashes = hidden.reduce((n, e) => n + (s.hiddenByGroup.get(e.s.id)?.length ?? 0), 0);
+      nodes.set(id, { id, depth: 0, bucket: "unchanged", familyIds: [], instanceCount: hidden.length, clashCount: hiddenClashes, worst: worstOf(hidden), needsReview: reviewOf(hidden), reappeared: 0 });
+      rows.push({ key: `n:${id}`, kind: "node", id, groupId: "", nested: false, depth: 0 });
+      if (!s.collapsedNodes.has(id))
+        for (const e of hidden) {
+          const key = rowKey("group", e.s.id);
+          rows.push({ key, kind: "group", id: e.s.id, groupId: e.s.id, nested: false, depth: 1, parent: `n:${id}` });
+          if (s.expanded.has(e.s.id)) for (const c of s.hiddenByGroup.get(e.s.id) ?? []) rows.push({ key: rowKey("clash", c.id), kind: "clash", id: c.id, groupId: e.s.id, nested: true, depth: 2, parent: key });
+        }
+    }
     return { nodes, familyStats };
   }
 
@@ -589,26 +641,40 @@ export class TriageStore {
       if (clashLevel && kind === "group") for (const c of s.clashesByGroup.get(id) ?? []) keepIds.add(c.id);
       else keepIds.add(id);
     }
-    const items = this.allEvaluated().filter((e) => keepIds.has(e.s.id) || passes(e, s.query));
+    const base = this.allEvaluated().filter((e) => keepIds.has(e.s.id) || passes(e, s.query));
+    // Lens: "Qué cambió" keeps the ubicaciones whose change is new / changed / reappeared (same predicate in both views).
+    const lens = this.effectiveLens();
+    // Tab counts are clashes: "Qué cambió" = clashes that actually changed (not every clash of a changed ubicación).
+    const isChangedClash = (e: Evaluated) => !!e.s.clash && CHANGED.has(clashChange(e.s.clash) ?? "unchanged");
+    const lensCounts = { cambios: base.filter(isChangedClash).length, todo: base.length };
+    const items = lens === "cambios" ? base.filter((e) => keepIds.has(e.s.id) || CHANGED.has(this.changeOf(e))) : base;
     const rows: Row[] = [];
     if (this.familiesMode()) {
       // Clash-level filter, then group the passing clashes into ubicaciones → grupos → tipo → par.
-      const visibleByGroup = new Map<string, Clash[]>();
-      for (const e of items) {
-        const c = e.s.clash;
-        if (!c) continue;
-        const list = visibleByGroup.get(c.groupId);
-        if (list) list.push(c);
-        else visibleByGroup.set(c.groupId, [c]);
-      }
-      this.state = { ...this.state, visibleByGroup };
-      const groups = [...visibleByGroup.keys()].map((gid) => this.evaluate("group", gid)).filter((e): e is Evaluated => !!e);
-      const { nodes, familyStats } = this.buildTree(sortItems(groups, s.query.sort), rows);
+      const byGroup = (list: Evaluated[]) => {
+        const m = new Map<string, Clash[]>();
+        for (const e of list) {
+          const c = e.s.clash;
+          if (!c) continue;
+          const l = m.get(c.groupId);
+          if (l) l.push(c);
+          else m.set(c.groupId, [c]);
+        }
+        return m;
+      };
+      const visibleByGroup = byGroup(items);
+      const inLens = new Set(items);
+      const hiddenByGroup = lens === "cambios" ? byGroup(base.filter((e) => !inLens.has(e))) : new Map<string, Clash[]>();
+      for (const g of visibleByGroup.keys()) hiddenByGroup.delete(g);
+      this.state = { ...this.state, visibleByGroup, hiddenByGroup };
+      const evalGroups = (ids: Iterable<string>) => [...ids].map((gid) => this.evaluate("group", gid)).filter((e): e is Evaluated => !!e);
+      const { nodes, familyStats } = this.buildTree(sortItems(evalGroups(visibleByGroup.keys()), s.query.sort), rows, sortItems(evalGroups(hiddenByGroup.keys()), s.query.sort));
       const fams = new Set([...visibleByGroup.keys()].map((g) => s.familyOf.get(g) ?? g));
-      this.set({ rows, nodes, familyStats, visibleByGroup, summary: { groups: fams.size, locations: visibleByGroup.size, clashes: items.length }, dirty: false });
+      this.set({ rows, nodes, familyStats, visibleByGroup, hiddenByGroup, lensCounts, summary: { groups: fams.size, locations: visibleByGroup.size, clashes: items.length, ...(lens === "cambios" ? { changed: items.filter(isChangedClash).length } : {}) }, dirty: false });
       return;
     }
-    const sorted = sortItems(items, s.query.sort);
+    let sorted = sortItems(items, s.query.sort);
+    if (lens === "cambios") sorted = [...sorted.filter((e) => this.changeOf(e) === "reappeared"), ...sorted.filter((e) => this.changeOf(e) !== "reappeared")];
     for (const e of sorted) {
       if (e.s.kind === "group") {
         rows.push({ key: rowKey("group", e.s.id), kind: "group", id: e.s.id, groupId: e.s.id, nested: false });
@@ -623,11 +689,11 @@ export class TriageStore {
     if (clashLevel) {
       const locs = new Set(items.map((e) => e.s.clash?.groupId ?? ""));
       const fams = new Set([...locs].map((g) => s.familyOf.get(g) ?? g));
-      summary = { groups: fams.size, locations: locs.size, clashes: items.length };
+      summary = { groups: fams.size, locations: locs.size, clashes: items.length, ...(lens === "cambios" ? { changed: items.filter(isChangedClash).length } : {}) };
     } else {
       summary = { groups: items.length, locations: items.length, clashes: items.reduce((n, e) => n + (e.s.group?.clashIds.length ?? 0), 0) };
     }
-    this.set({ rows, summary, dirty: false });
+    this.set({ rows, summary, lensCounts, hiddenByGroup: new Map(), dirty: false });
   }
 
   // ── checks on tree nodes ─────────────────────────────────────────

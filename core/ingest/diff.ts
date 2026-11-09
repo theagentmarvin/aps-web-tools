@@ -26,6 +26,11 @@ export interface DiffOptions {
    * are reported as `resolved`.
    */
   nextElementKeys?: Iterable<string>;
+  /**
+   * X6 scope guard: a prev clash left unmatched for which this returns true is
+   * `out_of_scope` instead of resolved / element_deleted.
+   */
+  outOfScope?: (prevClash: DiffableClash) => boolean;
 }
 
 export interface DiffableClash {
@@ -54,8 +59,9 @@ export function diffTestVersions<T extends DiffableClash>(
     resolved: [],
     element_deleted: [],
     reappeared: [],
+    out_of_scope: [],
     matchedByPairKey: [],
-    counts: { new: 0, persisting: 0, resolved: 0, element_deleted: 0, reappeared: 0 },
+    counts: { new: 0, persisting: 0, resolved: 0, element_deleted: 0, reappeared: 0, out_of_scope: 0 },
   };
   const push = (state: DiffState, id: string): void => {
     result[state].push(id);
@@ -100,11 +106,15 @@ export function diffTestVersions<T extends DiffableClash>(
   // 3. Prev leftovers: deleted element vs resolved.
   for (const c of prevById.values()) {
     if (matchedPrev.has(c.id)) continue;
+    if (options.outOfScope?.(c)) {
+      push("out_of_scope", c.id);
+      continue;
+    }
     const deleted = elementKeys && c.pairKey ? pairKeyTokens(c.pairKey).some((t) => !elementKeys.has(t)) : false;
     push(deleted ? "element_deleted" : "resolved", c.id);
   }
 
-  for (const s of ["new", "persisting", "resolved", "element_deleted", "reappeared"] as const) {
+  for (const s of ["new", "persisting", "resolved", "element_deleted", "reappeared", "out_of_scope"] as const) {
     result[s].sort(byNumericThenText);
   }
   return result;
@@ -116,7 +126,7 @@ export function diffTestVersions<T extends DiffableClash>(
  */
 export function diffStateIndex(diff: ClashDiff): Map<string, DiffState> {
   const m = new Map<string, DiffState>();
-  for (const s of ["resolved", "element_deleted", "new", "persisting", "reappeared"] as const) {
+  for (const s of ["resolved", "element_deleted", "out_of_scope", "new", "persisting", "reappeared"] as const) {
     for (const k of diff[s]) m.set(k, s);
   }
   return m;

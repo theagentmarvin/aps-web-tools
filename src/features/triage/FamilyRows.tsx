@@ -8,9 +8,11 @@ import { memo } from "react";
 import { useT } from "~/i18n";
 import type { FamilyGroup, TriageFamily } from "~/lib/api/types";
 import { PriorityChip, ValidityBadge } from "~/lib/components/badges";
-import { IconAlert, IconChevronDown, IconChevronRight, IconFlag, IconInherited } from "~/lib/components/icons";
+import { IconAlert, IconChevronDown, IconChevronRight, IconFlag, IconClosed, IconInherited, IconIssue } from "~/lib/components/icons";
 import { problemTypeOf } from "~/lib/problem-types";
 import { useTriageContext } from "./actions";
+import { familyChangeCounts, topChange } from "./change";
+import { ChangeChip, accTooltip } from "./RowMarks";
 import { useTriage, type Row, type TreeNode } from "./store";
 
 export const NODE_H = 32;
@@ -79,6 +81,7 @@ export function useNodeLabel(n: TreeNode | undefined): string {
   if (n.bucket === "model_set") return t("families.bucket.modelSet");
   if (n.bucket === "non_issue") return t("families.bucket.nonIssue");
   if (n.bucket === "loose") return t("families.bucket.loose");
+  if (n.bucket === "unchanged") return `↺ ${t("lens.unchangedRow", { count: n.instanceCount })}`;
   return n.pair ? `${n.pair[0]} × ${n.pair[1]}` : n.id;
 }
 
@@ -111,7 +114,7 @@ export const NodeRow = memo(function NodeRow({ row }: { row: Row }) {
       {n.worst && n.depth === 0 && <PriorityChip value={n.worst} />}
       {n.needsReview > 0 && n.depth === 0 && <span className="shrink-0 text-[10px] text-amber-800">{t("families.needsReviewCount", { count: n.needsReview })}</span>}
       <span className="shrink-0 whitespace-nowrap text-[11px] text-gray-500">
-        {n.bucket === "loose"
+        {n.bucket === "loose" || n.bucket === "unchanged"
           ? t("families.countsLoose", { instances: n.instanceCount, clashes: n.clashCount })
           : t("families.counts", { count: n.familyIds.length, instances: n.instanceCount, clashes: n.clashCount })}
       </span>
@@ -183,12 +186,16 @@ export const FamilyRow = memo(function FamilyRow({ row }: { row: Row }) {
           <span className="shrink-0 text-xs">
             <ValidityBadge value={f.decision?.status === "approved" ? f.decision.validity : f.proposed.validity} />
           </span>
-          <FamilyTags family={f} compact />
+          <FamilyStatusChip family={f} />
           <span className="ml-auto shrink-0 whitespace-nowrap text-[11px] text-gray-500" title={`${t("families.uniqueTooltip", { raw: f.rawClashCount, unique: f.uniqueClashCount })}
 ${f.levels.join(", ")}`}>
             {t("families.rowCounts", { instances: st?.instanceCount ?? f.instanceCount, clashes: st?.clashCount ?? f.rawClashCount, levels: st?.levels ?? f.levels.length })}
           </span>
-          {decided ? <IconInherited size={13} label={t("families.decided")} className="shrink-0 text-green-700" /> : null}
+          {decided ? (
+            <IconInherited size={13} label={t("families.decided")} className="shrink-0 text-green-700" />
+          ) : f.acc ? (
+            f.acc.status === "closed" ? <IconClosed size={13} label={accTooltip(t, f.acc)} className="shrink-0 text-gray-500" /> : <IconIssue size={13} label={accTooltip(t, f.acc)} className="shrink-0 text-brand" />
+          ) : null}
         </div>
         <div className="truncate text-sm font-medium text-gray-900" title={f.title}>
           {f.title}
@@ -197,6 +204,21 @@ ${f.levels.join(", ")}`}>
     </div>
   );
 });
+
+/**
+ * The ONE status chip of a grupo row, by precedence:
+ * Reapareció > Cambió > Nuevo > validez mixta > orientación por confirmar > Típico.
+ * The other tags stay visible in the grupo panel header.
+ */
+export function FamilyStatusChip({ family }: { family: TriageFamily }) {
+  const { store } = useTriageContext();
+  const groups = useTriage(store, (s) => s.groups);
+  const change = topChange(familyChangeCounts(family, groups));
+  if (change) return <ChangeChip change={change} />;
+  const tag = (["validez_mixta", "orientacion_por_confirmar", "tipico"] as const).find((x) => family.tags.includes(x));
+  if (!tag) return null;
+  return <FamilyTags family={{ ...family, tags: [tag] }} compact />;
+}
 
 /** Inheritance mark on an instance row: ↳ heredada · ⚑ excepción · ◌ pendiente. */
 export function InheritanceMark({ group }: { group: FamilyGroup }) {

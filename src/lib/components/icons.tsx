@@ -82,3 +82,7 @@ export function Spinner({ className = "" }: { className?: string }) {
     />
   );
 }
+/** ACC issue assigned (ticket). */
+export const IconIssue = (p: IconProps) => <Svg {...p}><rect x="3" y="2.5" width="10" height="11" rx="1.5" /><path d="M5.5 6h5M5.5 8.5h5M5.5 11h3" /></Svg>;
+/** Closed in ACC (circle with a bar). */
+export const IconClosed = (p: IconProps) => <Svg {...p}><circle cx="8" cy="8" r="5.5" /><path d="M4.2 11.8l7.6-7.6" /></Svg>;

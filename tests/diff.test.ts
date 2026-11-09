@@ -37,7 +37,7 @@ describe("diffTestVersions on fixtures (v41 → v42)", () => {
     expect(diff.matchedByPairKey.map(({ prevId, nextId }) => ({ prevId, nextId })).sort((a, b) => a.prevId.localeCompare(b.prevId))).toEqual(
       [...expected.matchedByPairKey].sort((a, b) => a.prevId.localeCompare(b.prevId)),
     );
-    expect(diff.counts).toEqual({ new: 70, persisting: 220, resolved: 65, element_deleted: 15, reappeared: 13 });
+    expect(diff.counts).toEqual({ new: 70, persisting: 220, resolved: 65, element_deleted: 15, reappeared: 13, out_of_scope: 0 });
   });
 
   it("without element keys, deletions fall back to resolved", () => {

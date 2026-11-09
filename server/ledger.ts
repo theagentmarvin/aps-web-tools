@@ -14,7 +14,7 @@
  */
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { diffWithLedger, emptyLedger, parseLedger, updateLedger, type ClashLedger } from "../core/ingest/ledger";
+import { applyAccSnapshot, diffWithLedger, emptyLedger, parseLedger, updateLedger, type AccSnapshot, type ClashLedger, type LedgerVersion } from "../core/ingest/ledger";
 import type { DiffableClash } from "../core/ingest/diff";
 import type { ClashDiff } from "../core/types";
 import { readJsonFile, writeJsonAtomic } from "./store/fs";
@@ -43,6 +43,16 @@ export class LedgerService {
     await this.store.withLock(() => writeJsonAtomic(this.path(projectId, ledger.modelSetId), ledger));
   }
 
+  /** Load (or seed) → transform → persist, under the store lock. */
+  async withLedger(projectId: string, modelSetId: string, fn: (l: ClashLedger) => ClashLedger): Promise<ClashLedger> {
+    return this.store.withLock(async () => {
+      const current = (await this.load(projectId, modelSetId)) ?? (await this.seed?.(modelSetId)) ?? emptyLedger(modelSetId);
+      const next = fn(current);
+      await writeJsonAtomic(this.path(projectId, modelSetId), next);
+      return next;
+    });
+  }
+
   /** Diff prev → next with the ledger as history, persist the updated ledger, return the diff. */
   async diffAndRecord<T extends DiffableClash>(
     projectId: string,
@@ -50,14 +60,33 @@ export class LedgerService {
     prev: { version: number; clashes: readonly T[] },
     next: { version: number; clashes: readonly T[] },
     nextElementKeys?: Iterable<string>,
+    outOfScope?: (prevClash: DiffableClash) => boolean,
   ): Promise<ClashDiff> {
     return this.store.withLock(async () => {
       const current = (await this.load(projectId, modelSetId)) ?? (await this.seed?.(modelSetId)) ?? emptyLedger(modelSetId);
-      const { diff, ledger } = diffWithLedger(current, prev, next, nextElementKeys ? { nextElementKeys } : {});
+      const { diff, ledger } = diffWithLedger(current, prev, next, { ...(nextElementKeys ? { nextElementKeys } : {}), ...(outOfScope ? { outOfScope } : {}) });
       await writeJsonAtomic(this.path(projectId, modelSetId), ledger);
       return diff;
     });
   }
+}
+
+export interface AccSyncResult {
+  ledger: ClashLedger;
+}
+
+/** X1: record what ACC says for one version (the version is recorded first when missing). */
+export async function recordAccInLedger<T extends DiffableClash>(
+  svc: LedgerService,
+  projectId: string,
+  modelSetId: string,
+  version: LedgerVersion<T>,
+  snap: AccSnapshot,
+): Promise<ClashLedger> {
+  return svc.withLedger(projectId, modelSetId, (l) => {
+    const base = l.versions.includes(version.version) ? l : updateLedger(l, version);
+    return applyAccSnapshot(base, snap, version.clashes.map((c) => c.id));
+  });
 }
 
 /** Fixtures-only seed: version 40 from tests/fixtures/mc/history-v40-clash-ids.json. */

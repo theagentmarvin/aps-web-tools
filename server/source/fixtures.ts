@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { attachPairKeys, elementLookupFromTables, normalizeClashTest } from "../../core/ingest";
 import type { RawClashDocumentFile, RawClashFile, RawClashInstanceFile, RawModelSetVersion } from "../../core/ingest/raw";
 import type { ElementProps } from "../../core/types";
+import type { AccSnapshot } from "../../core/ingest/ledger";
 import { parseNdjson } from "../aps/download";
 import { parsePropertyAliases } from "../aps/index-properties";
 import { compileMapper, FieldDictionary } from "../aps/property-mapping";
@@ -229,6 +230,34 @@ export class FixtureSource implements DataSource {
   /** Recorded fake writes, for preflight and tests. */
   async writes(): Promise<FixtureWrite[]> {
     return readJsonl<FixtureWrite>(this.writesFile);
+  }
+
+  /** X1 fixtures: `mc/v{N}/acc-groups.json` (groups made in ACC) + the recorded fake writes of this test. */
+  async accState(_projectId: string, _modelSetId: string, testId: string, version: number): Promise<AccSnapshot> {
+    type F = { assigned?: Array<{ id: string; issueId?: string; existing: string[]; resolved?: string[] }>; closed?: Array<{ id: string; reason?: string; existing: string[]; resolved?: string[] }> };
+    let f: F = {};
+    try {
+      f = this.json<F>(`mc/v${version}/acc-groups.json`);
+    } catch {
+      // no ACC groups for this version
+    }
+    const groups: AccSnapshot["groups"] = [
+      ...(f.assigned ?? []).map((g) => ({ groupId: g.id, kind: "assigned" as const, ...(g.issueId ? { issueId: g.issueId } : {}), existing: g.existing.map(String), resolved: (g.resolved ?? []).map(String) })),
+      ...(f.closed ?? []).map((g) => ({ groupId: g.id, kind: "closed" as const, ...(g.reason ? { reason: g.reason } : {}), existing: g.existing.map(String), resolved: (g.resolved ?? []).map(String) })),
+    ];
+    for (const w of await this.writes()) {
+      if (w.testId !== testId) continue;
+      w.groups.forEach((g, i) =>
+        groups.push({
+          groupId: g.id,
+          kind: w.operation === "clash.assign" ? "assigned" : "closed",
+          ...(w.operation === "clash.assign" && w.createdIssueIds[i] ? { issueId: w.createdIssueIds[i] } : {}),
+          existing: g.clashes.map(String),
+          resolved: [],
+        }),
+      );
+    }
+    return { version, at: new Date().toISOString(), groups };
   }
 
   async triageState(_projectId: string, testId: string) {
