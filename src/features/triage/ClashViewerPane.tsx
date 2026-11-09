@@ -25,7 +25,7 @@ import {
   type ClashSide,
 } from "~/lib/viewer-tools/clash-highlight";
 import { useTriageContext } from "./actions";
-import { parseKey, rowKey, useTriage, type ViewerMode } from "./store";
+import { rowKey, useTriage, type TriageStore, type ViewerMode } from "./store";
 
 const COLOR_A = "#0072B2";
 const COLOR_B = "#E69F00";
@@ -34,44 +34,32 @@ const MAX_MARKERS = 60;
 const pairKeyOf = (c: Clash) => (c.a.documentId <= c.b.documentId ? `${c.a.documentId},${c.b.documentId}` : `${c.b.documentId},${c.a.documentId}`);
 
 /**
- * The viewer always shows exactly ONE model pair (like ACC Model Coordination): the grid cell's
- * pair when the triage was opened from it (?docs=a,b), else the pair of the focused clash, else the
- * group's dominant pair. A group can span several document pairs (e.g. a structure also published
- * as a link inside another model), so members outside the pair are not highlighted.
+ * What the viewer shows for the selected row (like ACC Model Coordination, but following the tree):
+ * - a clash: that clash, in its document pair;
+ * - any tree node (pair, problem type, grupo, ubicación): the UNION of the subtree clashes (under the
+ *   active filters), with the models of every document involved (exactly 2 when the selection spans
+ *   one document pair);
+ * - with ?docs=a,b (opened from the grid): only that pair, whatever the selection.
  */
 function viewPair(
   cursorKey: string | null,
   docsFilter: string | undefined,
-  clashes: Map<string, Clash>,
-  byGroup: Map<string, Clash[]>,
-): { pair: [number, number] | undefined; focus: Clash | undefined; target: Clash[]; members: Clash[] } {
-  const { focus, members } = membersOf(cursorKey, clashes, byGroup);
-  let key: string | undefined;
+  store: TriageStore,
+): { docs: number[]; focus: Clash | undefined; target: Clash[]; members: Clash[] } {
+  const { focus, members: all } = store.selectionMembers(cursorKey);
+  let inView: (c: Clash) => boolean = () => true;
   if (docsFilter) {
     const [x, y] = docsFilter.split(",").map(Number);
-    key = x <= y ? `${x},${y}` : `${y},${x}`;
-  } else if (focus) key = pairKeyOf(focus);
-  else if (members.length) {
-    const count = new Map<string, number>();
-    for (const c of members) count.set(pairKeyOf(c), (count.get(pairKeyOf(c)) ?? 0) + 1);
-    key = [...count].sort((p, q) => q[1] - p[1] || p[0].localeCompare(q[0]))[0][0];
+    const key = x <= y ? `${x},${y}` : `${y},${x}`;
+    inView = (c) => pairKeyOf(c) === key;
+  } else if (focus) {
+    const key = pairKeyOf(focus);
+    inView = (c) => pairKeyOf(c) === key;
   }
-  if (!key) return { pair: undefined, focus, target: [], members };
-  const [x, y] = key.split(",").map(Number);
-  const inPair = (c: Clash) => pairKeyOf(c) === key;
-  const target = (focus ? [focus] : members).filter(inPair);
-  return { pair: [x, y], focus: focus && inPair(focus) ? focus : undefined, target, members: members.filter(inPair) };
-}
-
-function membersOf(cursorKey: string | null, clashes: Map<string, Clash>, byGroup: Map<string, Clash[]>): { focus: Clash | undefined; members: Clash[] } {
-  if (!cursorKey) return { focus: undefined, members: [] };
-  const { kind, id } = parseKey(cursorKey);
-  if (kind === "group") {
-    const members = byGroup.get(id) ?? [];
-    return { focus: undefined, members };
-  }
-  const c = clashes.get(id);
-  return { focus: c, members: c ? (byGroup.get(c.groupId) ?? [c]) : [] };
+  const members = all.filter(inView);
+  const target = focus ? (inView(focus) ? [focus] : []) : members;
+  const docs = [...new Set((focus ? [focus] : members).flatMap((c) => [c.a.documentId, c.b.documentId]))].sort((m, n) => m - n);
+  return { docs, focus: focus && inView(focus) ? focus : undefined, target, members };
 }
 
 export function ClashViewerPane() {
@@ -82,19 +70,19 @@ export function ClashViewerPane() {
   const { store } = useTriageContext();
   const payload = useTriage(store, (s) => s.payload);
   const viewer = useTriage(store, (s) => s.viewer);
-  // Family / tree-node rows show a representative instance.
-  const cursorKey = useTriage(store, (s) => store.viewKey(s.cursorKey));
+  const cursorKey = useTriage(store, (s) => s.cursorKey);
+  // Tree rows select their whole subtree under the filters: re-render when the filtered set changes.
+  const visibleSet = useTriage(store, (s) => s.visibleByGroup);
   const docs = useMemo(() => payload?.test.documents ?? [], [payload]);
   const docsFilter = useTriage(store, (s) => s.query.docs);
   // Only the models involved in what is on screen: the current clash/group, else the grid
   // cell's pair (?docs=a,b), else the first row. Never the whole model set.
   const wantedUrns = useMemo(() => {
-    const key = cursorKey ?? store.viewKey(store.state.rows[0]?.key ?? null);
-    const { pair } = viewPair(key, docsFilter, store.state.clashes, store.state.clashesByGroup);
-    if (!pair) return [];
+    const key = cursorKey ?? store.state.rows[0]?.key ?? null;
+    const { docs: ids } = viewPair(key, docsFilter, store);
     const urnOf = new Map(docs.map((d) => [d.documentId, d.urn]));
-    return [...new Set(pair)].flatMap((id) => (urnOf.get(id) ? [urnOf.get(id)!] : []));
-  }, [cursorKey, docsFilter, docs, store]);
+    return ids.flatMap((id) => (urnOf.get(id) ? [urnOf.get(id)!] : []));
+  }, [cursorKey, docsFilter, docs, store, visibleSet]);
   const wantedKey = wantedUrns.join(",");
   // Stable identity while the pair is unchanged, so ForgeViewer does nothing on cursor moves within it.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -150,7 +138,7 @@ export function ClashViewerPane() {
   useEffect(() => {
     if (viewer.status !== "ready") return;
     const id = window.setTimeout(() => {
-      const { focus, members, target } = viewPair(cursorKey, docsFilter, store.state.clashes, store.state.clashesByGroup);
+      const { focus, members, target } = viewPair(cursorKey, docsFilter, store);
       if (!target.length) {
         clearClashPair();
         return;
@@ -175,7 +163,7 @@ export function ClashViewerPane() {
       } else clearClashMarkers();
     }, 150);
     return () => window.clearTimeout(id);
-  }, [cursorKey, docsFilter, viewer.status, viewer.mode, viewer.markers, sidesFor, store, t, viewer.side]);
+  }, [cursorKey, docsFilter, viewer.status, viewer.mode, viewer.markers, sidesFor, store, t, viewer.side, visibleSet, viewerUrns]);
 
   useEffect(() => {
     if (viewer.status === "ready") setSideVisibility(viewer.side);
@@ -270,9 +258,10 @@ function ViewerPlaceholder({ hasDocs, needsLogin, onLogin }: { hasDocs: boolean;
   const t = useT();
   const { fmt } = useI18n();
   const { store } = useTriageContext();
-  // Family / tree-node rows show a representative instance.
-  const cursorKey = useTriage(store, (s) => store.viewKey(s.cursorKey));
-  const { focus, members } = membersOf(cursorKey, store.state.clashes, store.state.clashesByGroup);
+  const cursorKey = useTriage(store, (s) => s.cursorKey);
+  // Tree rows select their whole subtree under the filters: re-render when the filtered set changes.
+  useTriage(store, (s) => s.visibleByGroup);
+  const { focus, members } = store.selectionMembers(cursorKey);
   const c = focus ?? members[0];
   return (
     <div className="clash-placeholder-grid flex h-full w-full items-center justify-center p-6">
@@ -369,10 +358,11 @@ function ClashLegend() {
   const t = useT();
   const { fmt, lang } = useI18n();
   const { store } = useTriageContext();
-  // Family / tree-node rows show a representative instance.
-  const cursorKey = useTriage(store, (s) => store.viewKey(s.cursorKey));
+  const cursorKey = useTriage(store, (s) => s.cursorKey);
+  // Tree rows select their whole subtree under the filters: re-render when the filtered set changes.
+  useTriage(store, (s) => s.visibleByGroup);
   const disciplines = useTriage(store, (s) => s.disciplines);
-  const { focus, members } = membersOf(cursorKey, store.state.clashes, store.state.clashesByGroup);
+  const { focus, members } = store.selectionMembers(cursorKey);
   const c = focus ?? members[0];
   if (!c) return null;
   const dl = (code: string) => {
@@ -390,7 +380,8 @@ function ClashLegend() {
         <span className="text-clash-b-ink">{t("viewer.legendB", { discipline: dl(c.b.discipline), element: c.b.name })}</span>
       </div>
       <div className="mt-0.5 text-gray-500">
-        {focus ? t("viewer.distance", { value: fmt.mm(c.distanceMm) }) : t("list.clashesCount", { count: members.length })}
+        {focus ? t("viewer.distance", { value: fmt.mm(c.distanceMm) }) : t("viewer.selectionSummary", { clashes: members.length, locations: new Set(members.map((m) => m.groupId)).size })}
+        {!focus && members.length > MAX_MARKERS && <span className="ml-1">· {t("viewer.moreMarkers", { count: members.length - MAX_MARKERS })}</span>}
       </div>
     </div>
   );

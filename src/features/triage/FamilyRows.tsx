@@ -14,6 +14,33 @@ import { useTriageContext } from "./actions";
 import { useTriage, type Row, type TreeNode } from "./store";
 
 export const NODE_H = 32;
+
+/** Tri-state checkbox: checks every ubicación under a tree row. */
+function TriCheck({ rowKey }: { rowKey: string }) {
+  const t = useT();
+  const { store } = useTriageContext();
+  const state = useTriage(store, (s) => (s.checked.size === 0 ? "none" : store.checkState(rowKey)));
+  const anyChecked = useTriage(store, (s) => s.checked.size > 0);
+  return (
+    <input
+      type="checkbox"
+      tabIndex={-1}
+      aria-label={t("families.checkSubtree")}
+      title={t("families.checkSubtree")}
+      checked={state === "all"}
+      ref={(el) => {
+        if (el) el.indeterminate = state === "some";
+      }}
+      aria-checked={state === "some" ? "mixed" : state === "all"}
+      onClick={(e) => {
+        e.stopPropagation();
+        store.toggleCheckSubtree(rowKey);
+      }}
+      onChange={() => undefined}
+      className={`h-3.5 w-3.5 shrink-0 accent-brand ${anyChecked || state !== "none" ? "opacity-100" : "opacity-0 group-hover/row:opacity-100"}`}
+    />
+  );
+}
 export const FAMILY_H = 56;
 
 /** Left padding per tree depth (px). */
@@ -75,16 +102,18 @@ export const NodeRow = memo(function NodeRow({ row }: { row: Row }) {
       onClick={() => store.setCursor(row.key)}
       onDoubleClick={() => store.toggleNode(row.id)}
     >
+      <TriCheck rowKey={row.key} />
       <Chevron open={open} label={open ? t("list.collapse") : t("list.expand")} onClick={() => store.toggleNode(row.id)} />
       {n.depth === 1 && n.problemType && <span className="shrink-0 rounded bg-gray-100 px-1 font-mono text-[10px] text-gray-500">{n.problemType}</span>}
       <span className={`min-w-0 flex-1 truncate ${n.depth === 0 ? "text-sm font-semibold text-gray-900" : "text-[13px] text-gray-800"}`} title={label}>
         {label}
       </span>
       {n.worst && n.depth === 0 && <PriorityChip value={n.worst} />}
+      {n.needsReview > 0 && n.depth === 0 && <span className="shrink-0 text-[10px] text-amber-800">{t("families.needsReviewCount", { count: n.needsReview })}</span>}
       <span className="shrink-0 whitespace-nowrap text-[11px] text-gray-500">
         {n.bucket === "loose"
           ? t("families.countsLoose", { instances: n.instanceCount, clashes: n.clashCount })
-          : t("families.counts", { families: n.familyIds.length, instances: n.instanceCount, clashes: n.clashCount })}
+          : t("families.counts", { count: n.familyIds.length, instances: n.instanceCount, clashes: n.clashCount })}
       </span>
     </div>
   );
@@ -130,6 +159,7 @@ export const FamilyRow = memo(function FamilyRow({ row }: { row: Row }) {
   useTriage(store, (s) => s.latest);
   if (!f) return null;
   const worst = store.familyWorst(f);
+  const st = store.state.familyStats.get(f.id);
   const decided = f.decision?.status === "approved";
   return (
     <div
@@ -144,6 +174,7 @@ export const FamilyRow = memo(function FamilyRow({ row }: { row: Row }) {
       onDoubleClick={() => store.toggleExpand(row.id)}
     >
       <div className="flex items-center">
+        <TriCheck rowKey={row.key} />
         <Chevron open={open} label={open ? t("list.collapse") : t("list.expand")} onClick={() => store.toggleExpand(row.id)} />
       </div>
       <div className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
@@ -153,8 +184,9 @@ export const FamilyRow = memo(function FamilyRow({ row }: { row: Row }) {
             <ValidityBadge value={f.decision?.status === "approved" ? f.decision.validity : f.proposed.validity} />
           </span>
           <FamilyTags family={f} compact />
-          <span className="ml-auto shrink-0 whitespace-nowrap text-[11px] text-gray-500" title={f.levels.join(", ")}>
-            {t("families.rowCounts", { instances: f.instanceCount, clashes: f.uniqueClashCount, levels: f.levels.length })}
+          <span className="ml-auto shrink-0 whitespace-nowrap text-[11px] text-gray-500" title={`${t("families.uniqueTooltip", { raw: f.rawClashCount, unique: f.uniqueClashCount })}
+${f.levels.join(", ")}`}>
+            {t("families.rowCounts", { instances: st?.instanceCount ?? f.instanceCount, clashes: st?.clashCount ?? f.rawClashCount, levels: st?.levels ?? f.levels.length })}
           </span>
           {decided ? <IconInherited size={13} label={t("families.decided")} className="shrink-0 text-green-700" /> : null}
         </div>

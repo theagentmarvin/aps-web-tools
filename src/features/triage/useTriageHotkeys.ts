@@ -76,7 +76,7 @@ export function useTriageHotkeys(opts: { onSend: () => void }) {
     { keys: ["u", "Ctrl+z"], labelKey: "shortcuts.undo", group: "decisions", run: () => actions.undo() },
     { keys: ["Ctrl+Shift+z", "Ctrl+Shift+Z"], labelKey: "shortcuts.redo", group: "decisions", run: () => actions.redo() },
     // Selection
-    { keys: ["Space"], labelKey: "shortcuts.toggleCheck", group: "selection", run: () => current() && store.toggleCheck(current()!) },
+    { keys: ["Space"], labelKey: "shortcuts.toggleCheck", group: "selection", run: () => store.state.cursorKey && store.toggleCheckSubtree(store.state.cursorKey) },
     { keys: ["Shift+Space"], labelKey: "shortcuts.rangeCheck", group: "selection", run: () => current() && store.rangeCheck(current()!) },
     {
       keys: ["Ctrl+a"],

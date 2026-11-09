@@ -73,8 +73,26 @@ export interface TreeNode {
   problemType?: string;
   familyIds: string[];
   instanceCount: number;
+  /** ACC (raw) clashes under the active filters: always the sum of the children. */
   clashCount: number;
   worst: Priority | null;
+  needsReview: number;
+}
+
+/** A family (grupo) under the active filters. */
+export interface FamilyStats {
+  instanceCount: number;
+  clashCount: number;
+  worst: Priority | null;
+  needsReview: number;
+  levels: number;
+}
+
+/** Totals shown above the list; identical in both views for the same query. */
+export interface ListSummary {
+  groups: number;
+  locations: number;
+  clashes: number;
 }
 
 /** Family decision as edited in the family panel ("Cambiar"). */
@@ -141,6 +159,10 @@ export interface TriageState {
   problemTypes: ProblemTypeInfo[];
   familyOf: Map<string, string>;
   nodes: Map<string, TreeNode>;
+  familyStats: Map<string, FamilyStats>;
+  /** Tree view: clashes of each ubicación that pass the filters (clash-level filtering). */
+  visibleByGroup: Map<string, Clash[]>;
+  summary: ListSummary;
   collapsedNodes: Set<string>;
   /** Instances (group ids) opened this session, per family: the spot-check record. */
   familyVisits: Map<string, Set<string>>;
@@ -224,6 +246,9 @@ export class TriageStore {
       problemTypes: [],
       familyOf: new Map(),
       nodes: new Map(),
+      familyStats: new Map(),
+      visibleByGroup: new Map(),
+      summary: { groups: 0, locations: 0, clashes: 0 },
       collapsedNodes: new Set(),
       familyVisits: new Map(),
       familyExceptions: new Map(),
@@ -394,12 +419,21 @@ export class TriageStore {
     return { s, d, values: filterValues(s, d, this.state.thresholds) };
   }
 
-  /** All items of the current view mode, evaluated (used for facets). */
+  /**
+   * All items of the current view mode, evaluated (used for facets and rows).
+   * The tree ("Grupos") and "Interferencias" both filter at CLASH level, so the
+   * same query gives the same clashes in both views; only the grouping differs.
+   */
   allEvaluated(): Evaluated[] {
     const s = this.state;
-    const ids = this.groupsMode() ? [...s.groups.keys()] : [...s.clashes.keys()];
-    const kind: RowKind = this.groupsMode() ? "group" : "clash";
+    const kind: RowKind = this.clashLevel() ? "clash" : "group";
+    const ids = kind === "clash" ? [...s.clashes.keys()] : [...s.groups.keys()];
     return ids.map((id) => this.evaluate(kind, id)).filter((e): e is Evaluated => !!e);
+  }
+
+  /** Items are clashes: the Interferencias view, the tree, and manual mode. */
+  clashLevel(): boolean {
+    return this.state.query.view === "clashes" || this.state.manual || this.familiesMode();
   }
 
   /** Groups are the list items (groups or families view). */
@@ -409,7 +443,7 @@ export class TriageStore {
 
   /** The family tree is shown (families view and the server sent families). */
   familiesMode(): boolean {
-    return this.state.query.view === "families" && !this.state.manual && this.state.families.size > 0;
+    return this.state.query.view !== "clashes" && !this.state.manual && this.state.families.size > 0;
   }
 
   /** Level-1 node id of a family. */
@@ -427,6 +461,8 @@ export class TriageStore {
 
   /** Worst (lowest number) effective priority among a family's instances. */
   familyWorst(f: TriageFamily): Priority | null {
+    const st = this.state.familyStats.get(f.id);
+    if (st) return st.worst;
     let w: Priority | null = null;
     for (const gid of f.groupIds) {
       const p = this.evaluate("group", gid)?.d.priority ?? null;
@@ -435,90 +471,144 @@ export class TriageStore {
     return w;
   }
 
-  /** Key whose clashes the viewer shows: family/node rows map to a representative instance. */
-  viewKey(key: string | null): string | null {
-    if (!key || key.startsWith("g:") || key.startsWith("c:")) return key;
+  /** Ubicaciones (group ids) under a tree row, as shown with the active filters. */
+  subtreeGroups(key: string): string[] {
     const s = this.state;
-    const fid = key.startsWith("f:") ? key.slice(2) : s.nodes.get(key.slice(2))?.familyIds[0];
-    const f = fid ? s.families.get(fid) : undefined;
-    const gid = f?.groupIds.find((g) => s.groups.has(g));
-    return gid ? rowKey("group", gid) : null;
+    const visible = (gid: string) => !this.familiesMode() || s.visibleByGroup.has(gid);
+    if (key.startsWith("g:")) return [key.slice(2)];
+    if (key.startsWith("c:")) return [];
+    if (key.startsWith("f:")) return (s.families.get(key.slice(2))?.groupIds ?? []).filter(visible);
+    const node = s.nodes.get(key.slice(2));
+    if (!node) return [];
+    if (node.bucket === "loose") return [...s.visibleByGroup.keys()].filter((g) => !s.familyOf.has(g));
+    return node.familyIds.flatMap((fid) => (s.families.get(fid)?.groupIds ?? []).filter(visible));
   }
 
-  private buildTree(sorted: Evaluated[], rows: Row[]) {
+  /** Clashes the viewer shows for a row: the whole subtree (visible under the filters), or the focused clash. */
+  selectionMembers(key: string | null): { focus: Clash | undefined; members: Clash[] } {
+    const s = this.state;
+    if (!key) return { focus: undefined, members: [] };
+    const membersOf = (gid: string) => (this.familiesMode() ? s.visibleByGroup.get(gid) : undefined) ?? s.clashesByGroup.get(gid) ?? [];
+    if (key.startsWith("c:")) {
+      const c = s.clashes.get(key.slice(2));
+      return { focus: c, members: c ? membersOf(c.groupId) : [] };
+    }
+    return { focus: undefined, members: this.subtreeGroups(key).flatMap(membersOf) };
+  }
+
+  /** @deprecated tree rows now select their whole subtree (selectionMembers). */
+  viewKey(key: string | null): string | null {
+    return key;
+  }
+
+  private buildTree(sortedGroups: Evaluated[], rows: Row[]) {
     const s = this.state;
     const nodes = new Map<string, TreeNode>();
+    const familyStats = new Map<string, FamilyStats>();
     const byFamily = new Map<string, Evaluated[]>();
     const loose: Evaluated[] = [];
-    for (const e of sorted) {
+    for (const e of sortedGroups) {
       const fid = s.familyOf.get(e.s.id);
       if (fid && s.families.has(fid)) byFamily.set(fid, [...(byFamily.get(fid) ?? []), e]);
       else loose.push(e);
     }
+    const count = (e: Evaluated) => s.visibleByGroup.get(e.s.id)?.length ?? 0;
     const worstOf = (items: Evaluated[]) => items.reduce<Priority | null>((w, e) => (e.d.priority && (!w || e.d.priority < w) ? e.d.priority : w), null);
-    const clashesOf = (items: Evaluated[]) => items.reduce((n, e) => n + ((e.s.group as FamilyGroup | undefined)?.uniqueClashCount ?? e.s.group?.clashIds.length ?? 0), 0);
-    const famInfo = [...byFamily].map(([fid, items]) => ({ f: s.families.get(fid)!, items, worst: worstOf(items), clashes: clashesOf(items) }));
+    const reviewOf = (items: Evaluated[]) => items.filter((e) => e.s.group?.reviewState === "needs_review").length;
+    const clashesOf = (items: Evaluated[]) => items.reduce((n, e) => n + count(e), 0);
+    const famInfo = [...byFamily].map(([fid, items]) => {
+      const st: FamilyStats = {
+        instanceCount: items.length,
+        clashCount: clashesOf(items),
+        worst: worstOf(items),
+        needsReview: reviewOf(items),
+        levels: levelsOf(s.families.get(fid)!, items),
+      };
+      familyStats.set(fid, st);
+      return { f: s.families.get(fid)!, items, st };
+    });
     type FamInfo = (typeof famInfo)[number];
     const add = (id: string, depth: 0 | 1, init: Pick<TreeNode, "bucket" | "pair" | "problemType">, fi: FamInfo) => {
-      const n = nodes.get(id) ?? { id, depth, ...init, familyIds: [], instanceCount: 0, clashCount: 0, worst: null };
+      const n = nodes.get(id) ?? { id, depth, ...init, familyIds: [], instanceCount: 0, clashCount: 0, worst: null, needsReview: 0 };
       n.familyIds.push(fi.f.id);
-      n.instanceCount += fi.items.length;
-      n.clashCount += fi.clashes;
-      if (fi.worst && (!n.worst || fi.worst < n.worst)) n.worst = fi.worst;
+      n.instanceCount += fi.st.instanceCount;
+      n.clashCount += fi.st.clashCount;
+      n.needsReview += fi.st.needsReview;
+      if (fi.st.worst && (!n.worst || fi.st.worst < n.worst)) n.worst = fi.st.worst;
       nodes.set(id, n);
     };
     for (const fi of famInfo) {
       add(TriageStore.l1Of(fi.f), 0, { bucket: fi.f.bucket, pair: fi.f.pair }, fi);
       add(TriageStore.l2Of(fi.f), 1, { bucket: fi.f.bucket, pair: fi.f.pair, problemType: fi.f.parts.problemType }, fi);
     }
-    const bucketRank = (b: TreeNode["bucket"]) => (b === "pair" ? 0 : b === "model_set" ? 1 : b === "non_issue" ? 2 : 3);
-    const byWorst = (a: { worst: Priority | null; clashCount: number }, b: { worst: Priority | null; clashCount: number }) => PRIORITY_ORDER(a.worst) - PRIORITY_ORDER(b.worst) || b.clashCount - a.clashCount;
-    const l1 = [...nodes.values()].filter((n) => n.depth === 0).sort((a, b) => bucketRank(a.bucket) - bucketRank(b.bucket) || byWorst(a, b) || a.id.localeCompare(b.id));
-    const famSort = (a: FamInfo, b: FamInfo) => PRIORITY_ORDER(a.worst) - PRIORITY_ORDER(b.worst) || b.items.length - a.items.length || b.clashes - a.clashes || a.f.id.localeCompare(b.f.id);
+    if (loose.length) {
+      nodes.set("loose", { id: "loose", depth: 0, bucket: "loose", familyIds: [], instanceCount: loose.length, clashCount: clashesOf(loose), worst: worstOf(loose), needsReview: reviewOf(loose) });
+    }
+    // Importance at every level, across buckets: worst priority, then needs-review, then clash count.
+    type Rank = { worst: Priority | null; needsReview: number; clashCount: number };
+    const important = (a: Rank, b: Rank) => PRIORITY_ORDER(a.worst) - PRIORITY_ORDER(b.worst) || b.needsReview - a.needsReview || b.clashCount - a.clashCount;
+    const l1 = [...nodes.values()].filter((n) => n.depth === 0).sort((a, b) => important(a, b) || a.id.localeCompare(b.id));
     const pushInstances = (items: Evaluated[], depth: number, parent: string) => {
       for (const e of items) {
         const key = rowKey("group", e.s.id);
         rows.push({ key, kind: "group", id: e.s.id, groupId: e.s.id, nested: false, depth, parent });
-        if (s.expanded.has(e.s.id)) for (const c of s.clashesByGroup.get(e.s.id) ?? []) rows.push({ key: rowKey("clash", c.id), kind: "clash", id: c.id, groupId: e.s.id, nested: true, depth: depth + 1, parent: key });
+        if (s.expanded.has(e.s.id)) for (const c of s.visibleByGroup.get(e.s.id) ?? []) rows.push({ key: rowKey("clash", c.id), kind: "clash", id: c.id, groupId: e.s.id, nested: true, depth: depth + 1, parent: key });
       }
     };
     for (const n1 of l1) {
       const k1 = `n:${n1.id}`;
       rows.push({ key: k1, kind: "node", id: n1.id, groupId: "", nested: false, depth: 0 });
       if (s.collapsedNodes.has(n1.id)) continue;
-      const l2 = [...nodes.values()].filter((n) => n.depth === 1 && n.id.startsWith(`${n1.id}|`)).sort((a, b) => byWorst(a, b) || a.id.localeCompare(b.id));
+      if (n1.bucket === "loose") {
+        pushInstances(loose, 1, k1);
+        continue;
+      }
+      const l2 = [...nodes.values()].filter((n) => n.depth === 1 && n.id.startsWith(`${n1.id}|`)).sort((a, b) => important(a, b) || a.id.localeCompare(b.id));
       for (const n2 of l2) {
         const k2 = `n:${n2.id}`;
         rows.push({ key: k2, kind: "node", id: n2.id, groupId: "", nested: false, depth: 1, parent: k1 });
         if (s.collapsedNodes.has(n2.id)) continue;
-        for (const fi of famInfo.filter((x) => TriageStore.l2Of(x.f) === n2.id).sort(famSort)) {
+        const fams = famInfo.filter((x) => TriageStore.l2Of(x.f) === n2.id).sort((a, b) => important(a.st, b.st) || b.st.instanceCount - a.st.instanceCount || a.f.id.localeCompare(b.f.id));
+        for (const fi of fams) {
           const kf = `f:${fi.f.id}`;
           rows.push({ key: kf, kind: "family", id: fi.f.id, groupId: "", nested: false, depth: 2, parent: k2 });
           if (s.expanded.has(fi.f.id)) pushInstances(fi.items, 3, kf);
         }
       }
     }
-    if (loose.length) {
-      const id = "loose";
-      nodes.set(id, { id, depth: 0, bucket: "loose", familyIds: [], instanceCount: loose.length, clashCount: clashesOf(loose), worst: worstOf(loose) });
-      rows.push({ key: `n:${id}`, kind: "node", id, groupId: "", nested: false, depth: 0 });
-      if (!s.collapsedNodes.has(id)) pushInstances(loose, 1, `n:${id}`);
-    }
-    return nodes;
+    return { nodes, familyStats };
   }
 
   /** Re-run filter + sort. Rows in `keep` stay even if they no longer match. */
   recompute(keep: string[] = []) {
     const s = this.state;
-    const keepSet = new Set(keep.filter(isDecisionKey).map((k) => parseKey(k)).filter((k) => k.kind === (this.groupsMode() ? "group" : "clash")).map((k) => k.id));
-    const items = this.allEvaluated().filter((e) => keepSet.has(e.s.id) || passes(e, s.query));
-    const sorted = sortItems(items, s.query.sort);
+    const clashLevel = this.clashLevel();
+    const keepIds = new Set<string>();
+    for (const k of keep.filter(isDecisionKey)) {
+      const { kind, id } = parseKey(k);
+      if (clashLevel && kind === "group") for (const c of s.clashesByGroup.get(id) ?? []) keepIds.add(c.id);
+      else keepIds.add(id);
+    }
+    const items = this.allEvaluated().filter((e) => keepIds.has(e.s.id) || passes(e, s.query));
     const rows: Row[] = [];
     if (this.familiesMode()) {
-      const nodes = this.buildTree(sorted, rows);
-      this.set({ rows, nodes, dirty: false });
+      // Clash-level filter, then group the passing clashes into ubicaciones → grupos → tipo → par.
+      const visibleByGroup = new Map<string, Clash[]>();
+      for (const e of items) {
+        const c = e.s.clash;
+        if (!c) continue;
+        const list = visibleByGroup.get(c.groupId);
+        if (list) list.push(c);
+        else visibleByGroup.set(c.groupId, [c]);
+      }
+      this.state = { ...this.state, visibleByGroup };
+      const groups = [...visibleByGroup.keys()].map((gid) => this.evaluate("group", gid)).filter((e): e is Evaluated => !!e);
+      const { nodes, familyStats } = this.buildTree(sortItems(groups, s.query.sort), rows);
+      const fams = new Set([...visibleByGroup.keys()].map((g) => s.familyOf.get(g) ?? g));
+      this.set({ rows, nodes, familyStats, visibleByGroup, summary: { groups: fams.size, locations: visibleByGroup.size, clashes: items.length }, dirty: false });
       return;
     }
+    const sorted = sortItems(items, s.query.sort);
     for (const e of sorted) {
       if (e.s.kind === "group") {
         rows.push({ key: rowKey("group", e.s.id), kind: "group", id: e.s.id, groupId: e.s.id, nested: false });
@@ -528,8 +618,39 @@ export class TriageStore {
         rows.push({ key: rowKey("clash", e.s.id), kind: "clash", id: e.s.id, groupId: e.s.clash?.groupId ?? "", nested: false });
       }
     }
-    // Keep nested clash cursor visible.
-    this.set({ rows, dirty: false });
+    // Same totals line as the tree: grupos (families) · ubicaciones · interferencias.
+    let summary: ListSummary;
+    if (clashLevel) {
+      const locs = new Set(items.map((e) => e.s.clash?.groupId ?? ""));
+      const fams = new Set([...locs].map((g) => s.familyOf.get(g) ?? g));
+      summary = { groups: fams.size, locations: locs.size, clashes: items.length };
+    } else {
+      summary = { groups: items.length, locations: items.length, clashes: items.reduce((n, e) => n + (e.s.group?.clashIds.length ?? 0), 0) };
+    }
+    this.set({ rows, summary, dirty: false });
+  }
+
+  // ── checks on tree nodes ─────────────────────────────────────────
+
+  /** "all" | "some" | "none" of a row's ubicaciones are checked (tri-state checkbox). */
+  checkState(key: string): "all" | "some" | "none" {
+    if (isDecisionKey(key)) return this.state.checked.has(key) ? "all" : "none";
+    const keys = this.subtreeGroups(key).map((g) => rowKey("group", g));
+    const n = keys.filter((k) => this.state.checked.has(k)).length;
+    return n === 0 ? "none" : n === keys.length ? "all" : "some";
+  }
+
+  /** Check / uncheck every ubicación under a tree row (decision rows toggle themselves). */
+  toggleCheckSubtree(key: string) {
+    if (isDecisionKey(key)) return this.toggleCheck(key);
+    const keys = this.subtreeGroups(key).map((g) => rowKey("group", g));
+    const c = new Set(this.state.checked);
+    const all = keys.length > 0 && keys.every((k) => c.has(k));
+    for (const k of keys) {
+      if (all) c.delete(k);
+      else c.add(k);
+    }
+    this.set({ checked: c, lastCheckedKey: key });
   }
 
   setQuery(query: ListQuery) {
@@ -808,7 +929,9 @@ export class TriageStore {
 
   /** Ctrl+A: check all filtered rows; second press clears. */
   checkAll(): number {
-    const top = this.state.rows.filter((r) => !r.nested && isDecisionKey(r.key));
+    const top = this.familiesMode()
+      ? [...this.state.visibleByGroup.keys()].map((g) => ({ key: rowKey("group", g) }))
+      : this.state.rows.filter((r) => !r.nested && isDecisionKey(r.key));
     if (this.state.checked.size >= top.length && top.length) {
       this.set({ checked: new Set() });
       return 0;
@@ -1057,6 +1180,14 @@ export class TriageStore {
     const i = order.indexOf(this.state.viewer.mode);
     this.setViewer({ mode: order[(i + 1) % order.length] });
   }
+}
+
+/** Levels covered by the visible ubicaciones of a grupo (server instance levels, else the group location). */
+function levelsOf(f: TriageFamily, items: Evaluated[]): number {
+  const byId = new Map((f.instances ?? []).map((i) => [i.groupId, i.levels]));
+  const set = new Set<string>();
+  for (const e of items) for (const l of byId.get(e.s.id) ?? [e.s.group?.location?.level ?? ""]) if (l) set.add(l);
+  return set.size;
 }
 
 function familyExceptionsFrom(families: Map<string, TriageFamily>): [string, Map<string, string>][] {

@@ -117,7 +117,8 @@ export function parseQuery(sp: URLSearchParams): ListQuery {
     filters,
     sort: sortRaw && (SORT_KEYS as readonly string[]).includes(sortRaw) ? sortRaw : "priority",
     q: sp.get("q") ?? "",
-    view: sp.get("view") === "clashes" ? "clashes" : sp.get("view") === "groups" ? "groups" : "families",
+    // Two views: the tree ("Grupos", internal "families") and "Interferencias". Old ?view=groups / ?view=families links open the tree.
+    view: sp.get("view") === "clashes" || sp.get("view") === "interferencias" ? "clashes" : "families",
     ...(sp.get("docs") ? { docs: sp.get("docs")! } : {}),
   };
 }

@@ -21,6 +21,7 @@ export function GroupList() {
   const { store } = useTriageContext();
   const rows = useTriage(store, (s) => s.rows);
   const cursorKey = useTriage(store, (s) => s.cursorKey);
+  const tree = useTriage(store, (s) => s.query.view !== "clashes" && s.families.size > 0 && !s.manual);
   const view = useTriage(store, (s) => s.query.view);
   const parentRef = useRef<HTMLDivElement>(null);
 
@@ -45,10 +46,10 @@ export function GroupList() {
     <div
       id="triage-list"
       ref={parentRef}
-      role={view === "families" ? "tree" : "listbox"}
+      role={tree ? "tree" : "listbox"}
       tabIndex={0}
       aria-multiselectable="true"
-      aria-label={view === "families" ? t("families.treeLabel") : view === "groups" ? t("a11y.groupList") : t("a11y.clashList")}
+      aria-label={tree ? t("families.treeLabel") : view !== "clashes" ? t("a11y.groupList") : t("a11y.clashList")}
       aria-activedescendant={cursorKey ? `row-${cursorKey}` : undefined}
       className="min-h-0 flex-1 overflow-y-auto focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand/30"
     >
@@ -145,7 +146,7 @@ const GroupRow = memo(function GroupRow({ row }: { row: Row }) {
           {e.d.priority && <PriorityChip value={e.d.priority} edited={e.d.edited && e.d.priority !== e.s.proposal?.fields.priority.value} />}
           {e.d.confidence !== null && <ConfidenceDots value={e.d.confidence} />}
           <DisciplinePairChip a={g.pair[0]} b={g.pair[1]} />
-          <span className="font-mono text-xs text-gray-500">×{g.clashIds.length}</span>
+          <GroupCount groupId={g.id} total={g.clashIds.length} unique={(g as FamilyGroup).uniqueClashCount} />
           <DeltaBadge delta={g.delta} />
           {e.s.proposal?.spotCheck && <SpotCheckChip />}
           {e.s.proposal?.flagged && <FlaggedChip />}
@@ -224,3 +225,16 @@ const FlatClashRow = memo(function FlatClashRow({ row }: { row: Row }) {
     </div>
   );
 });
+
+/** ACC clashes of a ubicación; in the tree, those passing the filters (total and unique in the tooltip). */
+function GroupCount({ groupId, total, unique }: { groupId: string; total: number; unique?: number }) {
+  const t = useT();
+  const { store } = useTriageContext();
+  const visible = useTriage(store, (s) => (store.familiesMode() ? (s.visibleByGroup.get(groupId)?.length ?? 0) : total));
+  return (
+    <span className="font-mono text-xs text-gray-500" title={t("families.uniqueTooltip", { raw: total, unique: unique ?? total })}>
+      ×{visible}
+      {visible !== total && <span className="text-gray-400">/{total}</span>}
+    </span>
+  );
+}

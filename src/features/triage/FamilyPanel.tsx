@@ -44,7 +44,8 @@ export interface FamilyImpact {
   spotDone: string[];
 }
 
-export const clashCount = (g: FamilyGroup) => g.uniqueClashCount ?? g.clashIds.length;
+/** One unit everywhere: ACC clashes (raw, what ACC shows). Unique counts only appear in tooltips. */
+export const clashCount = (g: FamilyGroup) => g.clashIds.length;
 
 export function familyImpact(store: TriageStore, f: TriageFamily, draft: FamilyDraft): FamilyImpact {
   const s = store.state;
@@ -135,8 +136,9 @@ export function FamilyPanel({ familyId }: { familyId: string }) {
           <FamilyTags family={f} />
           {f.decision?.status === "approved" && <span className="rounded-full border border-green-200 bg-green-50 px-2 text-[11px] leading-5 text-green-800">{t("families.decidedBy", { user: f.decision.decidedBy, version: f.decision.version })}</span>}
           {f.decision?.status === "rejected" && <span className="rounded-full border border-red-200 bg-red-50 px-2 text-[11px] leading-5 text-red-800">{t("families.rejectedBy", { user: f.decision.decidedBy })}</span>}
-          <span className="ml-auto whitespace-nowrap font-mono text-[11px] text-gray-400" title={f.signature}>
-            {f.id} · {t("list.clashesCount", { count: f.uniqueClashCount })}
+          <span className="ml-auto whitespace-nowrap font-mono text-[11px] text-gray-400" title={`${t("families.uniqueTooltip", { raw: f.rawClashCount, unique: f.uniqueClashCount })}
+${f.signature}`}>
+            {f.id} · {t("list.clashesCount", { count: f.rawClashCount })}
           </span>
         </div>
       </header>
@@ -436,30 +438,69 @@ function IssuePreview({ f, draft, impact, ptName }: { f: TriageFamily; draft: Fa
 
 // ── Node summary (pair / problem type rows) ────────────────────────
 
+/** Compact summary of a pair / problem-type node: totals, by priority, by validity, and its grupos (all under the active filters). */
 export function NodePanel({ nodeId }: { nodeId: string }) {
   const t = useT();
   const { store } = useTriageContext();
   const n = useTriage(store, (s) => s.nodes.get(nodeId));
   const families = useTriage(store, (s) => s.families);
+  const stats = useTriage(store, (s) => s.familyStats);
+  const visible = useTriage(store, (s) => s.visibleByGroup);
   const label = useNodeLabel(n);
   if (!n) return <EmptyState title={t("detail.noSelection")} />;
+  const clashes = store.selectionMembers(`n:${nodeId}`).members;
+  const byPriority = new Map<number, number>();
+  for (const gid of store.subtreeGroups(`n:${nodeId}`)) {
+    const p = store.evaluate("group", gid)?.d.priority;
+    if (p) byPriority.set(p, (byPriority.get(p) ?? 0) + (visible.get(gid)?.length ?? 0));
+  }
+  const byValidity = new Map<Validity, number>();
+  for (const c of clashes) byValidity.set(c.validity, (byValidity.get(c.validity) ?? 0) + 1);
+  const fams = n.familyIds.map((id) => families.get(id)).filter((f): f is TriageFamily => !!f);
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="flex-shrink-0 border-b border-brand-muted/20 px-4 pb-2 pt-3">
         <h2 className="text-sm font-semibold text-gray-900">{label}</h2>
-        <p className="mt-0.5 text-xs text-gray-600">{t("families.counts", { families: n.familyIds.length, instances: n.instanceCount, clashes: n.clashCount })}</p>
+        <p className="mt-0.5 text-xs text-gray-600">{t("families.summaryClashes", { count: n.bucket === "loose" ? n.instanceCount : n.familyIds.length, groups: n.bucket === "loose" ? n.instanceCount : n.familyIds.length, locations: n.instanceCount, clashes: n.clashCount })}</p>
       </header>
-      <ul className="min-h-0 flex-1 divide-y divide-brand-muted/10 overflow-y-auto px-4 text-xs" aria-label={t("families.familiesTitle")}>
-        {n.familyIds.map((id) => families.get(id)).filter((f): f is TriageFamily => !!f).map((f) => (
-          <li key={f.id} className="py-1.5">
-            <button type="button" onClick={() => store.reveal(`f:${f.id}`)} className="flex w-full min-w-0 items-center gap-1.5 text-left hover:text-brand">
-              <span className="min-w-0 flex-1 truncate" title={f.title}>{f.title}</span>
-              <span className="shrink-0 text-[11px] text-gray-500">{t("families.rowCounts", { instances: f.instanceCount, clashes: f.uniqueClashCount, levels: f.levels.length })}</span>
-            </button>
-            <p className="text-[11px] text-gray-500">{levelRange(f.levels)}</p>
-          </li>
-        ))}
-      </ul>
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 text-xs" id="triage-detail" tabIndex={-1}>
+        <h3 className="mb-1 font-semibold uppercase tracking-wide text-gray-500">{t("families.byPriority")}</h3>
+        <ul className="mb-3 flex flex-wrap gap-2">
+          {[1, 2, 3, 4].filter((p) => byPriority.get(p)).map((p) => (
+            <li key={p} className="flex items-center gap-1">
+              <PriorityChip value={p as 1 | 2 | 3 | 4} /> <span className="text-gray-700">{t("list.clashesCount", { count: byPriority.get(p) ?? 0 })}</span>
+            </li>
+          ))}
+        </ul>
+        <h3 className="mb-1 font-semibold uppercase tracking-wide text-gray-500">{t("families.byValidity")}</h3>
+        <ul className="mb-3 flex flex-wrap gap-2">
+          {VALIDITY_ORDER.filter((v) => byValidity.get(v)).map((v) => (
+            <li key={v} className="flex items-center gap-1">
+              <ValidityBadge value={v} /> <span className="text-gray-700">{byValidity.get(v)}</span>
+            </li>
+          ))}
+        </ul>
+        {fams.length > 0 && (
+          <>
+            <h3 className="mb-1 font-semibold uppercase tracking-wide text-gray-500">{t("families.familiesTitle")}</h3>
+            <ul className="divide-y divide-brand-muted/10" aria-label={t("families.familiesTitle")}>
+              {fams.map((f) => {
+                const st = stats.get(f.id);
+                return (
+                  <li key={f.id} className="py-1.5">
+                    <button type="button" onClick={() => store.reveal(`f:${f.id}`)} className="flex w-full min-w-0 items-center gap-1.5 text-left hover:text-brand">
+                      {st?.worst && <PriorityChip value={st.worst} />}
+                      <span className="min-w-0 flex-1 truncate" title={f.title}>{f.title}</span>
+                      <span className="shrink-0 text-[11px] text-gray-500">{t("families.rowCounts", { instances: st?.instanceCount ?? 0, clashes: st?.clashCount ?? 0, levels: st?.levels ?? 0 })}</span>
+                    </button>
+                    <p className="text-[11px] text-gray-500">{levelRange(f.levels)}</p>
+                  </li>
+                );
+              })}
+            </ul>
+          </>
+        )}
+      </div>
     </div>
   );
 }

@@ -1,0 +1,200 @@
+/**
+ * The "Grupos" tree and the "Interferencias" list group the SAME clashes
+ * differently: for any query the totals must match, every tree node must be
+ * the sum of its children, and levels are ordered by importance. Runs on the
+ * mock payload and on a v11-shaped variant (raw ACC clashes ≠ unique pairs,
+ * P1 items inside the "Conjunto de modelos" / "No es problema" buckets).
+ */
+import { beforeAll, describe, expect, it } from "vitest";
+import { PROJECTS } from "../../src/lib/api/mock/fixtures";
+import { generateTest } from "../../src/lib/api/mock/generate";
+import type { Clash, TriagePayloadWithFamilies } from "../../src/lib/api/types";
+
+// The store and the mock families step use browser APIs (window, import.meta.env): they are
+// loaded at runtime so the Node-only server tsconfig (which typechecks tests/) does not walk into them.
+const STORE_MODULE: string = "../../src/features/triage/store";
+const FAMILIES_MODULE: string = "../../src/lib/api/mock/families";
+/* eslint-disable @typescript-eslint/no-explicit-any */
+let TriageStore: any;
+let deriveFamilies: any;
+type ListQuery = { filters: Record<string, string[]>; sort: string; q: string; view: string; docs?: string };
+interface TreeNode { id: string; depth: number; bucket: string; familyIds: string[]; instanceCount: number; clashCount: number; worst: number | null }
+interface StoreLike {
+  state: {
+    rows: { kind: string; depth?: number; id: string }[];
+    nodes: Map<string, TreeNode>;
+    familyStats: Map<string, { clashCount: number; instanceCount: number }>;
+    families: Map<string, { groupIds: string[] }>;
+    visibleByGroup: Map<string, unknown[]>;
+    checked: Set<string>;
+    summary: { groups: number; locations: number; clashes: number };
+  };
+  familiesMode(): boolean;
+  load(p: unknown): void;
+  selectionMembers(key: string): { members: unknown[] };
+  toggleCheckSubtree(key: string): void;
+  toggleCheck(key: string): void;
+  checkState(key: string): string;
+}
+
+let mock: TriagePayloadWithFamilies;
+let sandbox: TriagePayloadWithFamilies;
+let v11: TriagePayloadWithFamilies;
+
+/** Same data path as the mock API: generated test + the mock F1 families step. */
+function payloadFor(projectId: string): TriagePayloadWithFamilies {
+  const project = PROJECTS.find((p) => p.id === projectId)!;
+  const ms = project.modelSets[0];
+  const opts = ms.tests[0];
+  const d = generateTest({ ...opts, analyzed: true });
+  const f = deriveFamilies(d.groups, d.clashes, d.proposals) as { groups: unknown[]; families: unknown[] };
+  return {
+    project: { id: project.id },
+    modelSet: { id: ms.id },
+    test: d.test,
+    tests: [],
+    disciplines: [],
+    groups: f.groups,
+    families: f.families,
+    problemTypes: [],
+    clashes: d.clashes,
+    proposals: d.proposals,
+    decisions: [],
+    changesCursor: "0",
+  } as unknown as TriagePayloadWithFamilies;
+}
+
+/** v11 shape: MECHANICAL loaded twice → every clash of half the groups appears 2–3× in ACC (raw), unique stays the same. */
+function v11Shaped(p: TriagePayloadWithFamilies): TriagePayloadWithFamilies {
+  const out = structuredClone(p);
+  const extra: Clash[] = [];
+  out.groups.forEach((g, i) => {
+    g.uniqueClashCount = g.clashIds.length;
+    if (i % 2) return;
+    const copies = 1 + (i % 3 === 0 ? 1 : 0);
+    for (const id of [...g.clashIds]) {
+      const c = out.clashes.find((x) => x.id === id)!;
+      for (let k = 0; k < copies; k++) {
+        const dup = { ...c, id: `${c.id}-dup${k}` };
+        extra.push(dup);
+        g.clashIds.push(dup.id);
+      }
+    }
+  });
+  out.clashes.push(...extra);
+  // Important items in the special buckets: they must not be pushed to the end.
+  for (const f of out.families ?? []) {
+    if (f.bucket === "pair") continue;
+    for (const gid of f.groupIds) {
+      const g = out.groups.find((x) => x.id === gid);
+      if (g) g.priority = 1;
+    }
+  }
+  out.proposals = out.proposals.map((pr) => (out.families?.some((f) => f.bucket !== "pair" && f.groupIds.includes(pr.targetId)) ? { ...pr, fields: { ...pr.fields, priority: { ...pr.fields.priority, value: 1 } } } : pr));
+  out.decisions = [];
+  return out;
+}
+
+const api = {};
+const q = (over: Partial<ListQuery> = {}): ListQuery => ({ filters: { decision: ["pendiente"] }, sort: "priority", q: "", view: "families", ...over });
+
+function both(payload: TriagePayloadWithFamilies, query: ListQuery): { tree: StoreLike; list: StoreLike } {
+  const tree = new TriageStore(api, query);
+  tree.load(payload);
+  const list = new TriageStore(api, { ...query, view: "clashes" });
+  list.load(payload);
+  return { tree, list };
+}
+
+beforeAll(async () => {
+  ({ TriageStore } = await import(/* @vite-ignore */ STORE_MODULE));
+  ({ deriveFamilies } = await import(/* @vite-ignore */ FAMILIES_MODULE));
+  mock = payloadFor("3f2a9c1e-7b4d-4e2a-9f10-5c8e2b7d1a01"); // Torre B
+  sandbox = payloadFor("da524c2d-6e11-4357-a82d-63244776d979"); // Sandbox v11 (the live project, mock data)
+  v11 = v11Shaped(sandbox);
+});
+
+describe("tree vs Interferencias totals", () => {
+  const queries: [string, Partial<ListQuery>][] = [
+    ["pendientes (default)", {}],
+    ["todo", { filters: { decision: [] } }],
+    ["válidas P1–P2", { filters: { decision: [], validity: ["valida"], priority: ["1", "2"] } }],
+    ["búsqueda", { filters: { decision: [] }, q: "Nivel" }],
+  ];
+  for (const [name, fixture] of [["mock Torre B", () => mock], ["mock Sandbox v11", () => sandbox], ["v11-shaped (raw duplicates)", () => v11]] as const) {
+    for (const [label, over] of queries) {
+      it(`${name} · ${label}: same grupos · ubicaciones · interferencias`, () => {
+        const { tree, list } = both(fixture(), q(over));
+        expect(tree.familiesMode()).toBe(true);
+        expect(list.state.rows.length).toBe(list.state.summary.clashes);
+        expect(tree.state.summary).toEqual(list.state.summary);
+        const roots = [...tree.state.nodes.values()].filter((n) => n.depth === 0);
+        expect(roots.reduce((s, n) => s + n.clashCount, 0)).toBe(list.state.rows.length);
+        expect(roots.reduce((s, n) => s + n.instanceCount, 0)).toBe(list.state.summary.locations);
+      });
+    }
+    it(`${name}: docs filter applies identically`, () => {
+      const c = fixture().clashes[0];
+      const docs = `${c.a.documentId},${c.b.documentId}`;
+      const { tree, list } = both(fixture(), q({ filters: { decision: [] }, docs }));
+      expect(list.state.rows.length).toBeGreaterThan(0);
+      expect(tree.state.summary).toEqual(list.state.summary);
+    });
+  }
+
+  it("counts raw ACC clashes, not unique pairs", () => {
+    const { tree } = both(v11, q({ filters: { decision: [] } }));
+    expect(tree.state.summary.clashes).toBe(v11.clashes.length);
+    const unique = v11.groups.reduce((s, g) => s + (g.uniqueClashCount ?? 0), 0);
+    expect(tree.state.summary.clashes).toBeGreaterThan(unique);
+  });
+});
+
+describe("tree structure", () => {
+  it("every node is the sum of its children", () => {
+    const { tree } = both(v11, q({ filters: { decision: [] } }));
+    const s = tree.state;
+    for (const n1 of [...s.nodes.values()].filter((n) => n.depth === 0 && n.bucket !== "loose")) {
+      const kids = [...s.nodes.values()].filter((n) => n.depth === 1 && n.id.startsWith(`${n1.id}|`));
+      expect(kids.reduce((x, k) => x + k.clashCount, 0)).toBe(n1.clashCount);
+      for (const k of kids) {
+        const fams = k.familyIds.map((id) => s.familyStats.get(id)!);
+        expect(fams.reduce((x, f) => x + f.clashCount, 0)).toBe(k.clashCount);
+        expect(fams.reduce((x, f) => x + f.instanceCount, 0)).toBe(k.instanceCount);
+      }
+    }
+  });
+
+  it("orders by importance across buckets (worst priority first)", () => {
+    const { tree } = both(v11, q({ filters: { decision: [] } }));
+    const l1 = tree.state.rows.filter((r) => r.kind === "node" && r.depth === 0).map((r) => tree.state.nodes.get(r.id)!);
+    const worst = l1.map((n) => n.worst ?? 9);
+    expect(worst).toEqual([...worst].sort((a, b) => a - b));
+    const special = l1.findIndex((n) => n.bucket !== "pair" && n.bucket !== "loose");
+    if (special >= 0) expect(l1[special].worst).toBe(1);
+    // A P1 bucket is not after a lower-priority pair node.
+    const firstNonP1 = worst.findIndex((w) => w > 1);
+    if (special >= 0 && firstNonP1 >= 0) expect(special).toBeLessThan(firstNonP1);
+  });
+
+  it("a node selects (viewer) and checks (checkbox) its whole subtree", () => {
+    const { tree } = both(v11, q({ filters: { decision: [] } }));
+    const s = tree.state;
+    const n1 = [...s.nodes.values()].find((n) => n.depth === 0)!;
+    expect(tree.selectionMembers(`n:${n1.id}`).members.length).toBe(n1.clashCount);
+    const fid = n1.familyIds[0];
+    const f = s.families.get(fid)!;
+    expect(tree.selectionMembers(`f:${fid}`).members.length).toBe(s.familyStats.get(fid)!.clashCount);
+    tree.toggleCheckSubtree(`f:${fid}`);
+    expect(tree.checkState(`f:${fid}`)).toBe("all");
+    const visible = f.groupIds.filter((g) => tree.state.visibleByGroup.has(g));
+    for (const g of visible) expect(tree.state.checked.has(`g:${g}`)).toBe(true);
+    if (visible.length > 1) {
+      tree.toggleCheck(`g:${visible[0]}`);
+      expect(tree.checkState(`f:${fid}`)).toBe("some");
+      expect(tree.checkState(`n:${n1.id}`)).toBe("some");
+    }
+    tree.toggleCheckSubtree(`n:${n1.id}`);
+    expect(tree.checkState(`n:${n1.id}`)).toBe("all");
+  });
+});

@@ -30,11 +30,11 @@ interface SavedView {
 }
 
 const PRESETS: SavedView[] = [
-  { id: "p1", label: "", labelKey: "views.pendingHigh", query: { filters: { decision: ["pendiente"], priority: ["1", "2"] }, sort: "priority", view: "groups" } },
-  { id: "p2", label: "", labelKey: "views.lowConfidence", query: { filters: { decision: ["pendiente"], confidence: ["baja"] }, sort: "confidence_asc", view: "groups" } },
-  { id: "p3", label: "", labelKey: "views.newInTest", query: { filters: { decision: ["pendiente"], delta: ["nueva"] }, sort: "priority", view: "groups" } },
-  { id: "p4", label: "", labelKey: "views.proposedFalsePositives", query: { filters: { decision: [], validity: ["falso_positivo"] }, sort: "priority", view: "groups" } },
-  { id: "p5", label: "", labelKey: "views.withIssueDraft", query: { filters: { decision: [], issue: ["borrador"] }, sort: "priority", view: "groups" } },
+  { id: "p1", label: "", labelKey: "views.pendingHigh", query: { filters: { decision: ["pendiente"], priority: ["1", "2"] }, sort: "priority", view: "families" } },
+  { id: "p2", label: "", labelKey: "views.lowConfidence", query: { filters: { decision: ["pendiente"], confidence: ["baja"] }, sort: "confidence_asc", view: "families" } },
+  { id: "p3", label: "", labelKey: "views.newInTest", query: { filters: { decision: ["pendiente"], delta: ["nueva"] }, sort: "priority", view: "families" } },
+  { id: "p4", label: "", labelKey: "views.proposedFalsePositives", query: { filters: { decision: [], validity: ["falso_positivo"] }, sort: "priority", view: "families" } },
+  { id: "p5", label: "", labelKey: "views.withIssueDraft", query: { filters: { decision: [], issue: ["borrador"] }, sort: "priority", view: "families" } },
   { id: "p6", label: "", labelKey: "views.resolvedByTest", query: { filters: { decision: [], delta: ["resuelta"] }, sort: "priority", view: "clashes" } },
 ];
 
@@ -228,12 +228,11 @@ export function FilterBar({ query, onChange }: { query: ListQuery; onChange: (q:
         </label>
         {!manual && (
           <div role="group" className="inline-flex overflow-hidden rounded border border-brand-muted/30">
-            {(["families", "groups", "clashes"] as const).map((v) => {
-              const off = v === "families" && !hasFamilies;
-              const on = query.view === v || (query.view === "families" && !hasFamilies && v === "groups");
+            {(["families", "clashes"] as const).map((v) => {
+              const on = v === "clashes" ? query.view === "clashes" : query.view !== "clashes";
               return (
-                <button key={v} type="button" aria-pressed={on} disabled={off} title={off ? t("families.unavailable") : undefined} onClick={() => onChange({ ...query, view: v })} className={`px-2 py-0.5 ${on ? "bg-brand text-white" : "bg-white text-gray-600 hover:text-brand"} disabled:cursor-not-allowed disabled:text-gray-300`}>
-                  {v === "families" ? t("list.viewFamilies") : v === "groups" ? t("list.viewGroups") : t("list.viewClashes")}
+                <button key={v} type="button" aria-pressed={on} title={v === "families" && !hasFamilies ? t("families.unavailable") : undefined} onClick={() => onChange({ ...query, view: v })} className={`px-2 py-0.5 ${on ? "bg-brand text-white" : "bg-white text-gray-600 hover:text-brand"}`}>
+                  {v === "families" ? t("list.viewGroups") : t("list.viewClashes")}
                 </button>
               );
             })}

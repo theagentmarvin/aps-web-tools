@@ -151,3 +151,21 @@ Built against `server/api/contract.ts` (families types by Coder C) and `docs/dom
   - The signature leaves validity out, so mixed families appear.
   - Typical-detail and orientation tags are present; there are model-set and non-issue buckets.
   - Approve, reject, preview and exceptions are implemented with the same guards as the server.
+
+### Rename and counting (2026-11-09, user feedback)
+
+- **Two views only: "Grupos | Interferencias".** The family tree is the "Grupos" view and the old flat groups view is gone.
+  - It stays as the automatic fallback when a payload has no families.
+  - UI language: a family is a **Grupo**; a former group (an instance, where the work is executed) is a **Ubicación**. "Aprobar grupo"; the chip reads "Grupo: … (N ubicaciones)"; "Excepción" stays per ubicación.
+  - The server API and the code identifiers keep `families` / `groups`.
+- **URLs.** `?view=groups`, `?view=families` and no `view` all open the tree; `?view=clashes` opens Interferencias. `?grupo=F-…` selects a grupo (`?family=` is still read); `?group=` / `?clash=` select a ubicación or a clash.
+- **One unit: ACC clashes (raw), as in ACC.** Unique element pairs appear only in tooltips ("N interferencias en ACC · U únicas").
+  - Both views filter at clash level, so a query yields the same clashes in both.
+  - The tree groups the passing clashes into ubicación → grupo → tipo de problema → par. Every node is the sum of its children under the active filters.
+  - The line above the list, "N grupos · M ubicaciones · K interferencias", is identical in both views.
+  - `tests/ui/triage-tree-counts.test.ts` checks this on the mock (Torre B, Sandbox v11) and on a v11-shaped variant with raw duplicates.
+- **Order.** Every level is sorted by worst priority, then the number needing review, then clash count. This applies across buckets too ("Conjunto de modelos" / "No es problema" are not pushed to the end).
+- **Selection follows the tree.**
+  - Selecting any node (par, tipo, grupo, ubicación) shows in the viewer the union of its subtree's clashes under the filters. The models loaded are every document involved, or only the `docs=` pair when that filter is set.
+  - Markers cap at 60, with "+N más" in the legend. The view fits to the union.
+  - Node checkboxes are tri-state and check every ubicación below; Space does the same on the cursor row. Bulk actions apply to the checked ubicaciones.
