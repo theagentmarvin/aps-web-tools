@@ -235,6 +235,8 @@ export function waitForAuthCode(
   port: number,
   expectedState: string,
   timeoutMs = 5 * 60_000,
+  /** Web login: send the browser back to this app URL (adds `login=ok|error`) instead of a "close this window" page. */
+  redirectTo?: string,
 ): { code: Promise<string>; ready: Promise<void>; close: () => void } {
   let server: Server | undefined;
   let timer: NodeJS.Timeout | undefined;
@@ -259,11 +261,18 @@ export function waitForAuthCode(
       const send = (status: number, title: string, msg: string): void => {
         res.writeHead(status, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" }).end(PAGE(title, msg));
       };
+      const backToApp = (result: "ok" | "error"): boolean => {
+        if (!redirectTo) return false;
+        const u = new URL(redirectTo);
+        u.searchParams.set("login", result);
+        res.writeHead(302, { Location: u.toString(), "Cache-Control": "no-store" }).end();
+        return true;
+      };
       const err = url.searchParams.get("error");
       const state = url.searchParams.get("state") ?? "";
       const c = url.searchParams.get("code");
       if (err) {
-        send(400, "Inicio de sesión cancelado", "Autodesk devolvió un error. Puede cerrar esta ventana.");
+        if (!backToApp("error")) send(400, "Inicio de sesión cancelado", "Autodesk devolvió un error. Puede cerrar esta ventana.");
         close();
         reject(new ApsError({ code: "auth_required", title: err.slice(0, 100) }));
       } else if (!safeEqual(state, expectedState)) {
@@ -272,7 +281,7 @@ export function waitForAuthCode(
       } else if (!c) {
         send(400, "Solicitud inválida", "Falta el código de autorización.");
       } else {
-        send(200, "Sesión iniciada", "Ya puede cerrar esta ventana y volver a la terminal.");
+        if (!backToApp("ok")) send(200, "Sesión iniciada", "Ya puede cerrar esta ventana y volver a la terminal.");
         close();
         resolveCode(c);
       }
@@ -395,10 +404,10 @@ export class ApsAuth implements TokenProvider {
    * Browser login via loopback. Prints nothing secret; the authorize URL holds
    * only public parameters (client id, state, PKCE challenge).
    */
-  async loginInteractive(opts: { prompt?: "login"; timeoutMs?: number; onUrl?: (url: string) => void } = {}): Promise<AuthStatus> {
+  async loginInteractive(opts: { prompt?: "login"; timeoutMs?: number; onUrl?: (url: string) => void; redirectTo?: string } = {}): Promise<AuthStatus> {
     const { verifier, challenge } = createPkcePair();
     const state = base64url(randomBytes(16));
-    const waiter = waitForAuthCode(this.config.port, state, opts.timeoutMs);
+    const waiter = waitForAuthCode(this.config.port, state, opts.timeoutMs, opts.redirectTo);
     try {
       await waiter.ready;
       const url = buildAuthorizeUrl(this.config, { state, challenge, prompt: opts.prompt }, this.baseUrl);

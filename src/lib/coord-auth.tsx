@@ -15,6 +15,20 @@ interface CoordAuthValue {
   /** Starts the server-side login. Returns the Autodesk authorize URL (if any) so the UI can offer a link when the popup is blocked. Throws on server errors. */
   login: () => Promise<string | undefined>;
   logout: () => Promise<void>;
+  /** Set when the browser just came back from the Autodesk sign-in (`?login=ok|error`). */
+  returning: "ok" | "error" | undefined;
+}
+
+function readReturning(): "ok" | "error" | undefined {
+  const v = new URLSearchParams(window.location.search).get("login");
+  return v === "ok" || v === "error" ? v : undefined;
+}
+
+function clearReturningParam(): void {
+  const u = new URL(window.location.href);
+  if (!u.searchParams.has("login")) return;
+  u.searchParams.delete("login");
+  window.history.replaceState(window.history.state, "", u.pathname + u.search + u.hash);
 }
 
 const Ctx = createContext<CoordAuthValue | null>(null);
@@ -23,6 +37,7 @@ export function CoordAuthProvider({ children }: { children: ReactNode }) {
   const api = useApi();
   const [status, setStatus] = useState<AuthStatus>();
   const [error, setError] = useState<Error>();
+  const [returning] = useState(readReturning);
   const pollRef = useRef<number | null>(null);
 
   const refresh = useCallback(async () => {
@@ -39,20 +54,27 @@ export function CoordAuthProvider({ children }: { children: ReactNode }) {
     void refresh();
   }, [refresh]);
 
-  // While a server-side login waits for the browser callback, poll the status.
+  // While the server finishes the login (token exchange after the callback), poll the status.
   useEffect(() => {
     if (!status?.loginInProgress) return;
-    pollRef.current = window.setInterval(() => void refresh(), 2000);
+    pollRef.current = window.setInterval(() => void refresh(), returning === "ok" ? 700 : 2000);
     return () => {
       if (pollRef.current !== null) window.clearInterval(pollRef.current);
     };
-  }, [status?.loginInProgress, refresh]);
+  }, [status?.loginInProgress, refresh, returning]);
+
+  // Back from Autodesk: drop `?login=` once the outcome is known.
+  useEffect(() => {
+    if (returning && status && (status.loggedIn || !status.loginInProgress)) clearReturningParam();
+  }, [returning, status]);
 
   const login = useCallback(async () => {
-    const res = await api.login();
-    // window.open after an await can be silently blocked as a popup; the caller shows a link too.
-    if (res.authorizeUrl) window.open(res.authorizeUrl, "_blank", "noopener");
-    await refresh();
+    // Same-tab flow: Autodesk sign-in, then the server's callback redirects back to this page.
+    const here = new URL(window.location.href);
+    here.searchParams.delete("login");
+    const res = await api.login(here.pathname + here.search + here.hash);
+    if (res.authorizeUrl) window.location.assign(res.authorizeUrl);
+    else await refresh();
     return res.authorizeUrl;
   }, [api, refresh]);
 
@@ -61,7 +83,7 @@ export function CoordAuthProvider({ children }: { children: ReactNode }) {
     await refresh();
   }, [api, refresh]);
 
-  const value = useMemo(() => ({ status, error, refresh, login, logout }), [status, error, refresh, login, logout]);
+  const value = useMemo(() => ({ status, error, refresh, login, logout, returning }), [status, error, refresh, login, logout, returning]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 

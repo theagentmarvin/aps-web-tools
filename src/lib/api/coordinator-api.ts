@@ -60,7 +60,8 @@ export interface CoordinatorApi {
 
   // Auth / session (server-side PKCE; the browser never holds the APS secret)
   getAuthStatus(): Promise<AuthStatus>;
-  login(): Promise<LoginStartResponse>;
+  /** Starts the server-side Autodesk login; `returnTo` = app path to come back to. */
+  login(returnTo?: string): Promise<LoginStartResponse>;
   logout(): Promise<{ ok: true }>;
   getSession(): Promise<SessionInfo>;
   getCurrentUser(): Promise<UserInfo>;

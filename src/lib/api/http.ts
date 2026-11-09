@@ -167,7 +167,7 @@ export class HttpCoordinatorApi implements CoordinatorApi {
   }
 
   getAuthStatus() { return this.get<T.AuthStatus>("/auth/status"); }
-  login() { return this.req<T.LoginStartResponse>("POST", "/auth/login"); }
+  login(returnTo?: string) { return this.req<T.LoginStartResponse>("POST", "/auth/login", returnTo ? { returnTo } : {}); }
   logout() { return this.req<{ ok: true }>("POST", "/auth/logout"); }
   getSession() { return this.get<T.SessionInfo>("/session"); }
   getCurrentUser() { return this.get<T.UserInfo>("/me"); }

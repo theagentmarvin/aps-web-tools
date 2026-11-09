@@ -27,6 +27,14 @@ export const API_PREFIX = "/api/coord";
 type Next = (err?: unknown) => void;
 type Handler = (c: RequestCtx) => Promise<unknown>;
 
+const LoginSchema = z.strictObject({
+  returnTo: z
+    .string()
+    .max(300)
+    .regex(/^\/(?![/\\])[^\s\\]*$/, "returnTo debe ser una ruta relativa del sitio")
+    .optional(),
+});
+
 interface RequestCtx {
   req: IncomingMessage;
   res: ServerResponse;
@@ -263,8 +271,13 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
   add(
     "POST",
     "/auth/login",
-    async () => {
+    async ({ req, body }) => {
       if (coord.source.kind === "fixtures") return { alreadyLoggedIn: true };
+      // Web login returns to the app page it started from. Only a same-site relative path is
+      // accepted (no open redirect); the origin is the request's validated Origin header.
+      const { returnTo } = LoginSchema.parse(body ?? {});
+      const origin = String(req.headers.origin ?? "");
+      const redirectTo = returnTo && origin ? `${origin}${returnTo}` : undefined;
       const auth = apsAuth();
       if (!auth) throw new CoordError("not_authenticated", "APS no está configurado en el servidor (client id ausente).");
       const st = await auth.status();
@@ -287,7 +300,7 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
       const urlP = new Promise<string>((r) => (resolveUrl = r));
       const loginAuth = new ApsAuth({ config: auth.config, openBrowser: (u) => resolveUrl(u) });
       void loginAuth
-        .loginInteractive({ timeoutMs: 5 * 60_000 })
+        .loginInteractive({ timeoutMs: 5 * 60_000, redirectTo })
         .then(() => log.info("api.login_ok"))
         .catch((e) => log.warn("api.login_failed", { message: (e as Error).message }))
         .finally(() => {

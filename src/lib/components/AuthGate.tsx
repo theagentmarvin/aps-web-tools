@@ -20,46 +20,44 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
 export function SignInCard({ title, body }: { title?: string; body?: string }) {
   const t = useT();
-  const { status, login } = useCoordAuth();
+  const { status, login, returning } = useCoordAuth();
   const [busy, setBusy] = useState(false);
-  const [started, setStarted] = useState(false);
-  const [authorizeUrl, setAuthorizeUrl] = useState<string>();
   const [loginError, setLoginError] = useState<string>();
   async function signIn() {
     setBusy(true);
     setLoginError(undefined);
     try {
-      setAuthorizeUrl(await login());
-      setStarted(true);
+      // Navigates this tab to Autodesk; the callback brings the browser back here.
+      if (!(await login())) setBusy(false);
     } catch (e) {
-      setStarted(false);
       setLoginError(e instanceof Error ? e.message : String(e));
-    } finally {
       setBusy(false);
     }
   }
-  const waiting = started || status?.loginInProgress;
+  // Just back from Autodesk and the server is still exchanging the code for a token.
+  const finishing = returning === "ok" && !!status?.loginInProgress;
+  // Back from Autodesk but the login did not complete (cancelled, or token exchange failed).
+  const returnFailed = !loginError && (returning === "error" || (returning === "ok" && status && !status.loginInProgress && !status.loggedIn));
   return (
     <div className="flex min-h-[60vh] items-center justify-center p-6">
       <div className="max-w-md rounded-lg border border-brand-muted/20 bg-white p-8 text-center shadow-sm">
         <IconLock size={28} className="mx-auto mb-3 text-brand" />
         {title && <h1 className="mb-2 text-xl font-bold text-brand">{title}</h1>}
         <p className="mb-6 text-sm text-gray-600">{body ?? t("auth.required")}</p>
-        <button type="button" onClick={signIn} disabled={busy} className="rounded-lg bg-brand px-6 py-2 font-medium text-white transition-colors hover:bg-brand-light disabled:opacity-60">
-          {t("auth.signIn")}
-        </button>
-        {waiting && !loginError && (
-          <p role="status" className="mt-4 flex items-center justify-center gap-2 text-xs text-gray-500">
-            <Spinner /> {t("auth.loginStarted")}
+        {finishing ? (
+          <p role="status" className="flex items-center justify-center gap-2 text-sm text-gray-600">
+            <Spinner /> {t("auth.finishing")}
           </p>
+        ) : (
+          <button type="button" onClick={signIn} disabled={busy} className="rounded-lg bg-brand px-6 py-2 font-medium text-white transition-colors hover:bg-brand-light disabled:opacity-60">
+            {busy ? t("auth.redirecting") : t("auth.signIn")}
+          </button>
         )}
-        {authorizeUrl && !loginError && (
-          <p className="mt-2 text-xs text-gray-500">
-            {t("auth.popupBlocked")}{" "}
-            <a href={authorizeUrl} target="_blank" rel="noopener noreferrer" className="font-medium text-brand underline">
-              {t("auth.openLogin")}
-            </a>
-          </p>
+        {returnFailed && (
+          <div role="alert" className="mt-4 rounded border border-red-200 bg-red-50 p-3 text-left text-xs text-red-700">
+            <p className="font-medium">{t("auth.loginFailed")}</p>
+            <p className="mt-1">{t(returning === "error" ? "auth.returnCancelled" : "auth.returnIncomplete")}</p>
+          </div>
         )}
         {loginError && (
           <div role="alert" className="mt-4 rounded border border-red-200 bg-red-50 p-3 text-left text-xs text-red-700">

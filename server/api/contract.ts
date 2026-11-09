@@ -45,6 +45,8 @@ export interface AuthStatus {
   /** True while a server-side PKCE login is waiting for the browser callback. */
   loginInProgress: boolean;
 }
+/** `returnTo`: app path to return to after the Autodesk sign-in (same-site relative path). */
+export interface LoginStartRequest { returnTo?: string }
 export interface LoginStartResponse { authorizeUrl?: string; alreadyLoggedIn: boolean }
 
 export interface AgentStatus { lastActivityAt: string | null; lastRunId: string | null; running: boolean; currentTask?: string }
@@ -537,7 +539,7 @@ export interface Endpoints {
   "GET /api/coord/csrf": { req: void; res: { token: string } };
   "GET /api/coord/auth/status": { req: void; res: AuthStatus };
   /** Human-only. Starts the server-side PKCE login (loopback callback) or reuses the cached token. */
-  "POST /api/coord/auth/login": { req: void; res: LoginStartResponse };
+  "POST /api/coord/auth/login": { req: LoginStartRequest; res: LoginStartResponse };
   "POST /api/coord/auth/logout": { req: void; res: { ok: true } };
   "GET /api/coord/me": { req: void; res: UserInfo };
   "GET /api/coord/session": { req: void; res: SessionInfo };
