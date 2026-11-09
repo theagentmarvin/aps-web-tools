@@ -32,6 +32,38 @@ const COLOR_A = "#0072B2";
 const COLOR_B = "#E69F00";
 const MAX_MARKERS = 60;
 
+const pairKeyOf = (c: Clash) => (c.a.documentId <= c.b.documentId ? `${c.a.documentId},${c.b.documentId}` : `${c.b.documentId},${c.a.documentId}`);
+
+/**
+ * The viewer always shows exactly ONE model pair (like ACC Model Coordination): the grid cell's
+ * pair when the triage was opened from it (?docs=a,b), else the pair of the focused clash, else the
+ * group's dominant pair. A group can span several document pairs (e.g. a structure also published
+ * as a link inside another model), so members outside the pair are not highlighted.
+ */
+function viewPair(
+  cursorKey: string | null,
+  docsFilter: string | undefined,
+  clashes: Map<string, Clash>,
+  byGroup: Map<string, Clash[]>,
+): { pair: [number, number] | undefined; focus: Clash | undefined; target: Clash[]; members: Clash[] } {
+  const { focus, members } = membersOf(cursorKey, clashes, byGroup);
+  let key: string | undefined;
+  if (docsFilter) {
+    const [x, y] = docsFilter.split(",").map(Number);
+    key = x <= y ? `${x},${y}` : `${y},${x}`;
+  } else if (focus) key = pairKeyOf(focus);
+  else if (members.length) {
+    const count = new Map<string, number>();
+    for (const c of members) count.set(pairKeyOf(c), (count.get(pairKeyOf(c)) ?? 0) + 1);
+    key = [...count].sort((p, q) => q[1] - p[1] || p[0].localeCompare(q[0]))[0][0];
+  }
+  if (!key) return { pair: undefined, focus, target: [], members };
+  const [x, y] = key.split(",").map(Number);
+  const inPair = (c: Clash) => pairKeyOf(c) === key;
+  const target = (focus ? [focus] : members).filter(inPair);
+  return { pair: [x, y], focus: focus && inPair(focus) ? focus : undefined, target, members: members.filter(inPair) };
+}
+
 function membersOf(cursorKey: string | null, clashes: Map<string, Clash>, byGroup: Map<string, Clash[]>): { focus: Clash | undefined; members: Clash[] } {
   if (!cursorKey) return { focus: undefined, members: [] };
   const { kind, id } = parseKey(cursorKey);
@@ -53,6 +85,20 @@ export function ClashViewerPane() {
   const viewer = useTriage(store, (s) => s.viewer);
   const cursorKey = useTriage(store, (s) => s.cursorKey);
   const docs = useMemo(() => payload?.test.documents ?? [], [payload]);
+  const docsFilter = useTriage(store, (s) => s.query.docs);
+  // Only the models involved in what is on screen: the current clash/group, else the grid
+  // cell's pair (?docs=a,b), else the first row. Never the whole model set.
+  const wantedUrns = useMemo(() => {
+    const key = cursorKey ?? store.state.rows[0]?.key ?? null;
+    const { pair } = viewPair(key, docsFilter, store.state.clashes, store.state.clashesByGroup);
+    if (!pair) return [];
+    const urnOf = new Map(docs.map((d) => [d.documentId, d.urn]));
+    return [...new Set(pair)].flatMap((id) => (urnOf.get(id) ? [urnOf.get(id)!] : []));
+  }, [cursorKey, docsFilter, docs, store]);
+  const wantedKey = wantedUrns.join(",");
+  // Stable identity while the pair is unchanged, so ForgeViewer does nothing on cursor moves within it.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const viewerUrns = useMemo(() => wantedUrns, [wantedKey]);
   const hasSdk = typeof window !== "undefined" && !!window.Autodesk?.Viewing;
   // Real models only with live ACC data: fixtures URNs are fake, so fixtures/mock keep the placeholder.
   const live = api.mode === "http" && coordStatus?.dataSource === "live" && docs.length > 0 && hasSdk;
@@ -106,8 +152,7 @@ export function ClashViewerPane() {
   useEffect(() => {
     if (viewer.status !== "ready") return;
     const id = window.setTimeout(() => {
-      const { focus, members } = membersOf(cursorKey, store.state.clashes, store.state.clashesByGroup);
-      const target = focus ? [focus] : members;
+      const { focus, members, target } = viewPair(cursorKey, docsFilter, store.state.clashes, store.state.clashesByGroup);
       if (!target.length) {
         clearClashPair();
         return;
@@ -133,7 +178,7 @@ export function ClashViewerPane() {
       } else clearClashMarkers();
     }, 150);
     return () => window.clearTimeout(id);
-  }, [cursorKey, viewer.status, viewer.mode, viewer.markers, sidesFor, store, t, viewer.side]);
+  }, [cursorKey, docsFilter, viewer.status, viewer.mode, viewer.markers, sidesFor, store, t, viewer.side]);
 
   useEffect(() => {
     if (viewer.status === "ready") setSideVisibility(viewer.side);
@@ -180,17 +225,18 @@ export function ClashViewerPane() {
         <ForgeViewer
           getToken={getAccessToken}
           expiresIn={session ? Math.max(60, Math.floor((session.expiresAt - Date.now()) / 1000)) : 3600}
-          modelUrns={docs.map((d) => d.urn)}
+          modelUrns={viewerUrns}
           extensions={["Autodesk.Section"]}
           hideLoadErrors
           onViewerReady={onViewerReady}
           onProgress={(loaded, total) => store.setViewer({ status: "loading", loaded, total })}
           onModelsLoaded={(map, failed) => {
-            modelsRef.current = map;
+            // Keep every model loaded so far (hidden ones are cached by ForgeViewer).
+            for (const [urn, m] of map) modelsRef.current.set(urn, m);
             store.setViewer({
               status: map.size ? "ready" : "failed",
               loaded: map.size,
-              total: docs.length,
+              total: wantedUrns.length,
               failedDocs: docs.filter((d) => failed.includes(d.urn)).map((d) => d.documentId),
             });
           }}

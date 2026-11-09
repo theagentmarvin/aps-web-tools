@@ -174,47 +174,66 @@ export function ForgeViewer({
     };
   }, []);
 
-  // ── Model loading (parallel, max 3) ──────────────────────────────
+  // ── Model loading: incremental (parallel, max 3) ─────────────────
+  // `modelUrns` is the set of models that must be VISIBLE. Models already loaded are
+  // reused (shown again), missing ones are loaded, and loaded models not requested are
+  // hidden but kept cached, so switching between clash pairs does not reload anything.
 
+  const failedRef = useRef<Set<string>>(new Set());
+  const loadingRef = useRef<Map<string, Promise<void>>>(new Map());
+  /** The models requested by the latest render (a load that finishes late checks it). */
+  const latestWantedRef = useRef<Set<string>>(new Set());
+  latestWantedRef.current = new Set(modelUrns);
   const urnKey = modelUrns.join(",");
   useEffect(() => {
     if (!ready || modelUrns.length === 0) return;
     const v = viewerRef.current!;
-    let cancelled = false;
-    const urns = [...modelUrns];
-    modelsRef.current = [];
-    modelMapRef.current = new Map();
-    const failures: string[] = [];
-    let settled = 0;
-    setFailed([]);
-    cbRef.current.onProgress?.(0, urns.length);
+    let stale = false;
+    const wanted = new Set(modelUrns);
 
-    async function worker(queue: string[]) {
-      while (queue.length && !cancelled) {
-        const rawUrn = queue.shift()!;
-        try {
-          const model = await loadDoc(v, `urn:${urnify(rawUrn)}`);
-          if (cancelled) return;
+    // Hide what is no longer requested, show what is (cached models).
+    for (const [urn, model] of modelMapRef.current) setModelVisible(v, model, wanted.has(urn));
+
+    const toLoad = modelUrns.filter((u) => !modelMapRef.current.has(u) && !failedRef.current.has(u) && !loadingRef.current.has(u));
+    const done = () => modelUrns.filter((u) => modelMapRef.current.has(u)).length;
+    cbRef.current.onProgress?.(done(), modelUrns.length);
+
+    const loadOne = (rawUrn: string): Promise<void> => {
+      const p = loadDoc(v, `urn:${urnify(rawUrn)}`)
+        .then((model) => {
           modelsRef.current.push(model);
           modelMapRef.current.set(rawUrn, model);
-        } catch (err) {
+          // A newer request may no longer want this model: keep it cached but hidden.
+          if (!latestWantedRef.current.has(rawUrn)) setModelVisible(v, model, false);
+        })
+        .catch((err) => {
           console.warn("[ForgeViewer] load failed:", rawUrn, err);
-          failures.push(rawUrn);
-        }
-        settled++;
-        if (!cancelled) cbRef.current.onProgress?.(settled - failures.length, urns.length);
-      }
-    }
+          failedRef.current.add(rawUrn);
+        })
+        .finally(() => {
+          loadingRef.current.delete(rawUrn);
+          if (!stale) cbRef.current.onProgress?.(done(), modelUrns.length);
+        });
+      loadingRef.current.set(rawUrn, p);
+      return p;
+    };
 
-    const queue = [...urns];
-    void Promise.all(Array.from({ length: Math.min(MAX_PARALLEL, urns.length) }, () => worker(queue))).then(() => {
-      if (cancelled) return;
+    const queue = [...toLoad];
+    const worker = async () => {
+      while (queue.length) await loadOne(queue.shift()!);
+    };
+    // Also wait for loads started by an earlier request that this one needs.
+    const pendingNeeded = modelUrns.map((u) => loadingRef.current.get(u)).filter((p): p is Promise<void> => !!p);
+    void Promise.all([...Array.from({ length: Math.min(MAX_PARALLEL, toLoad.length) }, worker), ...pendingNeeded]).then(() => {
+      if (stale) return;
+      const failures = modelUrns.filter((u) => failedRef.current.has(u));
       setFailed(failures);
-      cbRef.current.onModelsLoaded?.(new Map(modelMapRef.current), failures);
+      const visible = new Map(modelUrns.flatMap((u) => (modelMapRef.current.has(u) ? [[u, modelMapRef.current.get(u)] as const] : [])));
+      cbRef.current.onModelsLoaded?.(visible, failures);
     });
 
     return () => {
-      cancelled = true;
+      stale = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, urnKey]);
@@ -265,6 +284,17 @@ export function ForgeViewer({
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
+
+/** Show or hide a whole loaded model (kept in memory either way). */
+function setModelVisible(viewer: GuiViewer3D, model: ModelHandle, visible: boolean): void {
+  try {
+    const isVisible = (viewer.getVisibleModels?.() ?? []).includes(model);
+    if (visible && !isVisible) viewer.showModel(model, true);
+    else if (!visible && isVisible) viewer.hideModel(model);
+  } catch (err) {
+    console.warn("[ForgeViewer] show/hide model failed:", err);
+  }
+}
 
 /** Base64-encode a raw URN for Document.load (strips = padding). */
 function urnify(id: string): string {
