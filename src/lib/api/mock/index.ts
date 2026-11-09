@@ -14,6 +14,7 @@ import { buildReport, fakeHash, seedAudit, seedCorrections, seedSuggestions } fr
 import { deriveFamilies, refreshFamily } from "./families";
 import { applyM1, type M1Data } from "./m1";
 import { applyM2, type M2Data } from "./m2";
+import { buildIssueChecks } from "./m3";
 import { PROBLEM_TYPES } from "~/lib/problem-types";
 
 const ME = USERS[0];
@@ -794,6 +795,42 @@ export class MockCoordinatorApi implements CoordinatorApi {
       return clone(q);
     }
     throw new ApiError("Pregunta no encontrada.", 404, "not_found");
+  }
+
+  /** M3 issue checks per test (built once; verdict decisions are stored on them). */
+  private issueChecks = new Map<string, ReturnType<typeof buildIssueChecks>>();
+  private checksOf(testId: string) {
+    let c = this.issueChecks.get(testId);
+    if (!c) {
+      const f = this.familiesOf(testId);
+      const d = this.data(testId);
+      c = buildIssueChecks(d.test, f.groups, d.proposals);
+      this.issueChecks.set(testId, c);
+    }
+    return c;
+  }
+
+  async getIssueChecks(testId: string): Promise<T.IssueChecksPayload> {
+    await delay(150);
+    const { checks } = this.checksOf(testId);
+    const counts = { resuelta: 0, avance: 0, sigue_abierta: 0, dice_resuelta: 0, no_verificable: 0 } as Record<T.IssueVerdict, number>;
+    for (const c of checks) counts[c.verdict]++;
+    return clone({ testId, version: this.data(testId).test.modelSetVersion, counts, checks, readAt: new Date(Date.now() - 2 * 3600_000).toISOString() });
+  }
+
+  async getReminders(testId: string): Promise<T.RemindersPayload> {
+    await delay(100);
+    return clone({ testId, reminders: this.checksOf(testId).reminders });
+  }
+
+  async decideIssueVerdict(testId: string, issueId: string, req: T.IssueVerdictDecisionRequest): Promise<T.IssueCheck> {
+    await delay(150);
+    const c = this.checksOf(testId).checks.find((x) => x.issueId === issueId);
+    if (!c) throw new ApiError("Incidencia no encontrada.", 404, "not_found");
+    if (req.decision === "reject" && !req.reasonCode) throw new ApiError("Rechazar requiere un motivo (V01–V05).", 400, "validation");
+    c.decision = { kind: req.decision, reasonCode: req.reasonCode, note: req.note, decidedBy: ME.name, decidedAt: new Date().toISOString() };
+    this.log({ actor: { type: "user", id: ME.id, name: ME.short }, action: "issue.verdict." + req.decision, projectId: "", testId, targetIds: [issueId], details: { verdict: c.verdict, reasonCode: req.reasonCode ?? null } });
+    return clone(c);
   }
 
   async getTriage(projectId: string, modelSetId: string, testId?: string): Promise<T.TriagePayloadWithFamilies> {

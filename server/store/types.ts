@@ -353,7 +353,8 @@ export type ReasonCode = (typeof REASON_CODES)[number];
 export interface DecisionRecord {
   id: string;
   proposalId: string;
-  targetType: "group" | "clash";
+  /** "issue" (M3): a decision on an issue verdict (targetId = ACC issue id); never sent as a triage Decision. */
+  targetType: "group" | "clash" | "issue";
   targetId: string;
   testId: string;
   modelSetId: string;

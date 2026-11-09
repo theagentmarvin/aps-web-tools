@@ -11,7 +11,7 @@ import { useTriageContext } from "./actions";
 import { LENSES, type LensId, type ListQuery } from "./filters";
 import { useTriage } from "./store";
 
-const ENABLED: Record<LensId, boolean> = { cambios: true, incidencias: false, reunion: false, todo: true };
+const ENABLED: Record<LensId, boolean> = { cambios: true, incidencias: true, reunion: false, todo: true };
 
 export function LensBar({ query, onChange }: { query: ListQuery; onChange: (q: ListQuery) => void }) {
   const t = useT();
@@ -26,7 +26,8 @@ export function LensBar({ query, onChange }: { query: ListQuery; onChange: (q: L
   const cs = useTriage(store, (s) => s.payload?.changeSummary?.clashes);
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
 
-  const enabled = (l: LensId) => ENABLED[l] && (l !== "cambios" || hasPrevious);
+  const issues = useTriage(store, (s) => s.issueChecks.size);
+  const enabled = (l: LensId) => ENABLED[l] && (l !== "cambios" || hasPrevious) && (l !== "incidencias" || issues > 0);
   const select = (l: LensId) => enabled(l) && onChange({ ...query, lens: l });
 
   function onKey(e: KeyboardEvent, i: number) {
@@ -48,8 +49,8 @@ export function LensBar({ query, onChange }: { query: ListQuery; onChange: (q: L
       {LENSES.map((l, i) => {
         const on = active === l;
         const off = !enabled(l);
-        const count = l === "cambios" ? counts.cambios : l === "todo" ? counts.todo : null;
-        const tip = !ENABLED[l] ? t("lens.soon") : l === "cambios" ? (hasPrevious ? [t(baseReason === "last_reviewed" ? "lens.baseLastReviewed" : "lens.basePrevious", { version: prevVersion ?? "—" }), questions ? t("lens.questionsCount", { count: questions }) : "", cs ? t("lens.cambiosClashes", { new: cs.new, changed: cs.changed, reappeared: cs.reappeared }) : ""].filter(Boolean).join("\n") : t("lens.noPrevious")) : t("lens.todoTip");
+        const count = l === "cambios" ? counts.cambios : l === "todo" ? counts.todo : l === "incidencias" ? issues : null;
+        const tip = !ENABLED[l] ? t("lens.soon") : l === "incidencias" ? (issues ? t("lens.incidenciasTip") : t("lens.noIssues")) : l === "cambios" ? (hasPrevious ? [t(baseReason === "last_reviewed" ? "lens.baseLastReviewed" : "lens.basePrevious", { version: prevVersion ?? "—" }), questions ? t("lens.questionsCount", { count: questions }) : "", cs ? t("lens.cambiosClashes", { new: cs.new, changed: cs.changed, reappeared: cs.reappeared }) : ""].filter(Boolean).join("\n") : t("lens.noPrevious")) : t("lens.todoTip");
         return (
           <button
             key={l}

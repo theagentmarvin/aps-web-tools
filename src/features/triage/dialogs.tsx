@@ -16,6 +16,7 @@ import { FIELD_KEY, PRIORITY_KEY, VALIDITY_KEY, VALIDITY_ORDER } from "~/lib/lab
 import { BULK_CAP, REASONS_BY_FIELD, changesFromEdits, isRisky, useTriageContext } from "./actions";
 import { parseKey, useTriage, type Dialog } from "./store";
 import { FamilyApproveDialog, FamilyRejectDialog } from "./FamilyDialogs";
+import { IssueRejectDialog } from "./IssueViews";
 
 // ── Reason code picker (§4.4) ──────────────────────────────────────
 
@@ -382,6 +383,8 @@ export function WorkspaceDialogs() {
       return <ShortcutOverlay />;
     case "familyApprove":
       return <FamilyApproveDialog key={dialog.familyId} familyId={dialog.familyId} />;
+    case "issueReject":
+      return <IssueRejectDialog key={dialog.issueId} issueId={dialog.issueId} />;
     case "familyReject":
       return <FamilyRejectDialog key={dialog.familyId} familyId={dialog.familyId} />;
     default:

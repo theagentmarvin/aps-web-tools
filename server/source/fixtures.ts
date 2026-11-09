@@ -15,6 +15,7 @@ import { attachPairKeys, elementLookupFromTables, normalizeClashTest } from "../
 import type { RawClashDocumentFile, RawClashFile, RawClashInstanceFile, RawModelSetVersion } from "../../core/ingest/raw";
 import type { ElementProps } from "../../core/types";
 import type { AccSnapshot } from "../../core/ingest/ledger";
+import type { SourceIssue } from "./types";
 import { parseNdjson } from "../aps/download";
 import { parsePropertyAliases } from "../aps/index-properties";
 import { compileMapper, FieldDictionary } from "../aps/property-mapping";
@@ -258,6 +259,19 @@ export class FixtureSource implements DataSource {
       );
     }
     return { version, at: new Date().toISOString(), groups };
+  }
+
+  /** M3 fixtures: tests/fixtures/issues/issues.json + issues created by recorded fake assigns (status open). */
+  async getIssues(_projectId: string, issueIds: readonly string[]): Promise<SourceIssue[]> {
+    let all: SourceIssue[] = [];
+    try {
+      all = this.json<{ issues: SourceIssue[] }>("issues/issues.json").issues;
+    } catch {
+      // no issue fixtures
+    }
+    for (const w of await this.writes()) w.createdIssueIds.forEach((id, i) => all.push({ id, title: w.groups[i]?.title ?? "Incidencia", status: "open", createdAt: w.at }));
+    const want = new Set(issueIds);
+    return all.filter((x) => want.has(x.id));
   }
 
   async triageState(_projectId: string, testId: string) {

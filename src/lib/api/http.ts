@@ -231,6 +231,16 @@ export class HttpCoordinatorApi implements CoordinatorApi {
     return this.req<T.IngestStart>("POST", `/projects/${enc(projectId)}/model-sets/${enc(modelSetId)}/tests/${enc(accTestId)}/ingest`, { refresh: opts?.refresh ?? false, classify: true });
   }
 
+  getIssueChecks(testId: string) {
+    return this.get<T.IssueChecksPayload>(`/tests/${enc(testId)}/issue-checks`);
+  }
+  async getReminders(testId: string): Promise<T.RemindersPayload> {
+    const res = await this.get<T.RemindersPayload | T.DisciplineReminder[]>(`/tests/${enc(testId)}/reminders`);
+    return Array.isArray(res) ? { testId, reminders: res } : res;
+  }
+  decideIssueVerdict(testId: string, issueId: string, req: T.IssueVerdictDecisionRequest) {
+    return this.req<T.IssueCheck>("POST", `/tests/${enc(testId)}/issue-checks/${enc(issueId)}/decision`, req);
+  }
   answerQuestion(questionId: string, req: T.QuestionAnswerRequest) {
     return this.req<T.AgentQuestion>("POST", `/questions/${enc(questionId)}/answer`, req);
   }

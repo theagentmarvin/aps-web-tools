@@ -9,6 +9,7 @@ import { ApsAuth } from "../aps/auth";
 import { ApsError } from "../aps/errors";
 import { fetchClashResults, intersectAssignedGroups, intersectClosedGroups, listAssignedGroups, listClashTests, listClosedGroups } from "../aps/clash";
 import type { AccSnapshot } from "../../core/ingest/ledger";
+import { listIssues } from "../aps/issues";
 import { assignClashes, closeClashes, waitClashJob } from "../aps/clash-writes";
 import { apsRequest, type ApsCtx } from "../aps/http";
 import {
@@ -31,6 +32,7 @@ import { log } from "../util";
 
 /** APS OIDC userinfo host (https://aps.autodesk.com/en/docs/profile/v1/reference/profile/oidcuserinfo/). */
 const USERINFO_BASE_URL = "https://api.userprofile.autodesk.com";
+import type { SourceIssue } from "./types";
 import type { ClashWriter, DataSource, SourceClashData, SourceClashTest, SourceModelSet, SourceProject, SourceProperties, SourceTestData } from "./types";
 
 /**
@@ -348,6 +350,15 @@ export class LiveSource implements DataSource {
         ...ic.map((g) => ({ groupId: g.id, kind: "closed" as const, ...(reasonOf.get(g.id) ? { reason: String(reasonOf.get(g.id)) } : {}), existing: ids(g.existing), resolved: ids(g.resolved) })),
       ],
     };
+  }
+
+  async getIssues(projectId: string, issueIds: readonly string[]): Promise<SourceIssue[]> {
+    const out: SourceIssue[] = [];
+    for (let i = 0; i < issueIds.length; i += 50) {
+      const page = await listIssues(this.ctx, projectId, { id: issueIds.slice(i, i + 50) as string[] });
+      for (const x of page) out.push({ id: x.id, ...(x.displayId !== undefined ? { displayId: x.displayId } : {}), title: x.title, status: x.status, ...(x.dueDate ? { dueDate: x.dueDate } : {}), ...(x.assignedToType ? { assignedToType: x.assignedToType } : {}), ...(x.createdAt ? { createdAt: x.createdAt } : {}) });
+    }
+    return out;
   }
 
   async triageState(projectId: string, testId: string) {

@@ -202,7 +202,7 @@ describe("agent shapes for /preparar-ciclo and /acta", () => {
     expect((c41 as unknown as Cyc).cycle).toMatchObject({ baseVersion: null, baseReason: "first_cycle" });
     const k42 = await ingest(coord, 42, false);
     const c42 = await coord.classify({ testKey: k42 });
-    expect((c42 as unknown as Cyc).cycle).toMatchObject({ baseVersion: 41, baseReason: "previous", accSync: { assignedGroups: 2, closedGroups: 1 } });
+    expect((c42 as unknown as Cyc).cycle).toMatchObject({ baseVersion: 41, baseReason: "previous", accSync: { assignedGroups: 6, closedGroups: 1 } });
     const counts = (c42 as unknown as Cyc).cycle!.counts!;
     expect(counts.new + counts.changed + counts.reappeared + counts.unchanged).toBe((await coord.requireClassified(k42)).cls.groups.length);
     expect(counts.inherited).toBeGreaterThan(0); // ACC-decided groups

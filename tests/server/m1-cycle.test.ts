@@ -36,7 +36,7 @@ describe("X1 ACC sync", () => {
     await ingest(coord, 41);
     const k42 = await ingest(coord, 42);
     const tri = await ui.triage(P, MODEL_SET_ID, k42);
-    expect(tri.accSync).toMatchObject({ assignedGroups: 2, closedGroups: 1, issues: 2 });
+    expect(tri.accSync).toMatchObject({ assignedGroups: 6, closedGroups: 1, issues: 6 });
     const byClash = new Map(tri.groups.flatMap((g) => g.clashIds.map((c) => [c.replace(/^C-/, ""), g] as const)));
     const g1 = byClash.get(RDB[0]!)!;
     expect(g1.acc).toMatchObject({ status: "assigned", issueIds: [ISSUE1] });
@@ -56,7 +56,7 @@ describe("X1 ACC sync", () => {
     expect(fam.acc?.issueIds).toContain(ISSUE1);
     expect(fam.instances.find((i) => i.groupId === g1.id)!.acc?.status).toBe("assigned");
     // batches: accept every group; no ACC-decided clash is in any item
-    const decided = new Set([...RDB, ...TOL, ...TRAY]);
+    const decided = new Set([...RDB, ...TOL, ...TRAY, "41299469806150", "41299469798231"]);
     const { acceptGroups } = await import("./helpers");
     const touched = tri.groups.filter((g) => g.clashIds.some((c) => decided.has(c.replace(/^C-/, ""))));
     await acceptGroups(ui, k42, [...touched, ...tri.groups.filter((g) => !touched.includes(g)).slice(0, 5)].map((g) => g.id));

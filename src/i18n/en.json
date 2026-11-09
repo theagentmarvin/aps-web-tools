@@ -1182,7 +1182,9 @@
     "baseLastReviewed": "since v{version} (last reviewed)",
     "basePrevious": "since v{version} (previous)",
     "questionsCount_one": "{count} question",
-    "questionsCount_other": "{count} questions"
+    "questionsCount_other": "{count} questions",
+    "incidenciasTip": "ACC issues verified in this version (read-only)",
+    "noIssues": "No ACC issues are assigned to these clashes"
   },
   "scope": {
     "title": "Scope change since v{version}",
@@ -1225,5 +1227,62 @@
     "answeredDecision": "Answer recorded as a decision",
     "stale": "No longer applies: {reason}",
     "answeredBy": "Answered by {user}: {answer}"
+  },
+  "verdict": {
+    "resuelta": "Resolved {resolved}/{total}",
+    "avance": "Progress {resolved}/{total}",
+    "sigue_abierta": "Still open",
+    "dice_resuelta": "Says resolved ✕",
+    "no_verificable": "Not verifiable"
+  },
+  "issues": {
+    "summary_one": "{count} issue · {resolved} resolved · {says} say resolved",
+    "summary_other": "{count} issues · {resolved} resolved · {says} say resolved",
+    "disciplineNode": "{discipline}",
+    "nodeCounts_one": "{count} issue · {existing} clashes remain",
+    "nodeCounts_other": "{count} issues · {existing} clashes remain",
+    "rowCounts": "{existing} remain · {resolved} resolved",
+    "overdue": "overdue",
+    "overdueDue": "Overdue ({date})",
+    "stuck": "no progress {count} cycles",
+    "issueIcon": "ACC issue · status {status}",
+    "accepted": "Verdict accepted by {by}",
+    "rejected": "Verdict rejected by {by}",
+    "copyReminder": "Copy reminder",
+    "reminderCopied": "{discipline} reminder copied",
+    "copyFailed": "Could not copy to the clipboard",
+    "copy": "Copy",
+    "evidenceCopied": "Evidence copied",
+    "sectionTitle": "Verification in v{version}",
+    "counts": "{existing} remain · {resolved} resolved",
+    "checksLabel": "Checks",
+    "check": {
+      "displacement": "Displacement",
+      "displacementOk": "no new clashes on the same elements",
+      "displacementBlocked": "a resolved element clashes again (the problem moved)",
+      "modelAge": "Model version",
+      "modelAgeOk": "the responsible model has a new version",
+      "modelAgeStale": "the responsible model did not change since the issue",
+      "scope": "Scope",
+      "scopeOk": "no scope change",
+      "scopeOut": "out of scope (document changed)",
+      "unknown": "could not be checked"
+    },
+    "evidence": "Evidence",
+    "openInAcc": "Open in ACC",
+    "accStatus": "ACC status: {status}",
+    "moveReminder": "Move it to \"In review\" in ACC (no automatic write until M5).",
+    "acceptResuelta": "Accept: ready to move",
+    "acceptMeeting": "Accept: to the meeting",
+    "acceptedResuelta": "Accepted: move it to \"In review\" in ACC",
+    "acceptedMeeting": "Accepted: goes to the meeting",
+    "rejectedToast": "Verdict rejected",
+    "rejectTitle": "Reject the verdict",
+    "rejectHint": "Reason (1–5 to choose, Enter confirms)",
+    "responsible": "Responsible: {discipline}",
+    "locations": "Locations ({count})",
+    "reminderTitle": "Reminder for the discipline",
+    "noReminder": "No reminder for this discipline.",
+    "disciplineNodeTip": "Responsible {discipline}: follow-up of its issues"
   }
 }

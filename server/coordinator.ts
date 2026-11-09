@@ -22,10 +22,13 @@ import { loadConfig, MAX_SUPPORTED_LEVEL, type AutonomyLevel, type CoordinatorCo
 import { CLOSABLE, ENGINE_NAME, ENGINE_VERSION, loadRules, runEngine } from "./engine";
 import { fixtureLedgerSeed, LedgerService, recordAccInLedger } from "./ledger";
 import { QuestionStore, type StoredQuestion } from "./questions";
+import { accIssueGroups, computeIssueChecks, IssueCheckStore } from "./issue-checks";
+import type { SourceIssue } from "./source/types";
+import { pairKeyTokens } from "../core/ingest/pair-key";
 import { applyDecisionRefs, updateLedger, type LedgerDecisionRef } from "../core/ingest/ledger";
 import { accIndexOf, accResolvedByGroup, CHANGE_PENETRATION_MM, clashChanges, clashDeltas, detectScopeChanges, elementTypesOf, itemDelta, outOfScopePredicate } from "./cycle";
 import type { AccSnapshot } from "../core/ingest/ledger";
-import type { ChangeKind, InheritedDecision, ScopeChange } from "./api/contract";
+import type { ChangeKind, InheritedDecision, IssueChecksPayload, IssueVerdict, ScopeChange } from "./api/contract";
 import { familyViews, FamilyDecisionStore, type FamilyView } from "./families";
 import { PROBLEM_TYPES } from "../core/families";
 import { assertCode, DisciplineStore, inCode, outCode, suggestedToken, validCodes } from "./disciplines";
@@ -726,6 +729,80 @@ export class Coordinator {
     };
   }
 
+  // ── M3: issue verification (F2) and follow-up (F5), read-only against ACC ──
+
+  get issueChecks(): IssueCheckStore {
+    return (this.issueCheckStore ??= new IssueCheckStore(this.store));
+  }
+  private issueCheckStore?: IssueCheckStore;
+  private readonly issueCache = new Map<string, { at: number; issues: SourceIssue[] }>();
+
+  /** ACC issues by id, cached for 60 s (Issues v1 list, read-only). */
+  private async readIssues(projectId: string, ids: readonly string[]): Promise<{ issues: Map<string, SourceIssue>; at?: string }> {
+    if (!ids.length) return { issues: new Map() };
+    const key = `${bareProjectId(projectId)}|${[...ids].sort().join(",")}`;
+    const hit = this.issueCache.get(key);
+    if (hit && Date.now() - hit.at < 60_000) return { issues: new Map(hit.issues.map((i) => [i.id, i])), at: new Date(hit.at).toISOString() };
+    try {
+      const issues = await this.source.getIssues(projectId, ids);
+      this.issueCache.set(key, { at: Date.now(), issues });
+      return { issues: new Map(issues.map((i) => [i.id, i])), at: nowIso(this.now()) };
+    } catch (err) {
+      log.warn("issues.read_failed", { message: (err as Error).message });
+      return { issues: new Map() };
+    }
+  }
+
+  /** F2/F5 checks of one test; records this version's verdicts (stuckCycles history). */
+  async issueChecksFor(testKey?: string): Promise<IssueChecksPayload> {
+    const { test, cls } = await this.requireClassified(testKey);
+    const tests = (await this.store.listTests()).filter((t) => t.modelSetId === test.modelSetId && bareProjectId(t.projectId) === bareProjectId(test.projectId));
+    const prev = test.previousTestKey ? tests.find((t) => t.testKey === test.previousTestKey) : undefined;
+    const prevCls = prev ? await this.store.getClassification(prev.testKey) : undefined;
+    const ledger = await this.ledger.load(test.projectId, test.modelSetId).catch(() => undefined);
+    const raw = await this.loadRaw(test).catch(() => undefined);
+    // Element identities of THIS run, as the engine sees them (link prefixes normalized).
+    const currentElements = new Set([...cls.clashes.flatMap((c) => [c.a.externalId, c.b.externalId].filter((x): x is string => !!x)), ...(raw?.clashes ?? []).flatMap((c) => (c.pairKey ? pairKeyTokens(c.pairKey) : []))]);
+    const diff = await this.diffForTest(test);
+    const ids = accIssueGroups(ledger, new Set(cls.clashes.map((c) => c.id))).map((g) => g.issueId);
+    const { issues, at } = await this.readIssues(test.projectId, ids);
+    const store = await this.issueChecks.load(test.projectId, test.modelSetId);
+    const checks = computeIssueChecks({ test, cls, ...(prevCls ? { prevCls } : {}), tests, ...(ledger ? { ledger } : {}), ...(diff ? { diff } : {}), currentElements, issues, today: nowIso(this.now()).slice(0, 10) }, store.verdicts);
+    const v = String(test.modelSetVersion);
+    const now = Object.fromEntries(checks.map((c) => [c.issueId, c.verdict]));
+    if (JSON.stringify(store.verdicts[v] ?? {}) !== JSON.stringify(now)) {
+      await this.issueChecks.mutate(test.projectId, test.modelSetId, (f) => {
+        f.verdicts[v] = now;
+        return true;
+      });
+    }
+    const decided = store.decisions[v] ?? {};
+    for (const c of checks) {
+      const d = decided[c.issueId];
+      if (d && d.verdict === c.verdict) c.decision = { kind: d.kind, ...(d.reasonCode ? { reasonCode: d.reasonCode } : {}), ...(d.note ? { note: d.note } : {}), decidedBy: d.decidedBy, decidedAt: d.decidedAt };
+    }
+    const counts: Record<IssueVerdict, number> = { resuelta: 0, avance: 0, sigue_abierta: 0, dice_resuelta: 0, no_verificable: 0 };
+    for (const c of checks) counts[c.verdict]++;
+    return { testId: test.testKey, version: test.modelSetVersion, counts, checks, ...(at ? { readAt: at } : {}) };
+  }
+
+  /** MCP list_issue_checks: compact rows (titles are ACC text: untrusted). */
+  async listIssueChecks(input: { testKey?: string; verdict?: IssueVerdict[]; discipline?: string[]; stuckOnly?: boolean; limit: number; cursor?: string }) {
+    const p = await this.issueChecksFor(input.testKey);
+    const rows = p.checks.filter((c) => (!input.verdict?.length || input.verdict.includes(c.verdict)) && (!input.discipline?.length || input.discipline.includes(c.discipline)) && (!input.stuckOnly || c.stuck));
+    const page = paginate(rows, input.limit, input.cursor);
+    return {
+      testKey: p.testId,
+      version: p.version,
+      counts: p.counts,
+      columns: ["issueId", "displayId", "title", "accStatus", "verdict", "reason", "existing", "resolved", "discipline", "familyId", "groupIds", "overdue", "dueDate", "displacement", "modelAge", "scope", "stuckCycles", "stuck", "decision"],
+      rows: page.items.map((c) => [c.issueId, c.displayId ?? null, untrusted(c.title), c.accStatus, c.verdict, c.reason, c.existing, c.resolved, c.discipline, c.familyId ?? null, c.groupIds.slice(0, 20), c.overdue, c.dueDate ?? null, c.checks.displacement, c.checks.modelAge, c.checks.scope, c.stuckCycles, c.stuck, c.decision?.kind ?? null]),
+      total: page.total,
+      ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+      note: "Solo lectura: el estado de las incidencias lo cambia el coordinador en ACC (hasta M5).",
+    };
+  }
+
   // ── M2: decision memory (F1), coordinator questions (X3) ──────────────────
 
   /**
@@ -1196,7 +1273,7 @@ export class Coordinator {
     const out = new Map<string, import("./store/types").DecisionRecord>();
     for (const d of all) {
       if (d.kind === "undo" || d.kind === "note" || undone.has(d.id)) continue;
-      out.set(d.targetType === "group" ? d.targetId : `clash:${d.targetId}`, d);
+      out.set(d.targetType === "group" ? d.targetId : d.targetType === "issue" ? `issue:${d.targetId}` : `clash:${d.targetId}`, d);
     }
     return out;
   }

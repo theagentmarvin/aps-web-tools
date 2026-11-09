@@ -85,6 +85,11 @@ export async function recordAccInLedger<T extends DiffableClash>(
 ): Promise<ClashLedger> {
   return svc.withLedger(projectId, modelSetId, (l) => {
     const base = l.versions.includes(version.version) ? l : updateLedger(l, version);
+    // Phase-2 clashes carry pairKeys that a phase-1 record lacked: fill them in.
+    for (const c of version.clashes) {
+      const e = base.entries[c.id];
+      if (e && c.pairKey && !e.pairKey) e.pairKey = c.pairKey;
+    }
     return applyAccSnapshot(base, snap, version.clashes.map((c) => c.id));
   });
 }

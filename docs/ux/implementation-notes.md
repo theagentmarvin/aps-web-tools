@@ -219,3 +219,21 @@ Contract: `ClashGroup.inherited` (InheritedDecision), `ClashGroup.questionIds`, 
   - "Qué cambió" includes any ubicación with an open question, even if it is unchanged, with the same predicate in both views.
 - **Violet bar** on the proposal block only when `Proposal.origin === "agent"`.
 - **Reason codes:** V01–V05 labels are in i18n under `reasons.V0x`, ready for M3 verification rejects.
+
+## M3: lens "Incidencias" (F2 verification + F5 follow-up, READ-ONLY) (2026-11-09)
+
+Contract: `GET /tests/:t/issue-checks` (IssueChecksPayload / IssueCheck), `GET /tests/:t/reminders` (IssueReminder), and `POST /tests/:t/issue-checks/:issueId/decision` (IssueVerdictDecisionRequest, V01–V05 on reject). Nothing is written to ACC until M5.
+
+- **Lens.**
+  - The tab is enabled when the test has issue checks; its count is the number of issues.
+  - Tree: **responsible discipline** (with a **Copiar recordatorio** button that puts the server text on the clipboard and shows a toast) → **issue row** → ubicaciones → clashes.
+  - Order (disciplines by their most urgent issue): dice_resuelta → sigue_abierta with stuckCycles ≥ 2 → overdue → avance → sigue_abierta → resuelta → no_verificable.
+  - Issues show even with 0 remaining clashes (resolved-only).
+- **Issue row:** priority · ACC display id · **one verdict chip** (*Resuelta n/n · Avance n/m · Sigue abierta · Dice resuelta ✕ · No verificable*, tooltip = `reason`) · "vencida" / "sin avance N ciclos" as text · counts · one state icon (issue icon, or ✓ / ✕ once decided).
+- **Summary line:** "N incidencias · M resueltas · K dicen resuelta", computed from the checks and identical in both views. In Interferencias the rows are the clashes of the issue ubicaciones under the filters.
+- **Panel: "Verificación en vNN"**, opened first both for an issue row and for a ubicación selected in this lens.
+  - Shows the verdict, existing and resolved counts, the 3 checks (✓ / ✕ / – for desplazamiento, versión del modelo and alcance), the template evidence (Copiar), and "Abrir en ACC" with the ACC id. The contract has no issue URL yet.
+  - **Aceptar (A):** for resuelta, "lista para mover", then the reminder "Muévela a «En revisión» en ACC"; for the other verdicts, "a la reunión".
+  - **Rechazar (X):** opens a V01–V05 picker with the suggested code preselected (dice_resuelta → V01, sigue_abierta / no_verificable → V02, resuelta → V03, avance → V05). Keys 1–5 pick a code and Enter confirms, so it takes at most 2 keystrokes.
+- **Viewer:** selecting an issue, discipline or ubicación shows the remaining clashes of its ubicaciones. Resolved elements are not greyed: the payload does not include resolved clashes (deferred).
+- **Not used yet:** `GET /issue-checks/gate` (the M5 evidence gate).

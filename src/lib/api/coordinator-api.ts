@@ -60,6 +60,10 @@ import type {
   TriageChanges,
   TriagePayloadWithFamilies,
   AgentQuestion,
+  IssueChecksPayload,
+  IssueCheck,
+  IssueVerdictDecisionRequest,
+  RemindersPayload,
   QuestionAnswerRequest,
   FamiliesPayload,
   FamilyDecisionPreview,
@@ -116,6 +120,12 @@ export interface CoordinatorApi {
   previewFamilyDecision(familyId: string, req: FamilyDecisionRequest): Promise<FamilyDecisionPreview>;
   /** Approve or reject one family decision (human-only, CSRF). Nothing reaches ACC until an approved batch. */
   decideFamily(familyId: string, req: FamilyDecisionRequest): Promise<unknown>;
+  /** M3 (read-only): ACC issues checked against a test, with a verdict each. */
+  getIssueChecks(testId: string): Promise<IssueChecksPayload>;
+  /** M3: copy-ready follow-up reminder per responsible discipline. */
+  getReminders(testId: string): Promise<RemindersPayload>;
+  /** M3: accept / reject a verdict (V01–V05 on reject). READ-ONLY against ACC. */
+  decideIssueVerdict(testId: string, issueId: string, req: IssueVerdictDecisionRequest): Promise<IssueCheck>;
   /** X3: answer a coordinator question; validity/action answers create the decision server-side. */
   answerQuestion(questionId: string, req: QuestionAnswerRequest): Promise<AgentQuestion>;
   /** Instance exception (mandatory reason) or its removal. PROVISIONAL route (§5.3). */

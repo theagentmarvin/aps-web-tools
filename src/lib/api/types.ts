@@ -251,3 +251,14 @@ export interface FamilyExceptionRequest {
   /** true = remove the exception. */
   remove?: boolean;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M3 (F2 verification, F5 follow-up): READ-ONLY issue checks — wire types from the contract.
+// ─────────────────────────────────────────────────────────────────────────────
+export type { IssueCheck, IssueChecksPayload, IssueGate, IssueReminder, IssueVerdict, IssueVerdictDecisionRequest } from "../../../server/api/contract";
+export type DisciplineReminder = import("../../../server/api/contract").IssueReminder;
+/** GET /tests/:t/reminders (normalised by the client: the server may send the array or an envelope). */
+export interface RemindersPayload {
+  testId: string;
+  reminders: DisciplineReminder[];
+}

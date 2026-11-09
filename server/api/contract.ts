@@ -307,6 +307,87 @@ export interface InheritedDecision {
   needsConfirmation?: boolean;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// M3: issue verification (F2) and follow-up (F5). READ-ONLY against ACC (no status write until M5).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type IssueVerdict = "resuelta" | "avance" | "sigue_abierta" | "dice_resuelta" | "no_verificable";
+
+/** GET /tests/:testId/issue-checks — one row per ACC issue linked to an assigned group (X1). */
+export interface IssueCheck {
+  issueId: string;
+  displayId?: number;
+  /** ACC issue title (untrusted text: render as text). */
+  title: string;
+  /** ACC status as read (open, pending, in_review, closed, …). */
+  accStatus: string;
+  dueDate?: string;
+  overdue: boolean;
+  /** user | company | role (never a person's name). */
+  assignedToType?: string;
+  familyId?: string;
+  /** Our groups that hold the issue's still-existing clashes (resolved-only issues: the previous version's groups). */
+  groupIds: string[];
+  /** ACC assigned group ids. */
+  accGroupIds: string[];
+  /** Responsible discipline (dominant of the groups). */
+  discipline: string;
+  /** Raw (MC) clashes of the assigned groups still present / resolved in this run. */
+  existing: number;
+  resolved: number;
+  verdict: IssueVerdict;
+  /** Spanish, one line (why this verdict; for no_verificable: which check). */
+  reason: string;
+  /** Spanish, ≤ 400 characters, from a template (no LLM). */
+  evidence: string;
+  checks: {
+    /** blocked = an element of the resolved set clashes again in this run (the problem may have moved). */
+    displacement: "ok" | "blocked";
+    /** ok = the responsible discipline's model has a newer version than when the issue was created. */
+    modelAge: "ok" | "stale" | "unknown";
+    scope: "ok" | "out_of_scope";
+  };
+  /** Consecutive versions this issue has been "sigue_abierta" (this one included). */
+  stuckCycles: number;
+  /** P1 and stuckCycles ≥ 2: goes on the meeting agenda (M4). */
+  stuck: boolean;
+  priority?: Priority;
+  /** The coordinator's decision on this verdict, if any (this version). */
+  decision?: { kind: "accept" | "reject"; reasonCode?: ReasonCode; note?: string; decidedBy: string; decidedAt: string };
+}
+export interface IssueChecksPayload {
+  testId: string;
+  version: number;
+  counts: Record<IssueVerdict, number>;
+  checks: IssueCheck[];
+  /** When the ACC issues were read. */
+  readAt?: string;
+}
+/** GET /tests/:testId/reminders — one Spanish text per responsible discipline (template; no names). */
+export interface IssueReminder {
+  discipline: string;
+  text: string;
+  issueIds: string[];
+  counts: { total: number; overdue: number; diceResuelta: number; sigueAbierta: number; avance: number };
+}
+/** POST /tests/:testId/issue-checks/:issueId/decision */
+export interface IssueVerdictDecisionRequest {
+  /** accept = resuelta: "listo para mover en ACC"; dice_resuelta / sigue_abierta: "a la reunión". */
+  decision: "accept" | "reject";
+  /** Required on reject: V01–V05 (or R99 + note). */
+  reasonCode?: ReasonCode;
+  note?: string;
+}
+/** GET /issue-checks/gate?projectId&modelSetId — the M5 evidence gate (2 cycles, ≥ 90 % accepted unchanged). */
+export interface IssueGate {
+  cycles: number;
+  /** Accepted-unchanged share of decided "resuelta" verdicts over the counted cycles; null without any. */
+  acceptedUnchangedPct: number | null;
+  perCycle: Array<{ version: number; testKey: string; resuelta: number; accepted: number; rejected: number }>;
+  /** cycles ≥ 2 and every counted cycle ≥ 90 %. */
+  ready: boolean;
+}
+
 /** X3: a question the agent asks the coordinator (answered in the UI). */
 export interface CoordinatorQuestion {
   id: string;

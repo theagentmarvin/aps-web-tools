@@ -20,6 +20,8 @@ import type {
   DecisionKind,
   AgentQuestion,
   ChangeKind,
+  DisciplineReminder,
+  IssueCheck,
   Discipline,
   FamilyAction,
   FamiliesPayload,
@@ -52,7 +54,7 @@ import {
 
 export type RowKind = "group" | "clash";
 /** List rows also include the family tree's levels (not decision targets). */
-export type ListKind = RowKind | "family" | "node";
+export type ListKind = RowKind | "family" | "node" | "issue";
 
 export interface Row {
   key: string; // "g:G-0001" | "c:C-…" | "f:F-…" | "n:pair:CAL×EST" | "n:pair:CAL×EST|PT02"
@@ -72,7 +74,11 @@ export interface Row {
 export interface TreeNode {
   id: string;
   depth: 0 | 1;
-  bucket: TriageFamily["bucket"] | "loose" | "unchanged";
+  bucket: TriageFamily["bucket"] | "loose" | "unchanged" | "discipline";
+  /** Lens "Incidencias": the responsible discipline of this top-level node. */
+  discipline?: string;
+  /** Lens "Incidencias": the issues under this discipline. */
+  issueIds?: string[];
   pair?: [string, string];
   problemType?: string;
   familyIds: string[];
@@ -102,6 +108,8 @@ export interface ListSummary {
   clashes: number;
   /** Lens "Qué cambió": clashes that actually changed (new + changed + reappeared), shown as "(N nuevas)". */
   changed?: number;
+  /** Lens "Incidencias": "N incidencias · M resueltas · K dicen resuelta". */
+  issues?: { total: number; resolved: number; saysResolved: number };
 }
 
 /** Family decision as edited in the family panel ("Cambiar"). */
@@ -152,7 +160,8 @@ export type Dialog =
   | { type: "rule"; ruleId: string }
   | { type: "send" }
   | { type: "familyApprove"; familyId: string }
-  | { type: "familyReject"; familyId: string };
+  | { type: "familyReject"; familyId: string }
+  | { type: "issueReject"; issueId: string };
 
 interface UndoEntry {
   label: string;
@@ -175,10 +184,16 @@ export interface TriageState {
   /** Lens "Qué cambió": ubicaciones without change, hidden behind the collapsed "N sin cambios" row. */
   hiddenByGroup: Map<string, Clash[]>;
   /** Ubicaciones per lens under the other filters (lens tab counts). */
-  lensCounts: { cambios: number; todo: number };
+  lensCounts: { cambios: number; todo: number; incidencias?: number };
   /** X3 agent questions by id, and the open ones per ubicación. */
   questions: Map<string, AgentQuestion>;
   openQuestionByGroup: Map<string, string>;
+  /** M3 (read-only): ACC issue checks and the issue of each ubicación; reminder text per discipline. */
+  issueChecks: Map<string, IssueCheck>;
+  issueByGroup: Map<string, string>;
+  reminders: Map<string, DisciplineReminder>;
+  /** Test version the checks verify ("Verificación en vNN"). */
+  issueVersion?: number;
   collapsedNodes: Set<string>;
   /** Instances (group ids) opened this session, per family: the spot-check record. */
   familyVisits: Map<string, Set<string>>;
@@ -232,7 +247,7 @@ export function isDecisionKey(key: string | null | undefined): key is string {
   return !!key && (key.startsWith("g:") || key.startsWith("c:"));
 }
 export function keyKind(key: string): ListKind {
-  return key.startsWith("g:") ? "group" : key.startsWith("c:") ? "clash" : key.startsWith("f:") ? "family" : "node";
+  return key.startsWith("g:") ? "group" : key.startsWith("c:") ? "clash" : key.startsWith("f:") ? "family" : key.startsWith("i:") ? "issue" : "node";
 }
 const PRIORITY_ORDER = (p: Priority | null) => p ?? 9;
 
@@ -269,6 +284,9 @@ export class TriageStore {
       lensCounts: { cambios: 0, todo: 0 },
       questions: new Map(),
       openQuestionByGroup: new Map(),
+      issueChecks: new Map(),
+      issueByGroup: new Map(),
+      reminders: new Map(),
       collapsedNodes: new Set(["unchanged"]),
       familyVisits: new Map(),
       familyExceptions: new Map(),
@@ -501,8 +519,10 @@ export class TriageStore {
     if (key.startsWith("g:")) return [key.slice(2)];
     if (key.startsWith("c:")) return [];
     if (key.startsWith("f:")) return (s.families.get(key.slice(2))?.groupIds ?? []).filter(visible);
+    if (key.startsWith("i:")) return (s.issueChecks.get(key.slice(2))?.groupIds ?? []).filter((g) => s.groups.has(g));
     const node = s.nodes.get(key.slice(2));
     if (!node) return [];
+    if (node.bucket === "discipline") return (node.issueIds ?? []).flatMap((id) => (s.issueChecks.get(id)?.groupIds ?? []).filter((g) => s.groups.has(g)));
     if (node.bucket === "loose") return [...s.visibleByGroup.keys()].filter((g) => !s.familyOf.has(g));
     if (node.bucket === "unchanged") return [...s.hiddenByGroup.keys()];
     return node.familyIds.flatMap((fid) => (s.families.get(fid)?.groupIds ?? []).filter(visible));
@@ -534,7 +554,9 @@ export class TriageStore {
   /** Active lens: the URL's, else "Qué cambió" when there is a previous version, else "Todo". M3/M4 lenses fall back to "Todo". */
   effectiveLens(): LensId {
     const l = this.state.query.lens ?? (this.hasPrevious() ? "cambios" : "todo");
-    return l === "cambios" && this.hasPrevious() ? "cambios" : "todo";
+    if (l === "cambios" && this.hasPrevious()) return "cambios";
+    if (l === "incidencias" && this.state.issueChecks.size > 0) return "incidencias";
+    return "todo";
   }
 
   /** Version "Qué cambió" compares with: the last reviewed one (M2), else the previous cached one. */
@@ -579,6 +601,85 @@ export class TriageStore {
   changeOf(e: Evaluated): ChangeKind {
     const gid = e.s.kind === "group" ? e.s.id : (e.s.clash?.groupId ?? "");
     return groupChange(this.state.groups.get(gid));
+  }
+
+  /** M3: load the issue checks (READ-ONLY verification) and reminders. */
+  setIssueChecks(checks: IssueCheck[], version?: number) {
+    const issueChecks = new Map(checks.map((c) => [c.issueId, c]));
+    const issueByGroup = new Map<string, string>();
+    for (const c of checks) for (const g of c.groupIds) if (!issueByGroup.has(g)) issueByGroup.set(g, c.issueId);
+    this.set({ issueChecks, issueByGroup, issueVersion: version });
+    // New data, not a decision: no "keep the cursor row" exception.
+    this.recompute();
+    if (!this.state.rows.some((r) => r.key === this.state.cursorKey)) this.setCursor(this.firstKey());
+  }
+
+  setReminders(list: DisciplineReminder[]) {
+    this.set({ reminders: new Map(list.map((r) => [r.discipline, r])) });
+  }
+
+  issueOfGroup(groupId: string): IssueCheck | undefined {
+    const id = this.state.issueByGroup.get(groupId);
+    return id ? this.state.issueChecks.get(id) : undefined;
+  }
+
+  /** Follow-up order: dice_resuelta → sigue_abierta stuck ≥ 2 → overdue → avance → (sigue_abierta) → resuelta → no_verificable. */
+  static issueRank(c: IssueCheck): number {
+    if (c.verdict === "dice_resuelta") return 0;
+    if (c.verdict === "sigue_abierta" && c.stuckCycles >= 2) return 1;
+    if (c.overdue && c.verdict !== "resuelta") return 2;
+    if (c.verdict === "avance") return 3;
+    if (c.verdict === "sigue_abierta") return 4;
+    if (c.verdict === "resuelta") return 5;
+    return 6;
+  }
+
+  /** M3: apply the coordinator verdict decision locally (the server stored it). Nothing is written to ACC. */
+  applyIssueDecision(issueId: string, decision: NonNullable<IssueCheck["decision"]>) {
+    const c = this.state.issueChecks.get(issueId);
+    if (!c) return;
+    const issueChecks = new Map(this.state.issueChecks);
+    issueChecks.set(issueId, { ...c, decision });
+    this.set({ issueChecks });
+  }
+
+  /** Lens "Incidencias": discipline → issue → ubicaciones (→ clashes). Issues show even with 0 remaining clashes. */
+  private buildIssueTree(rows: Row[]) {
+    const s = this.state;
+    const nodes = new Map<string, TreeNode>();
+    const byDisc = new Map<string, IssueCheck[]>();
+    for (const c of s.issueChecks.values()) byDisc.set(c.discipline, [...(byDisc.get(c.discipline) ?? []), c]);
+    const bestRank = (cs: IssueCheck[]) => Math.min(...cs.map(TriageStore.issueRank));
+    const discs = [...byDisc].sort((a, b) => bestRank(a[1]) - bestRank(b[1]) || b[1].length - a[1].length || a[0].localeCompare(b[0]));
+    for (const [disc, cs] of discs) {
+      const id = `disc:${disc}`;
+      const sorted = [...cs].sort((a, b) => TriageStore.issueRank(a) - TriageStore.issueRank(b) || b.existing - a.existing || a.issueId.localeCompare(b.issueId));
+      const worst = sorted
+        .flatMap((c) => c.groupIds.map((g) => this.evaluate("group", g)?.d.priority ?? null))
+        .reduce<Priority | null>((w, p) => (p && (!w || p < w) ? p : w), null);
+      nodes.set(id, { id, depth: 0, bucket: "discipline", discipline: disc, issueIds: sorted.map((c) => c.issueId), familyIds: [], instanceCount: sorted.reduce((n, c) => n + c.groupIds.filter((g) => s.groups.has(g)).length, 0), clashCount: sorted.reduce((n, c) => n + c.existing, 0), worst, needsReview: 0, reappeared: 0 });
+      const k1 = `n:${id}`;
+      rows.push({ key: k1, kind: "node", id, groupId: "", nested: false, depth: 0 });
+      if (s.collapsedNodes.has(id)) continue;
+      for (const c of sorted) {
+        const ki = `i:${c.issueId}`;
+        rows.push({ key: ki, kind: "issue", id: c.issueId, groupId: "", nested: false, depth: 1, parent: k1 });
+        if (!s.expanded.has(c.issueId)) continue;
+        for (const gid of c.groupIds) {
+          if (!s.groups.has(gid)) continue;
+          const key = rowKey("group", gid);
+          rows.push({ key, kind: "group", id: gid, groupId: gid, nested: false, depth: 2, parent: ki });
+          if (s.expanded.has(gid)) for (const cl of s.visibleByGroup.get(gid) ?? s.clashesByGroup.get(gid) ?? []) rows.push({ key: rowKey("clash", cl.id), kind: "clash", id: cl.id, groupId: gid, nested: true, depth: 3, parent: key });
+        }
+      }
+    }
+    return nodes;
+  }
+
+  /** "N incidencias · M resueltas · K dicen resuelta": from the checks, identical in both views. */
+  private issueSummary(): ListSummary["issues"] {
+    const all = [...this.state.issueChecks.values()];
+    return { total: all.length, resolved: all.filter((c) => c.verdict === "resuelta").length, saysResolved: all.filter((c) => c.verdict === "dice_resuelta").length };
   }
 
   private buildTree(sortedGroups: Evaluated[], rows: Row[], hidden: Evaluated[] = []) {
@@ -693,9 +794,24 @@ export class TriageStore {
     const lens = this.effectiveLens();
     // Tab counts are clashes: "Qué cambió" = clashes that actually changed (not every clash of a changed ubicación).
     const isChangedClash = (e: Evaluated) => !!e.s.clash && CHANGED.has(clashChange(e.s.clash) ?? "unchanged");
-    const lensCounts = { cambios: base.filter(isChangedClash).length, todo: base.length };
-    const items = lens === "cambios" ? base.filter((e) => keepIds.has(e.s.id) || this.inChangesLens(e)) : base;
+    const lensCounts = { cambios: base.filter(isChangedClash).length, todo: base.length, incidencias: s.issueChecks.size };
+    const inIssue = (e: Evaluated) => s.issueByGroup.has(e.s.kind === "group" ? e.s.id : (e.s.clash?.groupId ?? ""));
+    const items = lens === "cambios" ? base.filter((e) => keepIds.has(e.s.id) || this.inChangesLens(e)) : lens === "incidencias" ? base.filter((e) => keepIds.has(e.s.id) || inIssue(e)) : base;
     const rows: Row[] = [];
+    if (lens === "incidencias" && this.familiesMode()) {
+      const visibleByGroup = new Map<string, Clash[]>();
+      for (const e of items) {
+        const c = e.s.clash;
+        if (!c) continue;
+        const l = visibleByGroup.get(c.groupId);
+        if (l) l.push(c);
+        else visibleByGroup.set(c.groupId, [c]);
+      }
+      this.state = { ...this.state, visibleByGroup, hiddenByGroup: new Map() };
+      const nodes = this.buildIssueTree(rows);
+      this.set({ rows, nodes, visibleByGroup, hiddenByGroup: new Map(), lensCounts, summary: { groups: 0, locations: visibleByGroup.size, clashes: items.length, issues: this.issueSummary() }, dirty: false });
+      return;
+    }
     if (this.familiesMode()) {
       // Clash-level filter, then group the passing clashes into ubicaciones → grupos → tipo → par.
       const byGroup = (list: Evaluated[]) => {
@@ -736,7 +852,7 @@ export class TriageStore {
     if (clashLevel) {
       const locs = new Set(items.map((e) => e.s.clash?.groupId ?? ""));
       const fams = new Set([...locs].map((g) => s.familyOf.get(g) ?? g));
-      summary = { groups: fams.size, locations: locs.size, clashes: items.length, ...(lens === "cambios" ? { changed: items.filter(isChangedClash).length } : {}) };
+      summary = { groups: fams.size, locations: locs.size, clashes: items.length, ...(lens === "cambios" ? { changed: items.filter(isChangedClash).length } : {}), ...(lens === "incidencias" ? { issues: this.issueSummary() } : {}) };
     } else {
       summary = { groups: items.length, locations: items.length, clashes: items.reduce((n, e) => n + (e.s.group?.clashIds.length ?? 0), 0) };
     }
@@ -824,6 +940,23 @@ export class TriageStore {
 
   /** Make a row visible in the tree (open its family and nodes) and put the cursor on it. */
   reveal(key: string) {
+    if (this.familiesMode() && this.effectiveLens() === "incidencias" && isDecisionKey(key)) {
+      const { kind, id } = parseKey(key);
+      const gid = kind === "group" ? id : (this.state.clashes.get(id)?.groupId ?? "");
+      const iid = this.state.issueByGroup.get(gid);
+      if (iid) {
+        const expanded = new Set(this.state.expanded);
+        expanded.add(iid);
+        if (kind === "clash") expanded.add(gid);
+        const collapsed = new Set(this.state.collapsedNodes);
+        const c = this.state.issueChecks.get(iid);
+        if (c) collapsed.delete(`disc:${c.discipline}`);
+        this.set({ expanded, collapsedNodes: collapsed });
+      }
+      this.recompute([key]);
+      this.setCursor(key);
+      return;
+    }
     if (this.familiesMode()) {
       const s = this.state;
       let fid: string | undefined;
@@ -963,7 +1096,7 @@ export class TriageStore {
     if (row.kind === "node") {
       if (this.state.collapsedNodes.has(row.id)) this.toggleNode(row.id, true);
       else this.move(1);
-    } else if (row.kind === "family") {
+    } else if (row.kind === "family" || row.kind === "issue") {
       if (!this.state.expanded.has(row.id)) this.toggleExpand(row.id, true);
       else this.move(1);
     } else if (row.kind === "group") this.toggleExpand(row.id, true);
@@ -978,7 +1111,7 @@ export class TriageStore {
     if (row.kind === "node") {
       if (!this.state.collapsedNodes.has(row.id)) this.toggleNode(row.id, false);
       else toParent();
-    } else if (row.kind === "family") {
+    } else if (row.kind === "family" || row.kind === "issue") {
       if (this.state.expanded.has(row.id)) this.toggleExpand(row.id, false);
       else toParent();
     } else if (row.kind === "group") {

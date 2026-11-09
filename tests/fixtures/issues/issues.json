@@ -1,0 +1,59 @@
+{
+  "note": "ACC Issues v1 (synthetic, read-only fixtures for M3). No person names.",
+  "issues": [
+    {
+      "id": "0b6c1f00-0000-4000-8000-00000000i001",
+      "displayId": 101,
+      "title": "Ductos de clima atraviesan vigas V250x600 — Nivel 2",
+      "status": "open",
+      "dueDate": "2026-11-20",
+      "assignedToType": "company",
+      "createdAt": "2026-10-30T12:00:00.000Z"
+    },
+    {
+      "id": "0b6c1f00-0000-4000-8000-00000000i002",
+      "displayId": 102,
+      "title": "Escalerillas eléctricas contra ductos de retorno",
+      "status": "closed",
+      "dueDate": "2026-11-01",
+      "assignedToType": "company",
+      "createdAt": "2026-10-30T12:00:00.000Z"
+    },
+    {
+      "id": "0b6c1f00-0000-4000-8000-00000000i003",
+      "displayId": 103,
+      "title": "Ductos de inyección bajo vigas — Nivel -1",
+      "status": "open",
+      "dueDate": "2026-11-03",
+      "assignedToType": "company",
+      "createdAt": "2026-10-30T12:00:00.000Z"
+    },
+    {
+      "id": "0b6c1f00-0000-4000-8000-00000000i004",
+      "displayId": 104,
+      "title": "Viga de fundación contra losa — Nivel -2",
+      "status": "open",
+      "dueDate": "2026-11-25",
+      "assignedToType": "role",
+      "createdAt": "2026-10-30T12:00:00.000Z"
+    },
+    {
+      "id": "0b6c1f00-0000-4000-8000-00000000i005",
+      "displayId": 105,
+      "title": "Red húmeda atraviesa ductos — Nivel 3",
+      "status": "in_review",
+      "dueDate": "2026-11-25",
+      "assignedToType": "company",
+      "createdAt": "2026-10-30T12:00:00.000Z"
+    },
+    {
+      "id": "0b6c1f00-0000-4000-8000-00000000i006",
+      "displayId": 106,
+      "title": "Ductos de inyección invaden vigas V300x700 — Nivel -1",
+      "status": "open",
+      "dueDate": "2026-11-02",
+      "assignedToType": "company",
+      "createdAt": "2026-10-30T12:00:00.000Z"
+    }
+  ]
+}

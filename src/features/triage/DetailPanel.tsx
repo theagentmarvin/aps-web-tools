@@ -45,6 +45,7 @@ import { oneLine, summarizePair, type PairSummary, type SideFacts } from "./pair
 import { parseKey, useTriage } from "./store";
 import { Section, useCalibrationText, useSectionPrefs, type SectionId } from "./detail-accordion";
 import { FamilyPanel, NodePanel } from "./FamilyPanel";
+import { IssuePanel, VerificationSection } from "./IssueViews";
 
 // ── Helpers ────────────────────────────────────────────────────────
 
@@ -119,6 +120,7 @@ export function DetailPanel() {
   const cursorKey = useTriage(store, (s) => s.cursorKey);
   if (cursorKey?.startsWith("f:")) return <FamilyPanel key={cursorKey} familyId={cursorKey.slice(2)} />;
   if (cursorKey?.startsWith("n:")) return <NodePanel key={cursorKey} nodeId={cursorKey.slice(2)} />;
+  if (cursorKey?.startsWith("i:")) return <IssuePanel key={cursorKey} issueId={cursorKey.slice(2)} />;
   return <InstancePanel />;
 }
 
@@ -135,6 +137,13 @@ function InstancePanel() {
   const calibration = useCalibrationText();
   const { prefs, set } = useSectionPrefs();
   const lens = useTriage(store, () => store.effectiveLens());
+  const issue = useTriage(store, (s) => {
+    const parsedKey = s.cursorKey && (s.cursorKey.startsWith("g:") || s.cursorKey.startsWith("c:")) ? s.cursorKey : null;
+    if (!parsedKey) return undefined;
+    const gid = parsedKey.startsWith("g:") ? parsedKey.slice(2) : (s.clashes.get(parsedKey.slice(2))?.groupId ?? "");
+    const id = s.issueByGroup.get(gid);
+    return id ? s.issueChecks.get(id) : undefined;
+  });
 
   const parsed = cursorKey ? parseKey(cursorKey) : null;
   const e = parsed ? store.evaluate(parsed.kind, parsed.id) : undefined;
@@ -221,6 +230,8 @@ function InstancePanel() {
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden" id="triage-detail" tabIndex={-1}>
+        {/* Lens "Incidencias": the verification of this ubicación's issue opens first. */}
+        {lens === "incidencias" && issue && <VerificationSection check={issue} />}
         <QuestionCallout groupId={groupId} />
         {!decision && e.s.group?.inherited && groupChange(e.s.group) === "unchanged" && <InheritedCallout targetKey={cursorKey} inherited={e.s.group.inherited} />}
         <ChangeLine e={e} members={members} />

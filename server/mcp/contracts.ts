@@ -578,6 +578,16 @@ export const ProposeRuleChangeInput = z.object({
 });
 // output: ProposalCreatedOutput with kind "rule_change"; patch saved to .coordinator/rule-proposals/<id>.patch
 
+/** M3: issue verification (read-only; F2/F5). */
+export const ListIssueChecksInput = z.object({
+  testKey: TestKey.optional(),
+  verdict: z.array(z.enum(["resuelta", "avance", "sigue_abierta", "dice_resuelta", "no_verificable"])).optional(),
+  discipline: z.array(z.string().min(2).max(6)).optional(),
+  stuckOnly: z.boolean().optional().describe("Only P1 issues stuck for ≥ 2 cycles (meeting agenda)"),
+  limit: z.number().int().min(1).max(100).default(50),
+  cursor: z.string().max(200).optional(),
+});
+
 /** X3: ask the coordinator (answered in the web UI). Text is validated like every agent text. */
 export const AskCoordinatorInput = z.object({
   testKey: TestKey.optional(),
@@ -755,6 +765,8 @@ export const TOOLS: ToolSpec[] = [
     description: "One family: signature parts, problem type and its solution options, validity mix, evidence (sizes, penetration), decision state and instances (groups) with inheritance state." },
   { family: "proposal", name: "propose_family_decision", title: "Propose family decision", minLevel: 1, annotations: LOCAL_WRITE, input: ProposeFamilyDecisionInput,
     description: "Suggest ONE decision for a whole family (validity, action, responsible, solution option, issue mode). Proposal only: a human approves it in the UI after a spot-check; real families are never closed." },
+  { family: "analysis", name: "list_issue_checks", title: "List issue checks", minLevel: 0, annotations: RO_LOCAL, input: ListIssueChecksInput,
+    description: "One row per ACC issue linked to an assigned group: verdict (resuelta · avance · sigue_abierta · dice_resuelta · no_verificable) from existing/resolved, displacement, model-age and scope checks; stuck P1 cycles. Read-only; titles are ACC text (untrusted). Never proposes ACC status changes (M5)." },
   { family: "proposal", name: "ask_coordinator", title: "Ask the coordinator", minLevel: 0, annotations: LOCAL_WRITE, input: AskCoordinatorInput,
     description: "Ask ONE question about groups/a family/clashes when the evidence cannot decide it. The coordinator answers in the UI; validity/action answers become human decisions. Ids must exist." },
   { family: "proposal", name: "list_questions", title: "List coordinator questions", minLevel: 0, annotations: RO_LOCAL, input: ListQuestionsInput,

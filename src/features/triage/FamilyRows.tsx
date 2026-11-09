@@ -13,6 +13,7 @@ import { problemTypeOf } from "~/lib/problem-types";
 import { useTriageContext } from "./actions";
 import { familyChangeCounts, topChange } from "./change";
 import { ChangeChip, accTooltip } from "./RowMarks";
+import { CopyReminderButton } from "./IssueViews";
 import { useTriage, type Row, type TreeNode } from "./store";
 
 export const NODE_H = 32;
@@ -81,6 +82,7 @@ export function useNodeLabel(n: TreeNode | undefined): string {
   if (n.bucket === "model_set") return t("families.bucket.modelSet");
   if (n.bucket === "non_issue") return t("families.bucket.nonIssue");
   if (n.bucket === "loose") return t("families.bucket.loose");
+  if (n.bucket === "discipline") return t("issues.disciplineNode", { discipline: n.discipline ?? "" });
   if (n.bucket === "unchanged") return `↺ ${t("lens.unchangedRow", { count: n.instanceCount })}`;
   return n.pair ? `${n.pair[0]} × ${n.pair[1]}` : n.id;
 }
@@ -108,13 +110,16 @@ export const NodeRow = memo(function NodeRow({ row }: { row: Row }) {
       <TriCheck rowKey={row.key} />
       <Chevron open={open} label={open ? t("list.collapse") : t("list.expand")} onClick={() => store.toggleNode(row.id)} />
       {n.depth === 1 && n.problemType && <span className="shrink-0 rounded bg-gray-100 px-1 font-mono text-[10px] text-gray-500">{n.problemType}</span>}
-      <span className={`min-w-0 flex-1 truncate ${n.depth === 0 ? "text-sm font-semibold text-gray-900" : "text-[13px] text-gray-800"}`} title={label}>
+      <span className={`min-w-0 flex-1 truncate ${n.depth === 0 ? "text-sm font-semibold text-gray-900" : "text-[13px] text-gray-800"}`} title={n.bucket === "discipline" ? t("issues.disciplineNodeTip", { discipline: n.discipline ?? "" }) : label}>
         {label}
       </span>
       {n.worst && n.depth === 0 && <PriorityChip value={n.worst} />}
       {n.needsReview > 0 && n.depth === 0 && <span className="shrink-0 text-[10px] text-amber-800">{t("families.needsReviewCount", { count: n.needsReview })}</span>}
+      {n.bucket === "discipline" && n.discipline && <CopyReminderButton discipline={n.discipline} />}
       <span className="shrink-0 whitespace-nowrap text-[11px] text-gray-500">
-        {n.bucket === "loose" || n.bucket === "unchanged"
+        {n.bucket === "discipline"
+          ? t("issues.nodeCounts", { count: n.issueIds?.length ?? 0, existing: n.clashCount })
+          : n.bucket === "loose" || n.bucket === "unchanged"
           ? t("families.countsLoose", { instances: n.instanceCount, clashes: n.clashCount })
           : t("families.counts", { count: n.familyIds.length, instances: n.instanceCount, clashes: n.clashCount })}
       </span>

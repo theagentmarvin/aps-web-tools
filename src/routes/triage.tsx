@@ -70,6 +70,23 @@ export function TriageWorkspace() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, store]);
 
+  // M3 (read-only): ACC issue checks + reminders for the "Incidencias" lens. Absent endpoint = lens disabled.
+  useEffect(() => {
+    if (!data) return;
+    let alive = true;
+    api.getIssueChecks(data.test.id).then(
+      (p) => alive && store.setIssueChecks(p.checks, p.version),
+      () => undefined,
+    );
+    api.getReminders(data.test.id).then(
+      (p) => alive && store.setReminders(p.reminders),
+      () => undefined,
+    );
+    return () => {
+      alive = false;
+    };
+  }, [api, data, store]);
+
   // URL → store query.
   useEffect(() => {
     if (JSON.stringify(query) !== JSON.stringify(store.state.query)) store.setQuery(query);
@@ -303,7 +320,9 @@ function ListArea({ onClear, onSend, readyCount, onQueryChange }: { onClear: () 
         {manual && <span className="mr-2 text-amber-800">{t("workspace.manualMode")}</span>}
         {/* Same line in both views for the same filters: grupos · ubicaciones · interferencias (ACC clashes). */}
         <span data-testid="list-summary">
-          {t("families.summaryClashes", { count: summary.groups, groups: summary.groups, locations: summary.locations, clashes: summary.clashes })}
+          {summary.issues
+            ? t("issues.summary", { count: summary.issues.total, resolved: summary.issues.resolved, says: summary.issues.saysResolved })
+            : t("families.summaryClashes", { count: summary.groups, groups: summary.groups, locations: summary.locations, clashes: summary.clashes })}
           {summary.changed !== undefined && ` ${t("lens.changedBracket", { count: summary.changed })}`}
         </span>
         {lens === "cambios" && summary.locations === 0 && (

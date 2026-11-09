@@ -9,6 +9,7 @@ import { useHotkeys, type HotkeyBinding } from "~/lib/hotkeys";
 import { useSettings } from "~/lib/settings";
 import { useTriageContext } from "./actions";
 import { groupChange } from "./change";
+import { useIssueDecision } from "./IssueViews";
 import { isDecisionKey, parseKey } from "./store";
 
 export function useTriageHotkeys(opts: { onSend: () => void }) {
@@ -17,6 +18,7 @@ export function useTriageHotkeys(opts: { onSend: () => void }) {
   const toast = useToast();
   const { settings } = useSettings();
   const { store, actions } = useTriageContext();
+  const decideIssue = useIssueDecision();
 
   // Decision target under the cursor (g:/c:); tree rows (families, nodes) return null.
   const current = () => (isDecisionKey(store.state.cursorKey) ? store.state.cursorKey : null);
@@ -43,7 +45,21 @@ export function useTriageHotkeys(opts: { onSend: () => void }) {
     { keys: ["h", "ArrowLeft"], labelKey: "shortcuts.collapse", group: "navigation", run: () => store.collapseCurrent() },
     { keys: ["g g", "G"], labelKey: "shortcuts.firstLast", group: "navigation", run: (e) => (e.key === "G" ? store.last() : store.first()) },
     // Decisions
-    { keys: ["a"], labelKey: "shortcuts.accept", group: "decisions", run: () => actions.accept() },
+    {
+      keys: ["a"],
+      labelKey: "shortcuts.accept",
+      group: "decisions",
+      run: () => {
+        // Issue rows (lens Incidencias): accept the verdict (read-only against ACC).
+        const k = store.state.cursorKey;
+        if (k?.startsWith("i:")) {
+          const c = store.state.issueChecks.get(k.slice(2));
+          if (c && !c.decision) void decideIssue(c, "accept");
+          return;
+        }
+        actions.accept();
+      },
+    },
     {
       keys: ["e"],
       labelKey: "shortcuts.edit",

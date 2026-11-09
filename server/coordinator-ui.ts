@@ -16,6 +16,7 @@ import { PROBLEM_TYPES } from "../core/families";
 import { aggregateAcc, emptyCounts, itemChange, mergeAcc, type AccIndex } from "./cycle";
 import { questionView, type StoredQuestion } from "./questions";
 import { markFrozen } from "./api/frozen";
+import { buildReminders, issueGate } from "./issue-checks";
 import type { ClashDiff } from "../core/types";
 
 interface CycleCtx {
@@ -593,7 +594,7 @@ export class CoordinatorUi {
     const proposals = cls.groups.map((g) => this.proposalView(g, test, cls, byGroup.get(g.id) ?? []));
     const groups = cls.groups.map((g, i) => this.groupUi(g, test, states.get(g.id) ?? g.reviewState, !!proposals[i].issueDraft, proposals[i].updatedAt));
     const rs = loadRules();
-    const decisions = (await this.store.listDecisions()).filter((d) => d.testId === test.testKey).map((d) => this.decisionUi(d));
+    const decisions = (await this.store.listDecisions()).filter((d) => d.testId === test.testKey && d.targetType !== "issue").map((d) => this.decisionUi(d));
     let families: C.TriageFamily[] | undefined;
     if (cls.families) {
       const views = familyViews(cls.families, cls.groups, await this.core.families.load(test.projectId, test.modelSetId));
@@ -789,7 +790,7 @@ export class CoordinatorUi {
   }
 
   async listDecisions(q: { testId?: string; projectId?: string; limit?: number; cursor?: string }): Promise<C.Page<C.Decision>> {
-    const all = (await this.store.listDecisions()).filter((d) => (!q.testId || d.testId === q.testId) && (!q.projectId || bareProjectId(d.projectId) === bareProjectId(q.projectId)));
+    const all = (await this.store.listDecisions()).filter((d) => d.targetType !== "issue" && (!q.testId || d.testId === q.testId) && (!q.projectId || bareProjectId(d.projectId) === bareProjectId(q.projectId)));
     const page = paginate(all.reverse(), Math.min(q.limit ?? 200, 1000), q.cursor);
     return { items: page.items.map((d) => this.decisionUi(d)), total: page.total, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
   }
@@ -1973,6 +1974,68 @@ export class CoordinatorUi {
       st.aliases[from.id] = into.id;
     }, { action: "family.merged", testKey: test.testKey, targetIds: [from.id, into.id] });
     return this.families(test.testKey);
+  }
+
+  // ── M3: issue checks (F2/F5), read-only against ACC ─────────────────────
+
+  async issueChecks(testKey: string): Promise<C.IssueChecksPayload> {
+    return this.core.issueChecksFor(testKey);
+  }
+
+  async reminders(testKey: string): Promise<C.IssueReminder[]> {
+    const p = await this.core.issueChecksFor(testKey);
+    return buildReminders(p.checks, p.version, nowIso(this.core.now()).slice(0, 10));
+  }
+
+  /**
+   * The coordinator accepts or rejects a verdict (accept = "listo para mover en ACC" for resuelta,
+   * "a la reunión" for dice_resuelta / sigue_abierta). Stored for the M5 gate and as a decision
+   * with targetType "issue" (audited). Nothing is written to ACC.
+   */
+  async decideIssueVerdict(testKey: string, issueId: string, body: C.IssueVerdictDecisionRequest, user: HumanUser): Promise<C.IssueCheck> {
+    const p = await this.core.issueChecksFor(testKey);
+    const c = p.checks.find((x) => x.issueId === issueId);
+    if (!c) throw new CoordError("not_found", `La incidencia ${issueId} no tiene verificación en ${testKey}`);
+    if (body.decision === "reject" && !body.reasonCode) throw new CoordError("validation_error", "Rechazar un veredicto requiere reasonCode (V01–V05).");
+    if (body.reasonCode === "R99" && !body.note?.trim()) throw new CoordError("validation_error", "R99 requiere una nota.");
+    const { test } = await this.core.loadTest(testKey);
+    const now = nowIso(this.core.now());
+    const note = body.note ? sanitizeModelText(body.note, 1000) : undefined;
+    await this.core.issueChecks.mutate(test.projectId, test.modelSetId, (f) => {
+      const v = String(test.modelSetVersion);
+      (f.decisions[v] ??= {})[issueId] = { verdict: c.verdict, kind: body.decision, ...(body.reasonCode ? { reasonCode: body.reasonCode } : {}), ...(note ? { note } : {}), decidedBy: user.name, decidedAt: now, testKey: test.testKey };
+      return true;
+    });
+    const id = `d-issue-${test.testKey}-${issueId}-${sha256(now).slice(0, 6)}`;
+    await this.store.appendDecisions([
+      {
+        id,
+        proposalId: `IC-${test.testKey}-${issueId}`,
+        targetType: "issue",
+        targetId: issueId,
+        testId: test.testKey,
+        modelSetId: test.modelSetId,
+        projectId: bareProjectId(test.projectId),
+        kind: body.decision,
+        changes: [],
+        ...(body.reasonCode ? { reasonCode: body.reasonCode } : {}),
+        note: note ?? `Veredicto ${c.verdict}`,
+        viewedInViewerMs: 0,
+        decidedAt: now,
+        userId: user.id,
+        userName: user.name,
+        batchId: undefined,
+        receivedAt: now,
+      },
+    ]);
+    await this.store.audit({ actor: { type: "user", id: user.id, name: user.name }, action: "issue_check.decided", projectId: test.projectId, modelSetId: test.modelSetId, testId: test.testKey, targetIds: [issueId, id], details: { verdict: c.verdict, decision: body.decision, reasonCode: body.reasonCode ?? null } });
+    return (await this.core.issueChecksFor(testKey)).checks.find((x) => x.issueId === issueId)!;
+  }
+
+  async issueGate(projectId: string, modelSetId: string): Promise<C.IssueGate> {
+    const f = await this.core.issueChecks.load(withB(projectId), modelSetId);
+    const tests = (await this.store.listTests()).filter((t) => t.modelSetId === modelSetId);
+    return issueGate(f, (v) => tests.find((t) => t.modelSetVersion === v)?.testKey ?? "");
   }
 
   // ── X3 questions ─────────────────────────────────────────────────────────

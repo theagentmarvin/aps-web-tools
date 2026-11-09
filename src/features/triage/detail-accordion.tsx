@@ -9,7 +9,7 @@ import { readJson, writeJson } from "~/lib/storage";
 
 // ── Persisted accordion state ──────────────────────────────────────
 
-export type SectionId = "elements" | "clashes" | "reasoning" | "changes" | "properties" | "issue" | "history" | "instances" | "issuePreview" | "signature" | "families";
+export type SectionId = "elements" | "clashes" | "reasoning" | "changes" | "properties" | "issue" | "history" | "instances" | "issuePreview" | "signature" | "families" | "verification";
 const SECTIONS_KEY = "coord.detail.sections";
 
 export function useSectionPrefs() {

@@ -190,7 +190,7 @@ If any edit happens after step 2 (exclusions, issue text), the approve call is r
 
 ## MCP server `coord`
 
-There are 34 tools, with names and inputs as in `docs/ai/mcp-tool-contracts.ts`. Outputs are one compact JSON envelope `{ok,data?,error?,truncated?,hint?}` capped at `agent.maxResponseTokens` (6,000 tokens × 4 chars); when the cap is hit, the largest array is cut. Model-derived text is returned as `{untrusted, flagged?}`, sanitised and limited to 120 characters; this covers group labels, element family/type/system, rule rationales and document names. Agent-written text is rejected when it contains URLs outside `issues.urlAllowlist`, emails, @mentions, control characters, or G-/C-/E-/P- ids that do not exist. Every tool call is audited (`tool.call`). No tool can approve. `apply_approved_proposals` takes `{batchId, dryRun=true}` and refuses without a valid HMAC approval.
+There are 35 tools, with names and inputs as in `docs/ai/mcp-tool-contracts.ts`. Outputs are one compact JSON envelope `{ok,data?,error?,truncated?,hint?}` capped at `agent.maxResponseTokens` (6,000 tokens × 4 chars); when the cap is hit, the largest array is cut. Model-derived text is returned as `{untrusted, flagged?}`, sanitised and limited to 120 characters; this covers group labels, element family/type/system, rule rationales and document names. Agent-written text is rejected when it contains URLs outside `issues.urlAllowlist`, emails, @mentions, control characters, or G-/C-/E-/P- ids that do not exist. Every tool call is audited (`tool.call`). No tool can approve. `apply_approved_proposals` takes `{batchId, dryRun=true}` and refuses without a valid HMAC approval.
 
 ### MCP deviations from `docs/ai/mcp-tool-contracts.ts`
 
@@ -224,6 +224,17 @@ There are 34 tools, with names and inputs as in `docs/ai/mcp-tool-contracts.ts`.
 - **Qué cambió:** `ClashGroup.change`, `FamilyInstance.change`, `TriageFamily.changeCounts` and `TriagePayload.changeSummary`, all against the previous cached version.
   - Per raw clash: `new`, `reappeared` (from the ledger), `changed` (|Δpenetration| > 10 mm or different element types), otherwise `unchanged`.
   - Per item: reappeared if any clash reappeared; new if every clash is new; changed if any clash is new or changed; otherwise unchanged.
+
+### M3: issue verification (F2) and follow-up (F5), read-only against ACC
+
+- **`GET /tests/:testId/issue-checks`** (MCP `list_issue_checks`): one `IssueCheck` per ACC issue linked to an assigned group (X1 ledger). Issues are read with Issues v1 `listIssues` (cached 60 s; no comments, no names).
+  - **Verdicts:** `resuelta` (existing = 0, displacement ok, model age ok, scope ok), `avance`, `sigue_abierta`, `dice_resuelta` (ACC closed / completed / in review while existing > 0), `no_verificable` (`reason` names the check).
+  - **Displacement:** an element of the resolved set clashes again in this run.
+  - **Model age:** the responsible discipline`s document (by lineage) has a newer `?version=` than in the last cached version completed before the issue was created; `unknown` without such a version.
+  - **stuckCycles:** consecutive versions with `sigue_abierta`, from `.coordinator/issue-checks/<p>/<m>.json`; `stuck` = P1 and ≥ 2.
+- **`GET /tests/:testId/reminders`:** one template text per responsible discipline. Contradictions, then overdue, then no progress, then progress. No names, no comment text.
+- **`POST H /tests/:testId/issue-checks/:issueId/decision`** `{decision: accept|reject, reasonCode?, note?}`: stored per cycle, plus a decision record with `targetType: "issue"` (audited; never in the triage decisions). Reject needs V01–V05 (or R99 + note).
+- **`GET /issue-checks/gate?projectId&modelSetId`:** `{cycles, acceptedUnchangedPct, perCycle, ready}`; ready = ≥ 2 cycles, each ≥ 90 % accepted unchanged.
 
 ### Performance
 

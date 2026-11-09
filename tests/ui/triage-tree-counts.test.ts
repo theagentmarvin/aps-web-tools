@@ -10,6 +10,7 @@ import { PROJECTS } from "../../src/lib/api/mock/fixtures";
 import { generateTest } from "../../src/lib/api/mock/generate";
 import { applyM1 } from "../../src/lib/api/mock/m1";
 import { applyM2 } from "../../src/lib/api/mock/m2";
+import { buildIssueChecks } from "../../src/lib/api/mock/m3";
 import type { Clash, TriagePayloadWithFamilies } from "../../src/lib/api/types";
 
 // The store and the mock families step use browser APIs (window, import.meta.env): they are
@@ -33,7 +34,7 @@ interface StoreLike {
     openQuestionByGroup: Map<string, string>;
     groups: Map<string, { change?: string; inherited?: unknown }>;
     checked: Set<string>;
-    summary: { groups: number; locations: number; clashes: number; changed?: number };
+    summary: { groups: number; locations: number; clashes: number; changed?: number; issues?: { total: number; resolved: number; saysResolved: number } };
   };
   familiesMode(): boolean;
   effectiveLens(): string;
@@ -41,6 +42,7 @@ interface StoreLike {
   load(p: unknown): void;
   selectionMembers(key: string): { members: unknown[] };
   toggleCheckSubtree(key: string): void;
+  setIssueChecks(checks: unknown[], version?: number): void;
   toggleCheck(key: string): void;
   checkState(key: string): string;
 }
@@ -275,5 +277,33 @@ describe("M2: inherited decisions and agent questions", () => {
     }
     // Same totals in both views with the question items included.
     expect(tree.state.summary).toEqual(list.state.summary);
+  });
+});
+
+describe("M3: lens Incidencias", () => {
+  it("issue rows, discipline nodes and the summary are identical in both views", () => {
+    const fx = sandbox as unknown as { test: Parameters<typeof buildIssueChecks>[0]; groups: Parameters<typeof buildIssueChecks>[1]; proposals: Parameters<typeof buildIssueChecks>[2] };
+    const { checks } = buildIssueChecks(fx.test, fx.groups, fx.proposals);
+    expect(checks.length).toBeGreaterThanOrEqual(2);
+    const { tree, list } = both(sandbox, q({ filters: { decision: [] }, lens: "incidencias" }));
+    tree.setIssueChecks(checks);
+    list.setIssueChecks(checks);
+    expect(tree.effectiveLens()).toBe("incidencias");
+    const issueRows = tree.state.rows.filter((r) => r.kind === "issue");
+    expect(issueRows.length).toBe(checks.length);
+    expect(tree.state.summary.issues).toEqual(list.state.summary.issues);
+    expect(tree.state.summary.issues?.total).toBe(checks.length);
+    // Interferencias rows = clashes of the issue ubicaciones under the filters = the clashes the tree holds.
+    expect(list.state.rows.length).toBe(tree.state.summary.clashes);
+    // Follow-up order: a "dice_resuelta" issue comes first when there is one.
+    const first = checks.find((c) => c.issueId === issueRows[0].id)!;
+    if (checks.some((c) => c.verdict === "dice_resuelta")) expect(first.verdict).toBe("dice_resuelta");
+    const discs = tree.state.rows.filter((r) => r.kind === "node" && r.depth === 0);
+    expect(discs.length).toBe(new Set(checks.map((c) => c.discipline)).size);
+  });
+
+  it("without issue checks the lens falls back to Todo", () => {
+    const { tree } = both(sandbox, q({ filters: { decision: [] }, lens: "incidencias" }));
+    expect(tree.effectiveLens()).toBe("todo");
   });
 });

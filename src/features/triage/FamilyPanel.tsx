@@ -21,6 +21,7 @@ import { FamilyTags, InheritanceMark, levelRange, useNodeLabel } from "./FamilyR
 import { oneLine } from "./pair-summary";
 import { familyChangeCounts, topChange } from "./change";
 import { ChangeChip } from "./RowMarks";
+import { CopyReminderButton } from "./IssueViews";
 import { rowKey, useTriage, type FamilyDraft, type TriageStore } from "./store";
 
 export const FAMILY_ACTION_KEY: Record<FamilyAction, TKey> = {
@@ -473,7 +474,21 @@ export function NodePanel({ nodeId }: { nodeId: string }) {
   const stats = useTriage(store, (s) => s.familyStats);
   const visible = useTriage(store, (s) => s.visibleByGroup);
   const label = useNodeLabel(n);
+  const reminder = useTriage(store, (s) => (n?.discipline ? s.reminders.get(n.discipline) : undefined));
   if (!n) return <EmptyState title={t("detail.noSelection")} />;
+  if (n.bucket === "discipline")
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        <header className="flex flex-shrink-0 items-center gap-2 border-b border-brand-muted/20 px-4 pb-2 pt-3">
+          <h2 className="min-w-0 flex-1 text-sm font-semibold text-gray-900">{label}</h2>
+          {n.discipline && <CopyReminderButton discipline={n.discipline} />}
+        </header>
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 text-xs" id="triage-detail" tabIndex={-1}>
+          <h3 className="mb-1 font-semibold uppercase tracking-wide text-gray-500">{t("issues.reminderTitle")}</h3>
+          <pre className="whitespace-pre-wrap break-words rounded border border-brand-muted/20 bg-gray-50 p-2 font-sans text-gray-800">{reminder?.text ?? t("issues.noReminder")}</pre>
+        </div>
+      </div>
+    );
   const clashes = store.selectionMembers(`n:${nodeId}`).members;
   const byPriority = new Map<number, number>();
   for (const gid of store.subtreeGroups(`n:${nodeId}`)) {

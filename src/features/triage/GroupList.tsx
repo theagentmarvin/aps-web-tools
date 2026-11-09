@@ -13,6 +13,7 @@ import { useTriageContext } from "./actions";
 import { clashChange, groupChange } from "./change";
 import { FAMILY_H, FamilyRow, NODE_H, NodeRow, indent } from "./FamilyRows";
 import { ChangeChip, RowStateIcon } from "./RowMarks";
+import { IssueRow } from "./IssueViews";
 import { useTriage, type Row, type RowKind } from "./store";
 
 const GROUP_H = 56;
@@ -30,7 +31,7 @@ export function GroupList() {
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: (i) => (rows[i]?.nested ? NESTED_H : rows[i]?.kind === "node" ? NODE_H : rows[i]?.kind === "family" ? FAMILY_H : GROUP_H),
+    estimateSize: (i) => (rows[i]?.nested ? NESTED_H : rows[i]?.kind === "node" ? NODE_H : rows[i]?.kind === "family" || rows[i]?.kind === "issue" ? FAMILY_H : GROUP_H),
     overscan: 10,
     getItemKey: (i) => rows[i]?.key ?? i,
   });
@@ -61,7 +62,7 @@ export function GroupList() {
           if (!row) return null;
           return (
             <div key={vi.key} style={{ position: "absolute", top: 0, left: 0, right: 0, height: vi.size, transform: `translateY(${vi.start}px)` }}>
-              {row.kind === "node" ? <NodeRow row={row} /> : row.kind === "family" ? <FamilyRow row={row} /> : row.nested ? <NestedClashRow row={row} /> : row.kind === "group" ? <GroupRow row={row} /> : <FlatClashRow row={row} />}
+              {row.kind === "node" ? <NodeRow row={row} /> : row.kind === "issue" ? <IssueRow row={row} /> : row.kind === "family" ? <FamilyRow row={row} /> : row.nested ? <NestedClashRow row={row} /> : row.kind === "group" ? <GroupRow row={row} /> : <FlatClashRow row={row} />}
             </div>
           );
         })}

@@ -432,6 +432,23 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
   add("POST", "/families/:familyId/detach", async ({ params, body, user }) => ui.detachInstance(params.familyId, z.strictObject({ testId: TestIdZ, groupId: GroupIdZ }).parse(body), await user()), true);
   add("POST", "/families/:familyId/confirm-inherited", async ({ params, body, user }) => ui.confirmInherited(params.familyId, z.strictObject({ testId: TestIdZ, groupIds: z.array(GroupIdZ).max(500).optional() }).parse(body), await user()), true);
 
+  // ── M3 issue checks (read-only against ACC) ─────────────────────────────
+  add("GET", "/tests/:testId/issue-checks", async ({ params }) => ui.issueChecks(params.testId));
+  add("GET", "/tests/:testId/reminders", async ({ params }) => ui.reminders(params.testId));
+  add(
+    "POST",
+    "/tests/:testId/issue-checks/:issueId/decision",
+    async ({ params, body, user }) =>
+      ui.decideIssueVerdict(
+        params.testId,
+        params.issueId,
+        z.strictObject({ decision: z.enum(["accept", "reject"]), reasonCode: z.enum(REASON_CODES).optional(), note: z.string().max(1000).optional() }).parse(body),
+        await user(),
+      ),
+    true,
+  );
+  add("GET", "/issue-checks/gate", async ({ query }) => ui.issueGate(z.string().min(1).max(80).parse(query.get("projectId")), z.string().min(1).max(80).parse(query.get("modelSetId"))));
+
   // ── X3 coordinator questions ───────────────────────────────────────────
   add("GET", "/tests/:testId/questions", async ({ params }) => ui.questionsOf(params.testId));
   add(

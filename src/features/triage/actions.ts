@@ -108,6 +108,7 @@ export function createActions(store: TriageStore, settings: Settings, t: TFuncti
   // Tree rows (families, nodes) are not decision targets: family decisions go through their own dialog.
   const cursor = () => (isDecisionKey(store.state.cursorKey) ? store.state.cursorKey : null);
   const familyAtCursor = () => (store.state.cursorKey?.startsWith("f:") ? store.state.cursorKey.slice(2) : null);
+  const issueAtCursor = () => (store.state.cursorKey?.startsWith("i:") ? store.state.cursorKey.slice(2) : null);
   const checkedKeys = () => [...store.state.checked].filter((k) => store.state.rows.some((r) => r.key === k));
   const advance = settings.autoAdvance;
 
@@ -147,6 +148,8 @@ export function createActions(store: TriageStore, settings: Settings, t: TFuncti
     accept(key = cursor() ?? undefined) {
       const fid = key ? null : familyAtCursor();
       if (fid) return store.setDialog({ type: "familyApprove", familyId: fid });
+      const iid = key ? null : issueAtCursor();
+      if (iid) return; // issue verdicts are accepted through useIssueDecision (hotkey layer / panel button)
       if (!key) return;
       const { kind, id } = parseKey(key);
       const e = store.evaluate(kind, id);
@@ -174,6 +177,8 @@ export function createActions(store: TriageStore, settings: Settings, t: TFuncti
     reject(keys) {
       const fid = keys ? null : familyAtCursor();
       if (fid) return store.setDialog({ type: "familyReject", familyId: fid });
+      const iid = keys ? null : issueAtCursor();
+      if (iid) return store.state.issueChecks.get(iid)?.decision ? undefined : store.setDialog({ type: "issueReject", issueId: iid });
       const ks = keys ?? (cursor() ? [cursor()!] : []);
       if (!ks.length) return;
       store.setDialog({ type: "reason", mode: "reject", keys: ks.slice(0, BULK_CAP), edits: {}, field: "reject" });

@@ -6,6 +6,17 @@
  *     writes are recorded locally and never sent anywhere.
  */
 import type { AccSnapshot } from "../../core/ingest/ledger";
+
+/** ACC issue fields M3 reads (never comments, never person names). */
+export interface SourceIssue {
+  id: string;
+  displayId?: number;
+  title: string;
+  status: string;
+  dueDate?: string;
+  assignedToType?: string;
+  createdAt?: string;
+}
 import type { ElementProps, ModelDocument, NormalizedClash } from "../../core/types";
 import type { ApprovedWriteToken } from "../aps/write-guard";
 import type { AssignedGroupCreate, ClashGroupJob, ClosedGroupCreate } from "../aps/types";
@@ -114,6 +125,8 @@ export interface DataSource {
    * with issueId / close reason from the model-set group lists. Read-only.
    */
   accState(projectId: string, modelSetId: string, testId: string, version: number): Promise<AccSnapshot>;
+  /** M3: ACC issues by id (Issues v1, read-only). Missing ids are simply absent. */
+  getIssues(projectId: string, issueIds: readonly string[]): Promise<SourceIssue[]>;
   /** Clash ids currently in assigned / closed groups for a test (preflight). */
   triageState(projectId: string, testId: string): Promise<{ assigned: Set<string>; closed: Set<string> }>;
   listAssignees(projectId: string): Promise<Array<{ id: string; name: string; kind: "user" | "role" | "company" }>>;
