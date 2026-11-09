@@ -188,7 +188,7 @@ Field names are documented in T:clash prose and in the `clashData` schema of R:m
 ```
 
 Semantics (T:clash, verbatim points):
-- `id` is stable across successive model set versions, so it is the key for de-duplication and history.
+- `id` is stable across successive model set versions, so it is the key for de-duplication and history. Verified on real data (2026-11-09): every one of the 5,215 v10 clash ids came back in v11 with the same element pair, even though MC renumbered every `documentId` between the two versions.
 - `loid`/`roid` are **stable object IDs**, maintained per seed-file lineage.
 - `lvid`/`rvid` are "the Viewer object identities associated with these specific versions of the document… not stable between successive seed file versions".
 - S:clashview uses `lvid`/`rvid` as `dbId` (`setThemingColor(Lvid, …, Lmodel)`), with the model resolved via `ldid → clashDocId`.

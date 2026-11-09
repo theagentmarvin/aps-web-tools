@@ -252,6 +252,14 @@ export interface ClashGroup {
   /** Dominant engine rule of the group (most member clashes). */
   ruleId: string | null;
   ruleIds: string[];
+  /**
+   * Engine review gate: true = this group must reach a human (confidence below the bar, needs_info,
+   * critical, structural opening, seguridad_personas, DEF-999, bulk closure…). Not changed by agent
+   * proposals; reviewState stays "needs_review" until a human decides. Always sent by the server.
+   */
+  humanReview?: boolean;
+  /** Spanish reasons of the gate (empty when humanReview is false). Always sent by the server. */
+  reviewReasons?: string[];
   /** Solution family (one group = one family). Absent on classifications made before families existed. */
   familyId?: string;
   problemType?: ProblemTypeCode;

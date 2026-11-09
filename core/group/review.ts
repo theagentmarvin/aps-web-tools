@@ -56,12 +56,13 @@ export function confidenceBand(policy: ReviewPolicy, validity: Validity, nature:
 export const STRUCTURAL_OPENING_TAG = "pasada_estructural";
 
 /**
- * Structural opening or embedment (tag `pasada_estructural`): closing it or
- * asking for the opening means accepting a penetration in structure, which only
- * the calculista can approve (methodology "always human"). Hard-coded on
+ * Structural opening or embedment (tag `pasada_estructural`): closing it, asking
+ * for the opening or rerouting around it means deciding about a penetration in
+ * structure, which only the calculista can approve (methodology "always human").
+ * Every group with the tag reaches a human, whatever its validity (M0: real
+ * EST-005/EST-006 beam penetrations came out auto_ok before). Hard-coded on
  * purpose: it is NOT part of ReviewPolicy and cannot be configured away.
  */
-export function isStructuralOpening(validity: Validity, rootCause: string, tags: ReadonlySet<string>): boolean {
-  const closable = validity === "false_positive" || validity === "tolerated";
-  return tags.has(STRUCTURAL_OPENING_TAG) && (closable || rootCause === "missing_opening");
+export function isStructuralOpening(_validity: Validity, _rootCause: string, tags: ReadonlySet<string>): boolean {
+  return tags.has(STRUCTURAL_OPENING_TAG);
 }

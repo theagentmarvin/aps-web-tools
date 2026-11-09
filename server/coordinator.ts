@@ -449,6 +449,7 @@ export class Coordinator {
     const existing = await this.store.getTest(testKey);
     if (existing && !input.refresh && existing.properties.status !== "pending" && (await this.cache.has(this.cacheKey(existing)))) {
       onPhase?.("clash_grid_ready", 0.3, `Prueba en caché (${existing.counts.clashes} interferencias)`, testKey);
+      await this.relinkNewer(existing, caller);
       return { ...this.ingestOutput(existing), durationMs: this.now() - t0, cached: true, timings };
     }
 
@@ -489,6 +490,9 @@ export class Coordinator {
       timings.propertiesMs = this.now() - t1;
       timings.propertyDocsFromCache = p.cachedDocuments ?? 0;
     }
+    // A version ingested out of order becomes the "previous" of the next newer cached version.
+    const relinked = await this.relinkNewer(rec, caller);
+    if (relinked.length) timings.relinked = relinked.length;
     progress?.("done", 3, 3);
     await this.store.audit({
       actor: caller.actor,
@@ -550,6 +554,31 @@ export class Coordinator {
   }
 
   /** Clash ledger diff against the previous cached version (all older recorded versions as history). */
+  /**
+   * Out-of-order ingest (an OLDER version after a newer one): every cached newer test whose nearest
+   * older cached version is now `rec` gets `previousTestKey = rec`, a ledger diff and, when it was
+   * classified, a re-classification (delta, regresion tags). Element-deleted detection needs the
+   * newer version's full element list, which is not cached: those clashes are reported as resolved.
+   */
+  private async relinkNewer(rec: TestRecord, caller: CallerContext): Promise<string[]> {
+    const same = (await this.store.listTests()).filter((t) => bareProjectId(t.projectId) === bareProjectId(rec.projectId) && t.modelSetId === rec.modelSetId && t.testKey !== rec.testKey);
+    const out: string[] = [];
+    for (const t of same.filter((x) => x.modelSetVersion > rec.modelSetVersion).sort((a, b) => a.modelSetVersion - b.modelSetVersion)) {
+      if (t.previousTestKey === rec.testKey) continue;
+      const nearest = [...same, rec].filter((x) => x.modelSetVersion < t.modelSetVersion).sort((a, b) => b.modelSetVersion - a.modelSetVersion)[0];
+      if (nearest?.testKey !== rec.testKey) continue;
+      const raw = await this.loadRaw(t).catch(() => undefined);
+      if (!raw) continue;
+      const updated: TestRecord = { ...t, previousTestKey: rec.testKey };
+      await this.store.putTest(updated);
+      await this.recordLedgerDiff(updated, rec, raw.clashes);
+      if (await this.store.getClassification(t.testKey)) await this.classify({ testKey: t.testKey }, caller);
+      await this.store.audit({ actor: caller.actor, action: "test.relinked", projectId: t.projectId, modelSetId: t.modelSetId, testId: t.testKey, targetIds: [t.testKey, rec.testKey], details: { version: t.modelSetVersion, previousVersion: rec.modelSetVersion } });
+      out.push(t.testKey);
+    }
+    return out;
+  }
+
   private async recordLedgerDiff(rec: TestRecord, previous: TestRecord | undefined, clashes: readonly NormalizedClash[], allElementKeys?: string[]): Promise<void> {
     if (!previous) return;
     const prevRaw = await this.loadRaw(previous).catch(() => undefined);
@@ -847,6 +876,9 @@ export class Coordinator {
 
   reviewStateOf(g: GroupRecord, props: ProposalRecord[] | undefined, decided: boolean): ReviewState {
     if (decided) return "decided";
+    // A group the engine sends to a human stays "needs_review" until a HUMAN decides: an agent
+    // proposal does not satisfy the gate (M0 invariant; the UI filter "Requiere revisión" reads it).
+    if (g.reviewState === "needs_review") return "needs_review";
     if (props?.some((p) => p.createdBy.type === "agent" && PENDING_STATES.includes(p.state))) return "proposed";
     return g.reviewState;
   }

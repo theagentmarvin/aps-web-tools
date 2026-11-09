@@ -273,6 +273,11 @@ describe("> 1,000 clashes in one family", () => {
       const sizes = items.map((i) => (i.accNew as { clashes: number[] }).clashes.length);
       expect(sizes).toEqual([1000, 104]);
       expect(items.map((i) => i.label)).toEqual([expect.stringMatching(/\(1\/2\)$/), expect.stringMatching(/\(2\/2\)$/)]);
+      for (const i of items) {
+        const title = (i.accNew as { title: string }).title;
+        expect(title).toMatch(/\([12]\/2\)$/);
+        expect(title.length).toBeLessThanOrEqual(100);
+      }
     } finally {
       t.cleanup();
     }
@@ -295,5 +300,16 @@ describe("clash fact sameOriginFile (FP-006 by origin file)", () => {
     const f = (id: string) => res.classified.find((c) => c.mcClashIds.includes(id))!.facts;
     expect(f("1")).toMatchObject({ sameOriginFile: true, sameModelFile: false });
     expect(f("2")).toMatchObject({ sameOriginFile: false, sameModelFile: false });
+  });
+});
+
+describe("ACC issue title limits", () => {
+  it("fitTitle keeps the chunk suffix and stays ≤ 100 characters", async () => {
+    const { fitTitle } = await import("../../server/coordinator-ui");
+    const base = "[F-0123456789] Tuberías gravitacionales ALC-servidas Ø41–105 cruzan sin pasada losas 3\" LW Concrete on 2\" Metal Deck · pasada en losa";
+    const t = fitTitle(base, " (2/2)", 100);
+    expect(t.length).toBeLessThanOrEqual(100);
+    expect(t.endsWith("… (2/2)")).toBe(true);
+    expect(fitTitle("corto", " (1/2)", 100)).toBe("corto (1/2)");
   });
 });

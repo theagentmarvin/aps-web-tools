@@ -315,6 +315,8 @@ export class CoordinatorUi {
       reviewState: state,
       ruleId: g.ruleIds[0] ?? null,
       ruleIds: g.ruleIds,
+      humanReview: g.reviewState === "needs_review",
+      reviewReasons: g.reviewReasons,
       ...(g.familyId ? { familyId: g.familyId, problemType: g.problemType as C.ProblemTypeCode, signature: g.signature ?? "", uniqueClashCount: g.uniqueClashCount ?? g.clashIds.length } : {}),
       ...(g.hostLevelLabel ? { hostLevelLabel: g.hostLevelLabel } : {}),
     };
@@ -684,7 +686,7 @@ export class CoordinatorUi {
         const subId = issue.issueSubtype && /^[0-9a-f-]{36}$/i.test(issue.issueSubtype) ? issue.issueSubtype : this.core.config.issues.issueSubtypeId ?? (this.core.source.kind === "fixtures" ? "00000000-0000-4000-a000-00000000f1a8" : undefined);
         const body: AssignedGroupCreate = {
           id: uuidFromHash(sha256(`${batchId}|${g.id}|${ci}|assign`)),
-          title: (issue.title + suffix).slice(0, 100),
+          title: fitTitle(issue.title, suffix, 100),
           description: issue.description.slice(0, 1000),
           ...(issue.assigneeId ? { assignedTo: issue.assigneeId, assignedToType: (issue.assigneeType === "company" ? "Company" : issue.assigneeType === "role" ? "Role" : "User") as "User" | "Role" | "Company" } : {}),
           dueDate: issue.dueDate,
@@ -1844,7 +1846,7 @@ export class CoordinatorUi {
           if (issue) {
             const description = familyIssueDescription(v, dec, u.instances.filter((i) => groupIds.includes(i.groupId)));
             const worst = groupIds.map((g) => gById.get(g)).filter((g): g is GroupRecord => !!g).sort((a, b) => a.band - b.band || b.maxPenetrationMm - a.maxPenetrationMm)[0];
-            const { body, conflict } = this.assignBody(seed, test, chunk, { title: `${u.label}${suffix}`, description, dueDate: due }, worst?.representativeClashId);
+            const { body, conflict } = this.assignBody(seed, test, chunk, { title: fitTitle(u.label, suffix, 100), description, dueDate: due }, worst?.representativeClashId);
             items.push({
               ...common,
               id,
@@ -1994,6 +1996,18 @@ export class CoordinatorUi {
     await this.core.reclassifyCached({ projectId: withB(projectId), ...(pl.modelSetId ? { modelSetId: pl.modelSetId } : {}) }, { actor: { type: "user", id: user.id, name: user.name } });
     return this.disciplineConfig(projectId);
   }
+}
+
+/**
+ * ACC issue title ≤ max characters that never loses the chunk suffix " (k/n)" / "#k":
+ * the base is cut on a word boundary with an ellipsis.
+ */
+export function fitTitle(base: string, suffix: string, max: number): string {
+  if (base.length + suffix.length <= max) return base + suffix;
+  const room = Math.max(1, max - suffix.length - 1);
+  const cut = base.slice(0, room);
+  const sp = cut.lastIndexOf(" ");
+  return `${(sp > room * 0.6 ? cut.slice(0, sp) : cut).trimEnd()}…${suffix}`;
 }
 
 export { AGENT_ACTOR };

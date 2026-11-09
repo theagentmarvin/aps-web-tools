@@ -129,7 +129,10 @@ Weekly cadence (typical in Chile; adjust in `project.yaml`):
 | D+1 | Approved issues published to ACC and assigned. |
 
 Clash memory (critical for not re-reviewing):
-- **Identity key:** `sortedPair(externalIdL, externalIdR)`. Fall back to `modelFile:dbId` only if the UniqueId is missing. MC clash IDs are not stable across model-set versions, so never use them as identity.
+- **Identity key (corrected 2026-11-09, M0/D5):** the MC clash `id` first, then `sortedPair(externalIdL, externalIdR)` as the fallback for clashes whose id did not match (for example a document replaced in the model set, which gives a new lineage and new clash ids). Without a UniqueId the side token is `<lineageUrn>:<objectId>` (`loid`/`roid`, stable per seed-file lineage), never the viewer `dbId`, which changes between seed versions.
+  - The earlier text said MC clash ids are not stable and must never be used as identity. That was wrong. `docs/research/aps-model-coordination-api.md` §3.2 is right: the API documents `id` as stable across successive model set versions.
+  - Measured on the real model set (v10 → v11): all 5,215 v10 ids reappear in v11 with the same element pair. 0 ids were reused for a different pair. 0 clashes matched by element pair but not by id. This held even though MC renumbered every `documentId` between versions; the lineages did not change.
+  - The element pair is not unique within a version. The same model loaded twice, or a linked copy, gives several MC clashes per pair: 5,549 clashes but only 2,619 pairs in v11. So the pair cannot be the primary key of an MC clash. It identifies the physical conflict, which is what counts and families use.
 - **New** = key not seen before.
 - **Persisting** = key seen. Inherit the previous decision if:
   - the previous decision was non-issue or tolerated; and

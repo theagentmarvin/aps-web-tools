@@ -115,11 +115,11 @@ describe("structural-opening review trigger (hard-coded)", () => {
     expect(g.reviewReasons).toEqual(["pasada en estructura (requiere calculista)"]);
   });
 
-  it("isStructuralOpening: closures and missing openings with the tag", () => {
+  it("isStructuralOpening: every group with the tag, whatever the validity (M0 invariant)", () => {
     const t = new Set(["pasada_estructural"]);
     expect(isStructuralOpening("tolerated", "not_applicable", t)).toBe(true);
     expect(isStructuralOpening("real", "missing_opening", t)).toBe(true);
-    expect(isStructuralOpening("real", "routing_conflict", t)).toBe(false);
+    expect(isStructuralOpening("real", "routing_conflict", t)).toBe(true);
     expect(isStructuralOpening("tolerated", "not_applicable", new Set())).toBe(false);
   });
 

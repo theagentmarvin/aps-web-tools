@@ -149,3 +149,77 @@ describe("UI e2e regressions", () => {
     expect(JSON.parse(body).error).toBe("aps_not_configured");
   });
 });
+
+describe("M0 baseline: ledger through the server path", () => {
+  it("out-of-order ingest (v42 first, then v41) relinks v42 to v41 and still yields the 13 reappeared clashes", async () => {
+    const truth = JSON.parse(readFileSync(join(ROOT, "tests", "fixtures", "fixture-truth.json"), "utf8")) as { expectedDiff: Record<string, string[]> };
+    const expected = [...truth.expectedDiff.reappeared!].sort();
+    const k42 = await ingest(coord, 42);
+    expect((await coord.loadTest(k42)).test.previousTestKey).toBeUndefined();
+    const k41 = await ingest(coord, 41);
+    const t42 = (await coord.loadTest(k42)).test;
+    expect(t42.previousTestKey).toBe(k41);
+    const diff = (await coord.diffForTest(t42))!;
+    expect([...diff.reappeared].sort()).toEqual(expected);
+    expect([...diff.new].sort()).toEqual([...truth.expectedDiff.new!].sort());
+    const ledger = (await coord.ledger.load("b.demo-proyecto", MODEL_SET_ID))!;
+    expect(ledger.versions).toEqual([40, 41, 42]);
+    // v42 was re-classified after the relink: regresion tags and delta chips are there.
+    const { cls } = await coord.requireClassified(k42);
+    const tagged = cls.clashes.filter((c) => (c.tags ?? []).includes("regresion")).map((c) => c.id).sort();
+    expect(tagged.length).toBeGreaterThan(0);
+    expect(tagged.every((id) => expected.includes(id))).toBe(true);
+    expect(cls.clashes.some((c) => c.delta === "persisting")).toBe(true);
+  });
+});
+
+describe("M0 baseline: TOL-008 never tolerates a wall of unknown fire rating", () => {
+  it("every real_pipe_wall clash of v41 and v42 stays real; TOL-008 never fires without a declared rating", async () => {
+    const truth = JSON.parse(readFileSync(join(ROOT, "tests", "fixtures", "fixture-truth.json"), "utf8")) as { patterns: Record<string, string> };
+    for (const v of [41, 42] as const) {
+      const key = await ingest(coord, v);
+      const { cls } = await coord.requireClassified(key);
+      const walls = cls.clashes.filter((c) => truth.patterns[c.id] === "real_pipe_wall");
+      expect(walls.length).toBeGreaterThan(0);
+      expect(walls.filter((c) => c.validity !== "real").map((c) => `${c.id}:${c.ruleId}`)).toEqual([]);
+      expect(cls.clashes.filter((c) => c.ruleId === "TOL-008")).toEqual([]);
+    }
+  });
+});
+
+describe("M0 baseline: the human-review invariant end to end", () => {
+  it("confidence < 0.70, needs_info, critical, structural openings, seguridad_personas and DEF-999 always reach a human (engine → payload → filter)", async () => {
+    const key = await ingest(coord, 42);
+    const { cls } = await coord.requireClassified(key);
+    const byId = new Map(cls.clashes.map((c) => [c.id, c]));
+    const must = (g: (typeof cls.groups)[number]) =>
+      g.confidence < 0.7 ||
+      g.clashIds.some((id) => (byId.get(id)?.confidence ?? 1) < 0.7) ||
+      g.validity === "needs_info" ||
+      g.severity === "critical" ||
+      g.tags.includes("pasada_estructural") ||
+      g.tags.includes("seguridad_personas") ||
+      g.ruleIds.includes("DEF-999");
+    const required = cls.groups.filter(must);
+    expect(required.length).toBeGreaterThan(10);
+    expect(required.filter((g) => g.reviewState !== "needs_review").map((g) => `${g.id} ${g.ruleIds.join(",")} ${g.tags.join(",")}`)).toEqual([]);
+
+    // An agent proposal does not take a group out of "Requiere revisión": only a human decision does.
+    const g0 = required.find((g) => g.validity === "real")!;
+    await coord.proposeClassification({ testKey: key, target: { groupId: g0.id }, validity: "real", disagreesWithEngine: false, rationale: "Confirmo: interferencia real.", evidence: [], confidence: "alta" });
+    const tri = await ui.triage("demo-proyecto", MODEL_SET_ID, key);
+    const p = tri.groups.find((g) => g.id === g0.id)!;
+    expect(p.humanReview).toBe(true);
+    expect(p.reviewState).toBe("needs_review");
+    expect(p.reviewReasons!.length).toBeGreaterThan(0);
+    // payload ↔ engine: same set, the UI filter (reviewState === needs_review) sees every required group
+    const flagged = new Set(tri.groups.filter((g) => g.reviewState === "needs_review").map((g) => g.id));
+    for (const g of required) expect(flagged.has(g.id)).toBe(true);
+    expect(tri.groups.filter((g) => g.humanReview).length).toBe(cls.groups.filter((g) => g.reviewState === "needs_review").length);
+    // after a human decision the group leaves the queue
+    await acceptGroups(ui, key, [g0.id]);
+    const after = await ui.triage("demo-proyecto", MODEL_SET_ID, key);
+    expect(after.groups.find((g) => g.id === g0.id)!.reviewState).toBe("decided");
+    expect(after.groups.find((g) => g.id === g0.id)!.humanReview).toBe(true);
+  });
+});

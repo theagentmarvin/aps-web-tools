@@ -442,7 +442,8 @@ function buildGroup(rs: CompiledRuleSet, d: Draft, policy: ReviewPolicy, options
   }
   const closable = first.validity === "false_positive" || first.validity === "tolerated";
   if (closable && ms.length > policy.bulkClosureMax) reasons.push(`cierre masivo de ${ms.length} interferencias (> ${policy.bulkClosureMax})`);
-  if (closable && tags.has("seguridad_personas")) reasons.push("cierre de grupo con seguridad_personas");
+  // Life safety always reaches a human (M0 invariant), not only when closing.
+  if (tags.has("seguridad_personas")) reasons.push(closable ? "cierre de grupo con seguridad_personas" : "seguridad de las personas");
   // Hard-coded, not configurable: only the calculista approves an opening in structure.
   if (isStructuralOpening(first.validity, rootCause, tags)) reasons.push("pasada en estructura (requiere calculista)");
   for (const r of new Set(cls.flatMap((c) => c.humanReviewReasons))) {
