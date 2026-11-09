@@ -1,6 +1,6 @@
 # Five core features — simplified plan (recommendation)
 
-Owner: orchestrator. Status: **proposal for the product owner's approval**, 2026-11-09.
+Owner: orchestrator. Status: **approved by the product owner, 2026-11-09** (decisions in §7).
 Refines [`PLAN-core-features.md`](PLAN-core-features.md) (the brief). Where this document is silent, the brief applies.
 Sources: [`docs/ux/core-features-ux-analysis.md`](ux/core-features-ux-analysis.md), [`docs/ai/core-features-agent-analysis.md`](ai/core-features-agent-analysis.md), [`docs/domain/core-features-bim-analysis.md`](domain/core-features-bim-analysis.md).
 
@@ -76,9 +76,9 @@ Each milestone: typecheck, tests, eval (0 unsafe closures), MCP smoke, a BIM rev
 
 **Expected value** (BIM estimate, typical SalfaCorp building, not measured): F1 3–4 h + F2 2.5–3.5 h + F4 2–3 h + F5 0.5–1 h per weekly cycle; F1 + F2 ≈ 70 % of it. Clicks per cycle ≈ 25 → 12; screens 4 (+3 outside tools) → 2.
 
-## 7. Decisions needed from the owner
+## 7. Owner decisions (2026-11-09)
 
-1. Approve "three lenses, no new pages" as the UI approach.
-2. **X2 timing:** keep F2 read-only until the 2-cycle evidence gate (recommended), or build the ACC status write now as the brief's D3 says.
-3. Confirm the pilot scope cut in §5.
-4. O-7: confirm with the BIM lead that sending model data (and later ACC comments) to Claude is covered by the *Procedimiento Acceso Herramientas IA*.
+1. **Approved:** three lenses on the existing coordinación workspace, no new pages.
+2. **Approved:** F2 read-only first; the X2 ACC status write is built in M5 after 2 real cycles with ≥ 90 % of "Resuelta" verdicts accepted unchanged. This supersedes the brief's D3 timing.
+3. **Approved:** all pilot scope cuts in §5.
+4. **Open:** O-7 governance confirmation with the BIM lead (*Procedimiento Acceso Herramientas IA*).
