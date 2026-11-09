@@ -77,6 +77,8 @@ export interface PollOptions {
   timeoutMs?: number;
   /** Used when the API gives no `retryAt`. */
   defaultIntervalMs?: number;
+  /** Upper bound for one wait, even if `retryAt` is later (default 30 s). */
+  maxIntervalMs?: number;
   now?: () => number;
 }
 
@@ -84,10 +86,10 @@ function isTerminal(state: string): boolean {
   return state === "FINISHED" || state === "FAILED";
 }
 
-function nextDelay(retryAt: string | undefined, now: number, fallback: number): number {
+function nextDelay(retryAt: string | undefined, now: number, fallback: number, max = 30_000): number {
   const t = retryAt ? Date.parse(retryAt) : NaN;
   const d = Number.isFinite(t) ? t - now : fallback;
-  return Math.min(30_000, Math.max(1000, d));
+  return Math.min(max, Math.max(Math.min(1000, max), d));
 }
 
 async function poll<T extends { state: string; retryAt?: string }>(
@@ -104,7 +106,7 @@ async function poll<T extends { state: string; retryAt?: string }>(
   // research §4: the tutorial shows "RUNNING" too; any non-terminal state is pending.
   while (!isTerminal(cur.state)) {
     if (now() >= deadline) throw new ApsError({ code: "timeout", detail: `${what} sigue en ${cur.state}` });
-    await sleep(nextDelay(cur.retryAt, now(), opts.defaultIntervalMs ?? 2000));
+    await sleep(nextDelay(cur.retryAt, now(), opts.defaultIntervalMs ?? 2000, opts.maxIntervalMs));
     cur = await refresh();
   }
   if (cur.state === "FAILED") throw new ApsError({ code: "job_failed", detail: `${what} FAILED` });

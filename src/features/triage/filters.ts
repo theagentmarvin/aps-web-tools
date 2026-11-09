@@ -24,6 +24,8 @@ export interface ListQuery {
   sort: SortKey;
   q: string;
   view: ViewMode;
+  /** Document pair "a,b" (from the clash grid): only clashes between those two models. Filtered client-side. */
+  docs?: string;
 }
 
 export const DEFAULT_FILTERS: Filters = { decision: ["pendiente"] };
@@ -116,6 +118,7 @@ export function parseQuery(sp: URLSearchParams): ListQuery {
     sort: sortRaw && (SORT_KEYS as readonly string[]).includes(sortRaw) ? sortRaw : "priority",
     q: sp.get("q") ?? "",
     view: sp.get("view") === "clashes" ? "clashes" : "groups",
+    ...(sp.get("docs") ? { docs: sp.get("docs")! } : {}),
   };
 }
 
@@ -132,13 +135,14 @@ export function writeQuery(sp: URLSearchParams, q: ListQuery): URLSearchParams {
   q.sort === "priority" ? sp.delete("sort") : sp.set("sort", q.sort);
   q.q ? sp.set("q", q.q) : sp.delete("q");
   q.view === "groups" ? sp.delete("view") : sp.set("view", q.view);
+  q.docs ? sp.set("docs", q.docs) : sp.delete("docs");
   return sp;
 }
 
 export function isDefaultQuery(q: ListQuery): boolean {
   const active = FILTER_KEYS.filter((k) => q.filters[k] !== undefined);
   const onlyDefault = active.length === 1 && active[0] === "decision" && q.filters.decision?.length === 1 && q.filters.decision[0] === "pendiente";
-  return onlyDefault && !q.q;
+  return onlyDefault && !q.q && !q.docs;
 }
 
 // ── Facts ──────────────────────────────────────────────────────────
@@ -167,6 +171,8 @@ export interface StaticFacts {
   level: string;
   deltaRank: number;
   nature?: Nature;
+  /** Unordered document pairs "min:max" of the member clashes. */
+  docPairs: string[];
 }
 
 const DELTA_RANK: Record<Delta, number> = { new: 0, reappeared: 1, modified: 2, persisting: 3, resolved: 4 };
@@ -196,6 +202,7 @@ export function groupFacts(g: ClashGroup, members: Clash[], p: Proposal | undefi
     search: [g.id, g.title, ...names, ...g.clashIds, ...(p?.ruleIds ?? []), p?.issueDraft?.title ?? ""].join(" ").toLowerCase(),
     deltaRank: DELTA_RANK[g.delta],
     nature: g.nature,
+    docPairs: [...new Set(members.map(docPair))],
   };
 }
 
@@ -219,6 +226,7 @@ export function clashFacts(c: Clash, g: ClashGroup | undefined, p: Proposal | un
     search: [c.id, c.a.name, c.b.name, c.a.dbId, c.b.dbId, g?.title ?? ""].join(" ").toLowerCase(),
     deltaRank: DELTA_RANK[c.delta],
     nature: c.nature,
+    docPairs: [docPair(c)],
   };
 }
 
@@ -276,7 +284,21 @@ export interface Evaluated {
   values: Record<FilterKey, string[]>;
 }
 
+export function docPair(c: Clash): string {
+  const a = c.a.documentId;
+  const b = c.b.documentId;
+  return a <= b ? `${a}:${b}` : `${b}:${a}`;
+}
+
+/** "3,1" → "1:3" */
+export function docsKey(docs: string): string {
+  const [a, b] = docs.split(",").map(Number);
+  const x = b === undefined || Number.isNaN(b) ? a : b;
+  return a <= x ? `${a}:${x}` : `${x}:${a}`;
+}
+
 export function passes(e: Evaluated, q: ListQuery): boolean {
+  if (q.docs && !e.s.docPairs.includes(docsKey(q.docs))) return false;
   if (q.q && !e.s.search.includes(q.q.toLowerCase())) return false;
   return matches(e.values, q.filters);
 }
@@ -284,6 +306,7 @@ export function passes(e: Evaluated, q: ListQuery): boolean {
 export function facetCounts(items: Evaluated[], q: ListQuery, key: FilterKey): Map<string, number> {
   const out = new Map<string, number>();
   for (const e of items) {
+    if (q.docs && !e.s.docPairs.includes(docsKey(q.docs))) continue;
     if (q.q && !e.s.search.includes(q.q.toLowerCase())) continue;
     if (!matches(e.values, q.filters, key)) continue;
     for (const v of e.values[key]) out.set(v, (out.get(v) ?? 0) + 1);

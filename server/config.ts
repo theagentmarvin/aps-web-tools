@@ -60,6 +60,12 @@ export const ConfigSchema = z.object({
       qaSampleRate: z.number().min(0).max(1).default(0.05),
     })
     .prefault({}),
+  disciplines: z
+    .object({
+      /** "off" (default): no discipline from file names; "matrix": rules/discipline-matrix.yaml patterns. */
+      fileNameDetection: z.enum(["off", "matrix"]).default("off"),
+    })
+    .prefault({}),
   /** Project level overrides: model level name → canonical level (CoordinationOptions.levelMap). */
   levelMap: z.record(z.string(), z.string()).default({}),
   /** Per discipline-pair tolerance overrides in mm, e.g. {"CLI×EST": {"hardMm": 10}}. Passed to the engine. */

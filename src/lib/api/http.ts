@@ -14,6 +14,14 @@
  *   GET    /api/coord/webauthn/approve-options?batch=&exclude= (H) → ApproveOptionsResponse
  *   GET    /api/coord/webauthn/register-options (H)             → RegisterOptionsResponse
  *   POST   /api/coord/webauthn/register (H) RegisterRequest     → {credentialId,label,enrolledVia}
+ *   GET    /api/coord/projects/:p/model-sets/:m/clash-grid?test= → ClashGrid
+ *   GET    /api/coord/ingest-jobs/:jobId                         → IngestJob
+ *   PUT    /api/coord/projects/:p/model-sets/:m/documents/:lineageUrnB64/discipline?test= (H) {discipline, createRule?} → ClashGrid | {jobId}
+ *   GET    /api/coord/projects/:p/model-sets/:m/views            → ModelSetView[]
+ *   GET    /api/coord/projects/:p/disciplines                    → DisciplineConfig
+ *   POST   /api/coord/projects/:p/disciplines/preview (H) {modelSetId?, rules: DisciplineRuleInput[]} → DisciplinePreview
+ *   PUT    /api/coord/projects/:p/disciplines/rules (H) {rules: DisciplineRuleInput[], version?} → (any; the UI refetches)
+ *   POST   /api/coord/projects/:p/disciplines/proposals/:id/decision (H) {decision} → (any)   [assumed; not in the contract yet]
  *   POST   /api/coord/batches/:batchId/apply (H) {dryRun?=true}  → ApplyResponse
  *   (H) = human-only: X-Coord-CSRF header + same origin. The client sends the header on every non-GET call.
  *   Types: server/api/contract.ts. Full table: docs/api.md.
@@ -77,6 +85,14 @@ function qs(params?: Query): string {
 }
 
 const enc = encodeURIComponent;
+
+/** base64url without padding (UTF-8), for lineage URNs in paths. */
+export function base64url(s: string): string {
+  const bytes = new TextEncoder().encode(s);
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
 
 /**
  * Model-derived text can arrive wrapped as `{untrusted, flagged?}` (MCP
@@ -182,8 +198,37 @@ export class HttpCoordinatorApi implements CoordinatorApi {
     return this.get<T.TestRun[]>(`/projects/${enc(projectId)}/model-sets/${enc(modelSetId)}/tests`);
   }
 
+  async getTestsOverview(projectId: string, modelSetId: string): Promise<T.TestsOverview> {
+    const base = `/projects/${enc(projectId)}/model-sets/${enc(modelSetId)}`;
+    const [r, views] = await Promise.all([
+      this.get<T.TestRunInfo[] | Partial<T.TestsOverview>>(`${base}/tests`),
+      // Views are optional until the server exposes them.
+      this.get<T.ModelSetView[]>(`${base}/views`).catch(() => [] as T.ModelSetView[]),
+    ]);
+    // Accept both the plain array and { tests, views }.
+    return Array.isArray(r) ? { tests: r, views } : { tests: r.tests ?? [], views: r.views ?? views };
+  }
+  getIngestJob(jobId: string) { return this.get<T.IngestJob>(`/ingest-jobs/${enc(jobId)}`); }
+  getClashGrid(projectId: string, modelSetId: string, test?: string) {
+    return this.get<T.ClashGrid>(`/projects/${enc(projectId)}/model-sets/${enc(modelSetId)}/clash-grid`, { test });
+  }
+  setDocumentDiscipline(projectId: string, modelSetId: string, lineageUrn: string, body: T.SetDisciplineRequest, test?: string) {
+    return this.req<T.SetDisciplineResult>("PUT", `/projects/${enc(projectId)}/model-sets/${enc(modelSetId)}/documents/${enc(base64url(lineageUrn))}/discipline${qs({ test })}`, body);
+  }
+  getProjectDisciplines(projectId: string) {
+    return this.get<T.DisciplineConfig>(`/projects/${enc(projectId)}/disciplines`);
+  }
+  previewDisciplineRules(projectId: string, body: { modelSetId?: string; rules: T.DisciplineRuleInput[] }) {
+    return this.req<T.DisciplinePreview>("POST", `/projects/${enc(projectId)}/disciplines/preview`, body);
+  }
+  saveDisciplineRules(projectId: string, rules: T.DisciplineRuleInput[], version?: number) {
+    return this.req<unknown>("PUT", `/projects/${enc(projectId)}/disciplines/rules`, { rules, ...(version !== undefined ? { version } : {}) });
+  }
+  decideDisciplineSuggestion(projectId: string, id: string, decision: "approve" | "reject") {
+    return this.req<unknown>("POST", `/projects/${enc(projectId)}/disciplines/proposals/${enc(id)}/decision`, { decision });
+  }
   ingestTest(projectId: string, modelSetId: string, accTestId: string, opts?: { refresh?: boolean }) {
-    return this.req<{ testKey: string }>("POST", `/projects/${enc(projectId)}/model-sets/${enc(modelSetId)}/tests/${enc(accTestId)}/ingest`, { refresh: opts?.refresh ?? false, classify: true });
+    return this.req<T.IngestStart>("POST", `/projects/${enc(projectId)}/model-sets/${enc(modelSetId)}/tests/${enc(accTestId)}/ingest`, { refresh: opts?.refresh ?? false, classify: true });
   }
 
   getTriage(projectId: string, modelSetId: string, testId?: string) {

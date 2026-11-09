@@ -34,6 +34,15 @@ export interface CoordinationOptions {
   levelMap?: Readonly<Record<string, string>>;
   /** Orientation override per element (e.g. from viewer fragments). */
   orientation?: (documentId: number, viewerDbId: number) => ElementInput["orientation"] | undefined;
+  /**
+   * Model discipline per clash document decided by the caller (project mapping).
+   * Return a code to force it, `null` for "none" (no file-name detection), or
+   * `undefined` to keep the default file-name detection. Omit the option to keep
+   * the default for every document.
+   */
+  modelDiscipline?: (documentId: number) => string | null | undefined;
+  /** See ElementInput.strictCategoryDiscipline. */
+  strictCategoryDiscipline?: boolean;
   score?: ScoreOptions;
   grouping?: Omit<GroupingOptions, "reviewPolicy">;
   review?: ReviewPolicy;
@@ -163,6 +172,8 @@ export function runCoordination(input: CoordinationInput): CoordinationResult {
       ...(props?.documentName ?? doc?.displayName ? { documentName: props?.documentName ?? doc?.displayName } : {}),
       ...(age !== undefined ? { modelAgeDays: age } : {}),
       ...(orientation ? { orientation } : {}),
+      ...(opts.modelDiscipline && opts.modelDiscipline(s.documentId) !== undefined ? { modelDisciplineOverride: opts.modelDiscipline(s.documentId) } : {}),
+      ...(opts.strictCategoryDiscipline ? { strictCategoryDiscipline: true } : {}),
     };
     el = enrichElement(rs, elInput);
     el.elementKey = sideToken(s);

@@ -467,13 +467,13 @@ export interface ProposalCreatedOutput {
   batchId?: string;                    // open draft batch (lote) the proposal was added to
   reviewUrl: string;                   // web UI deep link, e.g. http://localhost:5173/aprobaciones/L-2026-11-05-01
 }
-export type ProposalKind = "classification" | "group_action" | "issue_draft" | "status_change" | "rule_change";
+export type ProposalKind = "classification" | "group_action" | "issue_draft" | "status_change" | "rule_change" | "discipline_mapping";
 export type ProposalStatus = "draft" | "pending_review" | "approved" | "rejected" | "withdrawn" | "applied" | "failed";
 
 export const ListProposalsInput = z.object({
   testKey: TestKey.optional(),
   status: z.array(z.enum(["draft", "pending_review", "pending", "approved", "rejected", "withdrawn", "superseded", "applying", "applied", "failed"])).optional(),
-  kind: z.array(z.enum(["classification", "group_action", "issue_draft", "issue", "status_change", "rule_change"])).optional(),
+  kind: z.array(z.enum(["classification", "group_action", "issue_draft", "issue", "status_change", "rule_change", "discipline_mapping"])).optional(),
   ids: z.array(ProposalId).max(50).optional(),
   createdBy: z.enum(["agent", "coordinator", "any"]).default("any"),
   limit: Limit(25, 50),
@@ -553,6 +553,20 @@ export const ProposeRuleChangeInput = z.object({
   scope: z.enum(["project", "company"]),
 });
 // output: ProposalCreatedOutput with kind "rule_change"; patch saved to .coordinator/rule-proposals/<id>.patch
+
+/** Read-only: project discipline mappings + how each document of the test resolved (source/share/rule). */
+export const ListDisciplinesInput = z.object({ testKey: TestKey.optional() });
+/** PROPOSAL only — a human confirms it in the UI; the agent never sets mappings. */
+export const ProposeDisciplineMappingInput = z.object({
+  testKey: TestKey.optional(),
+  documentId: z.number().int().nonnegative().optional().describe("Assign this document (by its documentId in the test)"),
+  discipline: z.string().min(2).max(6).describe("Discipline code from list_disciplines.codes (e.g. CLI, EST, ARQ)"),
+  rule: z
+    .object({ match: z.enum(["contains", "startsWith", "regex"]), value: z.string().min(1).max(200), field: z.enum(["fileName", "folder", "viewName"]) })
+    .optional()
+    .describe("Optional naming rule for future documents (case/accent-insensitive)"),
+  rationale: z.string().max(1500),
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 7. Reports
@@ -664,6 +678,10 @@ export const TOOLS: ToolSpec[] = [
     description: "Run the EV scenarios, fixture checks and feedback replay for current rules or a candidate patch; returns metric deltas and regressions." },
   { family: "learning", name: "propose_rule_change", title: "Propose rule change", minLevel: 1, annotations: LOCAL_WRITE, input: ProposeRuleChangeInput,
     description: "Store a rules/ patch as a rule_change proposal. Never edits rules/; a human merges." },
+  { family: "learning", name: "list_disciplines", title: "List discipline mappings", minLevel: 0, annotations: RO_LOCAL, input: ListDisciplinesInput,
+    description: "Project discipline mappings (assignments, ordered naming rules, codes) and per-document resolution of a cached test (source: assignment|rule|matrix|elements|unassigned, share, ruleId). SIN = Sin asignar." },
+  { family: "learning", name: "propose_discipline_mapping", title: "Propose discipline mapping", minLevel: 1, annotations: LOCAL_WRITE, input: ProposeDisciplineMappingInput,
+    description: "Suggest a document→discipline assignment and/or a naming rule as a proposal. Never changes mappings: a human confirms it in the web UI." },
   { family: "report", name: "generate_report", title: "Generate report", minLevel: 0, annotations: { ...RO_LOCAL, readOnlyHint: false }, input: GenerateReportInput,
     description: "Render a report file from cached data; numbers come from the server, the agent supplies only the narrative." },
   { family: "apply", name: "apply_approved_proposals", title: "Apply an approved batch to ACC", minLevel: 1, annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true }, input: ApplyApprovedProposalsInput,

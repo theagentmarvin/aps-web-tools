@@ -96,8 +96,16 @@ The approver identity is the APS profile in live mode, else `approver.name` from
 | GET | `/projects?hubId&q` | – | `ProjectSummary[]` |
 | GET | `/projects/:projectId` | – | `ProjectSummary` |
 | GET | `/projects/:projectId/model-sets` | – | `ModelSetSummary[]` |
-| GET | `/projects/:projectId/model-sets/:modelSetId/tests` | – | `TestRun[]` (cached tests by test key, plus uncached ACC tests with `cached:false`) |
-| POST H | `/projects/:projectId/model-sets/:modelSetId/tests/:accTestId/ingest` | `{refresh?, classify?}` | `{testKey}` |
+| GET | `/projects/:projectId/model-sets/:modelSetId/tests` | – | `TestRun[]` (cached tests by test key with `state`, `documentCount` and ledger `delta{new,resolved,persisting}`, plus uncached ACC tests with `cached:false`, `state:"none"`; no ACC call per test) |
+| POST H | `/projects/:projectId/model-sets/:modelSetId/tests/:accTestId/ingest` | `{refresh?, classify?, wait?}` | `IngestJob` (returned at once; `wait:true` = old synchronous `{testKey}`) |
+| GET | `/ingest-jobs/:jobId` | – | `IngestJob` `{jobId, phase: downloading|clash_grid_ready|properties|classifying|done|failed, progress 0..1, message (es), testKey?, error?, timings}`. In memory: lost on restart (404). |
+| GET | `/projects/:projectId/model-sets/:modelSetId/clash-grid?test=<testKey|accTestId>` | – | `ClashGrid` (`state: none|counts|classified`; cells are unordered pairs `a<=b`; groups/real/p1/needsReview are 0 until classified; `newSinceLast` from the ledger). A physical interference published twice (linked model inside another model) appears in more than one cell. |
+| GET | `/projects/:projectId/model-sets/:modelSetId/views` | – | `ModelSetView[]` `{name, documents: fileName[]}` |
+| GET | `/projects/:projectId/disciplines` | – | `DisciplineConfig` `{version, assignments, rules, codes (incl. SIN "Sin asignar"), fileNameDetection, pendingProposals}` |
+| PUT H | `/projects/:projectId/model-sets/:modelSetId/documents/:lineageUrnB64/discipline?test=` | `{discipline, createRule?: {match, value, field}}` (path segment = base64url of the lineage URN; `UNK` accepted as `SIN`) | `ClashGrid` after re-classifying every cached test of the model set (no re-download) |
+| PUT H | `/projects/:projectId/disciplines/rules` | `{rules: [{id?, match: contains|startsWith|regex, value, field: fileName|folder|viewName, discipline}]}` (ordered; replaces the list) | `DisciplineConfig & {reclassified}` |
+| POST H | `/projects/:projectId/disciplines/preview` | `{rules}` | `DisciplinePreview` (matches per rule and how many it would actually decide; changes nothing) |
+| POST H | `/projects/:projectId/disciplines/proposals/:proposalId/decision` | `{decision: accept|reject}` | `DisciplineConfig` (agent `discipline_mapping` proposals) |
 | GET | `/projects/:projectId/assignees` | – | `Assignee[]` |
 | GET | `/projects/:projectId/notes` | – | `ProjectNotes` |
 | POST H | `/projects/:projectId/notes` | `{text, kind?}` | `ProjectNotes` |
@@ -173,7 +181,7 @@ If any edit happens after step 2 (exclusions, issue text), the approve call is r
 
 ## MCP server `coord`
 
-There are 27 tools, with names and inputs as in `docs/ai/mcp-tool-contracts.ts`. Outputs are one compact JSON envelope `{ok,data?,error?,truncated?,hint?}` capped at `agent.maxResponseTokens` (6,000 tokens × 4 chars); when the cap is hit, the largest array is cut. Model-derived text is returned as `{untrusted, flagged?}`, sanitised and limited to 120 characters; this covers group labels, element family/type/system, rule rationales and document names. Agent-written text is rejected when it contains URLs outside `issues.urlAllowlist`, emails, @mentions, control characters, or G-/C-/E-/P- ids that do not exist. Every tool call is audited (`tool.call`). No tool can approve. `apply_approved_proposals` takes `{batchId, dryRun=true}` and refuses without a valid HMAC approval.
+There are 29 tools, with names and inputs as in `docs/ai/mcp-tool-contracts.ts`. Outputs are one compact JSON envelope `{ok,data?,error?,truncated?,hint?}` capped at `agent.maxResponseTokens` (6,000 tokens × 4 chars); when the cap is hit, the largest array is cut. Model-derived text is returned as `{untrusted, flagged?}`, sanitised and limited to 120 characters; this covers group labels, element family/type/system, rule rationales and document names. Agent-written text is rejected when it contains URLs outside `issues.urlAllowlist`, emails, @mentions, control characters, or G-/C-/E-/P- ids that do not exist. Every tool call is audited (`tool.call`). No tool can approve. `apply_approved_proposals` takes `{batchId, dryRun=true}` and refuses without a valid HMAC approval.
 
 ### MCP deviations from `docs/ai/mcp-tool-contracts.ts`
 
@@ -185,3 +193,8 @@ There are 27 tools, with names and inputs as in `docs/ai/mcp-tool-contracts.ts`.
 - `get_group.label`, `list_groups.label` and `topPersistingGroups.label` are `Untrusted`, not plain strings, because engine titles embed family, type and system names (orchestrator ruling).
 - `ingest_clash_test.counts` also includes `byStatus`.
 - Extra error codes: `not_classified`, `invalid_state`, `conflict`.
+- Extra tools: `list_disciplines` (read; project mappings + per-document resolution with `source`, `share`, `ruleId`, `suggestedToken`) and `propose_discipline_mapping` (level ≥ 1; creates a `discipline_mapping` proposal; a human accepts it in the UI, the agent never changes mappings).
+
+### Document discipline
+
+Precedence: user assignment (by lineage URN) > first matching user rule (case- and accent-insensitive) > discipline matrix file-name tokens (only when `disciplines.fileNameDetection` is `"matrix"`; default `"off"`) > dominant element discipline with share ≥ 80 % > `SIN`. Element disciplines come from the Revit category (`rules/discipline-matrix.yaml` category defaults); pipes and plumbing need a system classification, otherwise they stay `SIN`. Mappings are stored in `.coordinator/projects/<projectId>/disciplines.json` (versioned; every change audited with before/after hashes). Outputs never show `UNK`.

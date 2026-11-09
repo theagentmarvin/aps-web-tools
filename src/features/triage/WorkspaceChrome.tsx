@@ -2,11 +2,11 @@
  * Workspace header (breadcrumb, test selector, progress, send CTA), banners,
  * selection bar and status bar (spec §3.1–3.3, §3.9, §4.5).
  */
-import { useMemo, useState } from "react";
-import { useApi } from "~/lib/api";
+import { useMemo } from "react";
+import { useIngest } from "~/features/modelset/useIngest";
 import { useToast } from "~/lib/components/Toast";
 import { Spinner } from "~/lib/components/icons";
-import { useI18n, useT } from "~/i18n";
+import { useI18n, useT, type TKey } from "~/i18n";
 import type { Priority, Validity } from "~/lib/api/types";
 import { Breadcrumbs } from "~/lib/components/PageHeader";
 import { CopyCommand, useAgentStatus } from "~/lib/components/shell-widgets";
@@ -50,22 +50,19 @@ export function WorkspaceHeader({ onTestChange, onSend }: { onTestChange: (testI
   const payload = useTriage(store, (s) => s.payload);
   const progress = useProgress();
   const agent = useAgentStatus();
-  const api = useApi();
   const toast = useToast();
-  const [ingesting, setIngesting] = useState(false);
   const uncached = payload?.tests.find((x) => !x.cached);
-  async function analyze() {
-    if (!payload || !uncached) return;
-    setIngesting(true);
-    try {
-      const res = await api.ingestTest(payload.project.id, payload.modelSet.id, uncached.accTestId);
-      toast.show(t("modelSets.analyzed", { version: uncached.modelSetVersion }));
-      onTestChange(res.testKey);
-    } catch (err) {
-      toast.show(err instanceof Error ? err.message : String(err), { tone: "error" });
-    } finally {
-      setIngesting(false);
-    }
+  const ingest = useIngest(payload?.project.id ?? "", payload?.modelSet.id ?? "", {
+    onDone: (_acc, testKey) => {
+      toast.show(t("modelSets.analyzed", { version: uncached?.modelSetVersion ?? "" }));
+      if (testKey) onTestChange(testKey);
+    },
+    onError: (_acc, err) => toast.show(t("ingest.failed", { error: err }), { tone: "error" }),
+  });
+  const job = uncached ? ingest.jobs[uncached.accTestId] : undefined;
+  const ingesting = !!job && job.phase !== "done" && job.phase !== "failed";
+  function analyze() {
+    if (uncached) void ingest.start(uncached.accTestId);
   }
   const inheritedCount = useTriage(store, (s) => s.rows.filter((r) => !r.nested && !s.latest.has(r.id) && s.proposals.get(r.id)?.inherited).length);
   if (!payload) return null;
@@ -97,7 +94,7 @@ export function WorkspaceHeader({ onTestChange, onSend }: { onTestChange: (testI
       {uncached && (
         <button type="button" disabled={ingesting} onClick={analyze} className="inline-flex items-center gap-1 rounded border border-brand-muted/30 px-2 py-1 text-xs text-gray-700 hover:text-brand disabled:opacity-50">
           {ingesting && <Spinner />}
-          {ingesting ? t("modelSets.analyzing") : `${t("modelSets.analyze")} v${uncached.modelSetVersion}`}
+          {ingesting && job ? `${t(`ingest.phase.${job.phase}` as TKey)} ${Math.round(job.progress * 100)} %` : `${t("modelSets.analyze")} v${uncached.modelSetVersion}`}
         </button>
       )}
       {agent?.running && <span className="rounded-full bg-brand-surface px-2 py-0.5 text-xs text-brand">{t("workspace.analyzing", { task: agent.currentTask ?? "" })}</span>}

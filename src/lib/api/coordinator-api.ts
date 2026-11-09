@@ -10,6 +10,15 @@
 import type {
   AgentStatus,
   ApplyRequest,
+  ClashGrid,
+  DisciplineConfig,
+  DisciplinePreview,
+  DisciplineRuleInput,
+  SetDisciplineRequest,
+  SetDisciplineResult,
+  IngestJob,
+  IngestStart,
+  TestsOverview,
   ApproveOptionsResponse,
   RegisterOptionsResponse,
   RegisterRequest,
@@ -75,8 +84,22 @@ export interface CoordinatorApi {
   listModelSets(projectId: string): Promise<ModelSetSummary[]>;
   /** Cached tests (id = test key) plus not-yet-ingested ACC tests (`cached: false`). */
   listTests(projectId: string, modelSetId: string): Promise<TestRun[]>;
-  /** Download + cache + classify an ACC clash test. Long-running. */
-  ingestTest(projectId: string, modelSetId: string, accTestId: string, opts?: { refresh?: boolean }): Promise<{ testKey: string }>;
+  /** Tests with grid state / delta, plus the model set views ("¿Qué se está comparando?"). */
+  getTestsOverview(projectId: string, modelSetId: string): Promise<TestsOverview>;
+  /** Start downloading + classifying an ACC clash test. Returns a job to poll (or, from older servers, the test key). */
+  ingestTest(projectId: string, modelSetId: string, accTestId: string, opts?: { refresh?: boolean }): Promise<IngestStart>;
+  getIngestJob(jobId: string): Promise<IngestJob>;
+  /** Clash grid of a test (test key or ACC test id; default: latest analysed). */
+  getClashGrid(projectId: string, modelSetId: string, test?: string): Promise<ClashGrid>;
+  /** Assign a document discipline (human-only), optionally saving a naming rule. Returns the grid or a reclassification job. */
+  setDocumentDiscipline(projectId: string, modelSetId: string, lineageUrn: string, req: SetDisciplineRequest, test?: string): Promise<SetDisciplineResult>;
+  /** Discipline codes + the project naming rules (ordered) + agent discipline_mapping suggestions. */
+  getProjectDisciplines(projectId: string): Promise<DisciplineConfig>;
+  /** What the given rules (in order) match among the project documents. */
+  previewDisciplineRules(projectId: string, req: { modelSetId?: string; rules: DisciplineRuleInput[] }): Promise<DisciplinePreview>;
+  saveDisciplineRules(projectId: string, rules: DisciplineRuleInput[], version?: number): Promise<unknown>;
+  /** Record the decision on an agent discipline_mapping proposal (accepting also sends the PUT …/discipline). */
+  decideDisciplineSuggestion(projectId: string, proposalId: string, decision: "approve" | "reject"): Promise<unknown>;
 
   // Triage
   /** Whole workspace payload for one test (default: latest). */

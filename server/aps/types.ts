@@ -201,9 +201,10 @@ export interface IndexQueryStatus {
 /** One NDJSON line of `/fields` (research §4). */
 export interface IndexField {
   key: string;
-  category: string;
+  /** null on some real indexes (IFC). */
+  category: string | null;
   type: string;
-  name: string;
+  name: string | null;
   uom: string | null;
 }
 

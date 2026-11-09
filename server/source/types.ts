@@ -48,6 +48,19 @@ export interface SourceUser {
 }
 
 /** A downloaded + normalized test (core/ingest output plus element props). */
+export type SourceClashData = Omit<SourceTestData, "elements" | "propertiesStatus" | "allElementKeys">;
+
+export interface SourceProperties {
+  /** Clashes with pairKeys attached. */
+  clashes: SourceTestData["clashes"];
+  elements: SourceTestData["elements"];
+  propertiesStatus: SourceTestData["propertiesStatus"];
+  allElementKeys?: string[];
+  warnings: string[];
+  /** Documents whose rows came from the per-version property cache. */
+  cachedDocuments?: number;
+}
+
 export interface SourceTestData {
   test: SourceClashTest;
   modelSet: SourceModelSet;
@@ -81,12 +94,20 @@ export interface DataSource {
   listProjects(opts?: { hubId?: string; nameContains?: string }): Promise<SourceProject[]>;
   getProject(projectId: string): Promise<SourceProject | undefined>;
   listModelSets(projectId: string): Promise<SourceModelSet[]>;
+  /** Folder name of a document (Data Management parent of its lineage item); undefined if unknown. */
+  folderOf?(projectId: string, lineageUrn: string): Promise<string | undefined>;
   listModelSetVersions(projectId: string, modelSetId: string): Promise<SourceModelSetVersion[]>;
   listClashTests(projectId: string, modelSetId: string, version?: number): Promise<SourceClashTest[]>;
   /** Latest model set version number (approval freshness check). */
   latestVersion(projectId: string, modelSetId: string): Promise<number>;
   /** Download, normalize and (optionally) fetch element props. */
   fetchTest(projectId: string, modelSetId: string, testId: string, opts: { fetchProperties: boolean; progress?: IngestProgress }): Promise<SourceTestData>;
+  /** Phase 1 (seconds): clash resources only, no element properties. */
+  fetchClashes(projectId: string, modelSetId: string, testId: string): Promise<SourceClashData>;
+  /** Phase 2: element properties for the clashed elements (+ pairKeys). */
+  fetchProperties(projectId: string, data: SourceClashData, progress?: IngestProgress): Promise<SourceProperties>;
+  /** Saved model set views ("what is being clashed"): name + lineage/viewable entries. */
+  listModelSetViews(projectId: string, modelSetId: string): Promise<Array<{ name: string; definition: Array<{ lineageUrn: string; viewableName?: string }> }>>;
   /** Clash ids currently in assigned / closed groups for a test (preflight). */
   triageState(projectId: string, testId: string): Promise<{ assigned: Set<string>; closed: Set<string> }>;
   listAssignees(projectId: string): Promise<Array<{ id: string; name: string; kind: "user" | "role" | "company" }>>;

@@ -36,6 +36,10 @@ export interface TestDocumentRecord {
   viewableName: string;
   lineageUrn?: string;
   discipline?: string;
+  disciplineSource?: "assignment" | "rule" | "matrix" | "elements" | "unassigned";
+  /** Share of the dominant element discipline (0..1), when computed. */
+  disciplineShare?: number;
+  disciplineRuleId?: string;
 }
 
 /** `.coordinator/store/tests/<testKey>/test.json` */
@@ -175,8 +179,8 @@ export interface ClassificationRecord {
 
 // ── Proposals ──────────────────────────────────────────────────────────────
 
-export type ProposalKind = "classification" | "group_action" | "issue_draft" | "status_change" | "rule_change";
-export const PROPOSAL_KINDS: readonly ProposalKind[] = ["classification", "group_action", "issue_draft", "status_change", "rule_change"];
+export type ProposalKind = "classification" | "group_action" | "issue_draft" | "status_change" | "rule_change" | "discipline_mapping";
+export const PROPOSAL_KINDS: readonly ProposalKind[] = ["classification", "group_action", "issue_draft", "status_change", "rule_change", "discipline_mapping"];
 export type ProposalState = "draft" | "pending_review" | "approved" | "rejected" | "withdrawn" | "applied" | "failed";
 export const PROPOSAL_STATES: readonly ProposalState[] = ["draft", "pending_review", "approved", "rejected", "withdrawn", "applied", "failed"];
 export type Risk = "low" | "medium" | "high";
@@ -223,6 +227,15 @@ export type ProposalPayload =
   | { kind: "group_action"; action: Record<string, unknown> & { type: string } }
   | { kind: "issue_draft"; issue: IssueDraftPayload }
   | { kind: "status_change"; action: StatusAction; accReason?: string; closedGroupIds?: string[] }
+  | {
+      /** Agent suggestion only: a human accepts it in the UI (the agent never sets mappings). */
+      kind: "discipline_mapping";
+      discipline: string;
+      modelSetId?: string;
+      lineageUrn?: string;
+      fileName?: string;
+      rule?: { match: "contains" | "startsWith" | "regex"; value: string; field: "fileName" | "folder" | "viewName" };
+    }
   | { kind: "rule_change"; title: string; patchFile: string; patchHash: string; feedbackIds: string[]; evaluation: Record<string, number>; scope: string }
   | {
       kind: "engine_batch";

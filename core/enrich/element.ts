@@ -54,6 +54,18 @@ export interface ElementInput {
   structural?: boolean;
   orientation?: Orientation;
   modelAgeDays?: number;
+  /**
+   * Model discipline decided by the caller (project mapping). `undefined` = detect
+   * from the file name (default, rules/discipline-matrix.yaml); `null` = no
+   * model-level discipline (file-name detection disabled).
+   */
+  modelDisciplineOverride?: string | null;
+  /**
+   * Naming-independent element layer: when no model discipline and no system
+   * refinement decide, pipes/plumbing (ambiguous between SAN/AP/ALC/CAL/INC)
+   * stay UNK instead of the category default, and structural floors are EST.
+   */
+  strictCategoryDiscipline?: boolean;
   /** Bounding box in metres (used to derive `orientation`). */
   bbox?: { min: Vec3Like; max: Vec3Like };
 }
@@ -98,6 +110,8 @@ const INSULATION_HOST: Record<string, string> = {
 };
 const SLAB_LIKE = new Set(["Floors", "Ceilings", "Roofs"]);
 const ORIENTABLE = new Set(["Pipes", "Ducts", "Cable Tray", "Conduits", "Flex Pipes", "Flex Ducts", "Pipe Insulation", "Duct Insulation"]);
+/** Categories whose discipline is ambiguous without a system classification (strict mode). */
+const AMBIGUOUS_MEP_CATEGORIES = new Set(["Pipes", "Pipe Fittings", "Pipe Accessories", "Flex Pipes", "Pipe Insulation", "Plumbing Fixtures"]);
 /** Rank used for `moveRank: inherit` when the host class is unknown (matrix comment). */
 const INHERIT_FALLBACK_RANK = 40;
 
@@ -196,7 +210,7 @@ export function enrichElement(rs: CompiledRuleSet, input: ElementInput, depth = 
   }
 
   // Discipline.
-  const modelDiscipline = fileDiscipline(rs, input.documentName);
+  const modelDiscipline = input.modelDisciplineOverride !== undefined ? (input.modelDisciplineOverride ?? undefined) : fileDiscipline(rs, input.documentName);
   setField(el, "modelDiscipline", modelDiscipline);
   const categoryDiscipline = el.category ? rs.categoryDefaults.get(el.category) : undefined;
   setField(el, "categoryDiscipline", categoryDiscipline);
@@ -208,6 +222,10 @@ export function enrichElement(rs: CompiledRuleSet, input: ElementInput, depth = 
         break;
       }
     }
+  }
+  if (!d && input.strictCategoryDiscipline) {
+    if (el.category === "Floors" && input.structural === true) d = "EST";
+    else if (el.category && AMBIGUOUS_MEP_CATEGORIES.has(el.category)) d = "UNK";
   }
   setField(el, "discipline", d ?? categoryDiscipline ?? "UNK");
   setField(el, "disciplineGroup", rs.disciplines.get(el.discipline)?.group ?? "UNK");

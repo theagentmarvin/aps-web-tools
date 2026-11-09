@@ -228,7 +228,7 @@ describe("F2 DNS rebinding and local clients (poc-http)", () => {
     const c = await doReq("GET", "/csrf", undefined, { Host: host });
     const tok = c.json.token!;
     const hdr = { Host: host, Origin: `http://${host}`, "X-Coord-CSRF": tok, Cookie: `coord_csrf=${tok}` };
-    const ing = await doReq("POST", `/projects/demo-proyecto/model-sets/${MODEL_SET_ID}/tests/${TEST_V42}/ingest`, {}, hdr);
+    const ing = await doReq("POST", `/projects/demo-proyecto/model-sets/${MODEL_SET_ID}/tests/${TEST_V42}/ingest`, { wait: true }, hdr);
     expect(ing.status).toBe(200);
     const key = (ing.json as { testKey: string }).testKey;
     const ui = new CoordinatorUi(coord);

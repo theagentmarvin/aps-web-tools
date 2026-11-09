@@ -8,8 +8,8 @@ import { effectiveValues, latestDecisions, minConfidence, newId } from "../decis
 import type * as T from "../types";
 import { buildItems, recount } from "./batches";
 import { DISCIPLINES, RULES, USERS } from "./catalog";
-import { HUBS, PROJECTS, type MockModelSet, type MockProject } from "./fixtures";
-import { generateTest, rng, type GenerateOptions, type GeneratedTest } from "./generate";
+import { HUBS, PROJECTS, SANDBOX_RULES, SANDBOX_SUGGESTIONS, SANDBOX_VIEWS, type MockModelSet, type MockProject } from "./fixtures";
+import { generateTest, rng, type GenerateOptions, type GeneratedTest, type MockDocDef } from "./generate";
 import { buildReport, fakeHash, seedAudit, seedCorrections, seedSuggestions } from "./reports";
 
 const ME = USERS[0];
@@ -355,19 +355,285 @@ export class MockCoordinatorApi implements CoordinatorApi {
     return this.findModelSet(projectId, modelSetId).tests.map((o): T.TestRun => {
       const cached = this.isCached(o);
       // Uncached ACC tests: no counts yet (the server reports 0 too).
-      return { id: o.testId, accTestId: o.accTestId ?? o.testId, cached, modelSetId: o.modelSetId, modelSetVersion: o.version, completedOn: o.completedOn, clashCount: cached ? o.clashes : 0, analyzed: cached, documents: [] };
+      return { id: o.testId, state: cached ? "classified" : o.stage === "counts" || this.countsReady.has(o.testId) ? "counts" : "none", accTestId: o.accTestId ?? o.testId, cached, modelSetId: o.modelSetId, modelSetVersion: o.version, completedOn: o.completedOn, clashCount: cached ? o.clashes : 0, analyzed: cached, documents: [] };
     });
   }
 
-  async ingestTest(projectId: string, modelSetId: string, accTestId: string): Promise<{ testKey: string }> {
+  // ── Ingest jobs (simulated phases over ~7 s) ──────────────────
+
+  private jobs = new Map<string, { projectId: string; modelSetId: string; testId: string; startedAt: number; finished: boolean }>();
+
+  private jobOf(jobId: string, j: { testId: string; startedAt: number }, phase: T.IngestPhase, progress: number, message: string, testKey?: string): T.IngestJob {
+    const o = this.locateTest(j.testId).opts;
+    return { jobId, phase, progress, message, accTestId: o.accTestId ?? o.testId, startedAt: new Date(j.startedAt).toISOString(), updatedAt: new Date().toISOString(), timings: {}, ...(testKey ? { testKey } : {}) };
+  }
+  /** Tests whose clash grid (counts only) is downloaded. */
+  private countsReady = new Set<string>();
+  /** lineageUrn → discipline override. */
+  private disciplineOverrides = new Map<string, string>();
+
+  async ingestTest(projectId: string, modelSetId: string, accTestId: string): Promise<T.IngestStart> {
     const ms = this.findModelSet(projectId, modelSetId);
-    const o = ms.tests.find((t) => (t.accTestId ?? t.testId) === accTestId);
+    const o = ms.tests.find((t) => (t.accTestId ?? t.testId) === accTestId || t.testId === accTestId);
     if (!o) throw new ApiError("Prueba no encontrada", 404, "not_found");
-    await delay(1200);
-    this.ingested.add(o.testId);
-    this.tests.delete(o.testId);
-    this.log({ actor: { type: "engine", id: "engine", name: "Motor" }, action: "classification.run", projectId, modelSetId, testId: o.testId, targetIds: [], details: { testKey: o.testId, groups: o.groups } });
-    return { testKey: o.testId };
+    await delay(150);
+    const jobId = `J-${newId().slice(0, 8)}`;
+    this.jobs.set(jobId, { projectId, modelSetId, testId: o.testId, startedAt: Date.now(), finished: false });
+    return { jobId };
+  }
+
+  async getIngestJob(jobId: string): Promise<T.IngestJob> {
+    await delay(40);
+    const j = this.jobs.get(jobId);
+    if (!j) throw new ApiError("Trabajo no encontrado", 404, "not_found");
+    const t = (Date.now() - j.startedAt) / 1000;
+    const o = this.locateTest(j.testId).opts;
+    if (t < 2) return this.jobOf(jobId, j, "downloading", (t / 2) * 0.35, `Descargando resultados de interferencias de ACC (v${o.version})…`);
+    this.countsReady.add(j.testId);
+    if (t < 3) return this.jobOf(jobId, j, "clash_grid_ready", 0.4, "Matriz de interferencias lista. Descargando propiedades de elementos…");
+    if (t < 5) return this.jobOf(jobId, j, "properties", 0.4 + ((t - 3) / 2) * 0.25, `Leyendo propiedades de ${o.documents?.length ?? 6} modelos…`);
+    if (t < 7) return this.jobOf(jobId, j, "classifying", 0.65 + ((t - 5) / 2) * 0.3, "Clasificando y agrupando interferencias con las reglas del proyecto…");
+    if (!j.finished) {
+      j.finished = true;
+      this.ingested.add(j.testId);
+      this.tests.delete(j.testId);
+      this.log({ actor: { type: "engine", id: "engine", name: "Motor" }, action: "classification.run", projectId: j.projectId, modelSetId: j.modelSetId, testId: j.testId, targetIds: [], details: { testKey: j.testId, groups: o.groups } });
+    }
+    return this.jobOf(jobId, j, "done", 1, `Prueba v${o.version} analizada: ${o.groups} grupos.`, j.testId);
+  }
+
+  // ── Clash grid ──────────────────────────────────────────────────
+
+  private gridState(o: GenerateOptions): T.GridState {
+    if (this.isCached(o)) return "classified";
+    if (o.stage === "counts" || this.countsReady.has(o.testId)) return "counts";
+    return "none";
+  }
+
+  private docDefs(o: GenerateOptions): MockDocDef[] {
+    if (o.documents) return o.documents;
+    return this.data(o.testId).test.documents.map((d) => ({
+      documentId: d.documentId,
+      fileName: d.name.split(" · ")[0] ?? d.name,
+      viewName: d.name.split(" · ")[1] ?? "{3D}",
+      folderPath: "Project Files",
+      lineageUrn: `urn:adsk.wipprod:dm.lineage:${o.projectCode}-${d.documentId}`,
+      detected: d.discipline ?? "UNK",
+    }));
+  }
+
+  private buildGrid(o: GenerateOptions): T.ClashGrid {
+    const state = this.gridState(o);
+    const defs = this.docDefs(o);
+    const cells = new Map<string, T.GridCell>();
+    const docGroups = new Map<number, Set<string>>();
+    const docClashes = new Map<number, number>();
+    if (state !== "none") {
+      const d = this.data(o.testId);
+      const proposals = new Map(d.proposals.map((p) => [p.targetId, p]));
+      const groupsByCell = new Map<string, Set<string>>();
+      for (const c of d.clashes) {
+        const a = Math.min(c.a.documentId, c.b.documentId);
+        const b = Math.max(c.a.documentId, c.b.documentId);
+        const k = `${a}:${b}`;
+        const cell = cells.get(k) ?? { a, b, clashes: 0, groups: 0, real: 0, p1: 0, needsReview: 0, newSinceLast: 0 };
+        cell.clashes++;
+        if (c.delta === "new") cell.newSinceLast++;
+        cells.set(k, cell);
+        for (const id of new Set([c.a.documentId, c.b.documentId])) {
+          docGroups.set(id, (docGroups.get(id) ?? new Set<string>()).add(c.groupId));
+          docClashes.set(id, (docClashes.get(id) ?? 0) + 1);
+        }
+        const gs = groupsByCell.get(k) ?? new Set<string>();
+        gs.add(c.groupId);
+        groupsByCell.set(k, gs);
+      }
+      if (state === "classified") {
+        const groups = new Map(d.groups.map((g) => [g.id, g]));
+        for (const [k, gs] of groupsByCell) {
+          const cell = cells.get(k)!;
+          cell.groups = gs.size;
+          for (const gid of gs) {
+            const g = groups.get(gid);
+            const p = proposals.get(gid);
+            if ((p?.fields.validity.value ?? g?.validity) === "real") cell.real++;
+            if ((p?.fields.priority.value ?? g?.priority) === 1) cell.p1++;
+            if (g?.reviewState === "needs_review") cell.needsReview++;
+          }
+        }
+      }
+    }
+    const list = [...cells.values()].sort((x, y) => x.a - y.a || x.b - y.b);
+    const projectId = this.locateTest(o.testId).project.id;
+    const documents: T.GridDocument[] = defs.map((def) => {
+      const r = this.resolveDiscipline(projectId, def);
+      return {
+        documentId: def.documentId,
+        lineageUrn: def.lineageUrn,
+        fileName: def.fileName,
+        viewName: def.viewName,
+        folderPath: def.folderPath,
+        discipline: r.discipline,
+        disciplineSource: r.source,
+        ...(r.ruleId ? { ruleId: r.ruleId } : {}),
+        ...(r.confidence !== undefined ? { disciplineShare: r.confidence } : {}),
+        suggestedToken: def.suggestedToken ?? def.fileName.replace(/\.[a-z0-9]+$/i, "").split(/[ _-]/)[0],
+        clashes: docClashes.get(def.documentId) ?? 0,
+        groups: state === "classified" ? (docGroups.get(def.documentId)?.size ?? 0) : 0,
+      };
+    });
+    return { testKey: state === "classified" ? o.testId : undefined, accTestId: o.accTestId ?? o.testId, modelSetVersion: o.version, state, documents, cells: list };
+  }
+
+  private pickTest(ms: MockModelSet, test?: string): GenerateOptions {
+    if (test) {
+      const o = ms.tests.find((t) => t.testId === test || (t.accTestId ?? t.testId) === test);
+      if (!o) throw new ApiError("Prueba no encontrada", 404, "not_found");
+      return o;
+    }
+    return ms.tests.find((t) => this.gridState(t) === "classified") ?? ms.tests.find((t) => this.gridState(t) === "counts") ?? ms.tests[0];
+  }
+
+  async getClashGrid(projectId: string, modelSetId: string, test?: string): Promise<T.ClashGrid> {
+    this.ensureSeed();
+    await delay(200);
+    return clone(this.buildGrid(this.pickTest(this.findModelSet(projectId, modelSetId), test)));
+  }
+
+  // ── Disciplines: precedence assignment > project rules > Revit categories ──
+
+  private projectRules = new Map<string, T.DisciplineRuleInput[]>();
+  private disciplineSuggestions = new Map<string, T.DisciplineConfig["pendingProposals"]>();
+  private disciplineVersion = 1;
+  private ruleSeq = 1;
+
+  private rulesOf(projectId: string): T.DisciplineRuleInput[] {
+    let r = this.projectRules.get(projectId);
+    if (!r) {
+      r = projectId === PROJECTS[0].id ? clone(SANDBOX_RULES) : [];
+      this.projectRules.set(projectId, r);
+    }
+    return r;
+  }
+
+  private suggestionsOf(projectId: string): T.DisciplineConfig["pendingProposals"] {
+    let r = this.disciplineSuggestions.get(projectId);
+    if (!r) {
+      r = projectId === PROJECTS[0].id ? clone(SANDBOX_SUGGESTIONS) : [];
+      this.disciplineSuggestions.set(projectId, r);
+    }
+    return r;
+  }
+
+  private ruleMatches(rule: T.DisciplineRuleInput, def: MockDocDef): boolean {
+    const raw = rule.field === "folder" ? def.folderPath : rule.field === "viewName" ? def.viewName : def.fileName;
+    const hay = raw.toLowerCase();
+    const tok = rule.value.trim().toLowerCase();
+    if (!tok) return false;
+    if (rule.match === "regex") {
+      try {
+        return new RegExp(rule.value, "i").test(raw);
+      } catch {
+        return false;
+      }
+    }
+    return rule.match === "startsWith" ? hay.split("/").some((part) => part.startsWith(tok)) || hay.startsWith(tok) : hay.includes(tok);
+  }
+
+  private resolveDiscipline(projectId: string, def: MockDocDef, rules = this.rulesOf(projectId)) {
+    const assigned = this.disciplineOverrides.get(def.lineageUrn);
+    if (assigned) return { discipline: assigned, source: "assignment" as const };
+    const rule = rules.find((r) => this.ruleMatches(r, def));
+    if (rule) return { discipline: rule.discipline, source: "rule" as const, ruleId: rule.id };
+    if (def.detected && def.detected !== "SIN") return { discipline: def.detected, source: (def.detectedSource ?? "elements") as "elements" | "matrix", confidence: def.confidence };
+    return { discipline: "SIN", source: "unassigned" as const };
+  }
+
+  private allDocDefs(projectId: string, modelSetId?: string): MockDocDef[] {
+    const p = this.findProject(projectId);
+    const sets = modelSetId ? p.modelSets.filter((m) => m.id === modelSetId) : p.modelSets;
+    const seen = new Map<string, MockDocDef>();
+    for (const ms of sets) for (const d of this.docDefs(ms.tests[0])) seen.set(d.lineageUrn, d);
+    return [...seen.values()];
+  }
+
+  async setDocumentDiscipline(projectId: string, modelSetId: string, lineageUrn: string, req: T.SetDisciplineRequest, test?: string): Promise<T.SetDisciplineResult> {
+    await delay(900); // simulated regrouping / reclassification
+    if (!/^[A-Z]{2,6}$/.test(req.discipline)) throw new ApiError("Disciplina inválida", 400, "validation", "validation_error");
+    this.disciplineOverrides.set(lineageUrn, req.discipline);
+    if (req.createRule) this.rulesOf(projectId).push({ ...req.createRule, id: `DR-${++this.ruleSeq}` });
+    this.log({ actor: { type: "user", id: ME.id, name: ME.short }, action: "document.discipline.set", projectId, modelSetId, targetIds: [lineageUrn], details: { discipline: req.discipline, rule: req.createRule ? `${req.createRule.field} ${req.createRule.match} "${req.createRule.value}"` : null } });
+    return clone(this.buildGrid(this.pickTest(this.findModelSet(projectId, modelSetId), test)));
+  }
+
+  async getProjectDisciplines(projectId: string): Promise<T.DisciplineConfig> {
+    this.findProject(projectId);
+    await delay(80);
+    const codes = [...DISCIPLINES, { code: "CIV", es: "Urbanización / obras civiles", en: "Civil / site" }, { code: "ALC", es: "Alcantarillado", en: "Sanitary drainage" }].map((d) => ({ code: d.code, label: d.es }));
+    return clone({
+      version: this.disciplineVersion,
+      assignments: Object.fromEntries(this.disciplineOverrides),
+      rules: this.rulesOf(projectId).map((r) => ({ ...r, id: r.id ?? "", createdBy: ME.short, createdAt: "2026-11-01T10:00:00.000Z" })),
+      codes: [...codes, { code: "SIN", label: "Sin asignar" }],
+      fileNameDetection: "off",
+      pendingProposals: this.suggestionsOf(projectId),
+    });
+  }
+
+  async previewDisciplineRules(projectId: string, req: { modelSetId?: string; rules: T.DisciplineRuleInput[] }): Promise<T.DisciplinePreview> {
+    await delay(120);
+    const defs = this.allDocDefs(projectId, req.modelSetId);
+    const taken = new Set<string>();
+    const modelSetId = req.modelSetId ?? this.findProject(projectId).modelSets[0].id;
+    return {
+      rules: req.rules.map((rule, index) => {
+        const matches = defs.filter((d) => this.ruleMatches(rule, d));
+        const effective = matches.filter((d) => !taken.has(d.lineageUrn) && !this.disciplineOverrides.has(d.lineageUrn));
+        for (const d of effective) taken.add(d.lineageUrn);
+        return { index, ...(rule.id ? { id: rule.id } : {}), matches: matches.map((d) => ({ lineageUrn: d.lineageUrn, fileName: d.fileName, viewName: d.viewName, modelSetId })), effective: effective.length };
+      }),
+    };
+  }
+
+  async saveDisciplineRules(projectId: string, rules: T.DisciplineRuleInput[]): Promise<unknown> {
+    await delay(300);
+    const saved = rules.map((r) => ({ ...r, id: r.id ?? `DR-${++this.ruleSeq}` }));
+    this.projectRules.set(projectId, saved);
+    this.disciplineVersion++;
+    this.log({ actor: { type: "user", id: ME.id, name: ME.short }, action: "discipline.rules.saved", projectId, targetIds: [], details: { rules: saved.length } });
+    return clone({ rules: saved });
+  }
+
+  async decideDisciplineSuggestion(projectId: string, id: string, decision: "approve" | "reject"): Promise<unknown> {
+    await delay(400);
+    const list = this.suggestionsOf(projectId);
+    const s = list.find((x) => x.id === id);
+    if (!s) throw new ApiError("Sugerencia no encontrada", 404, "not_found");
+    list.splice(list.indexOf(s), 1);
+    // Recording only: accepting applies through the same PUT …/discipline the UI already sent.
+    this.log({ actor: { type: "user", id: ME.id, name: ME.short }, action: `discipline.proposal.${decision === "approve" ? "approved" : "rejected"}`, projectId, targetIds: [id], details: { summary: s.summary } });
+    return clone(s);
+  }
+
+  async getTestsOverview(projectId: string, modelSetId: string): Promise<T.TestsOverview> {
+    const ms = this.findModelSet(projectId, modelSetId);
+    const base = await this.listTests(projectId, modelSetId);
+    const tests: T.TestRunInfo[] = base.map((run, i) => {
+      const o = ms.tests[i];
+      const state = this.gridState(o);
+      const info: T.TestRunInfo = { ...run, state, documentCount: this.docDefs(o).length };
+      if (state !== "none") {
+        const d = this.data(o.testId);
+        info.clashCount = d.clashes.length;
+        if (!o.firstTest) {
+          const added = d.clashes.filter((c) => c.delta === "new" || c.delta === "reappeared").length;
+          info.delta = { new: added, persisting: d.clashes.length - added, resolved: Math.round(d.clashes.length * 0.08) };
+        }
+      }
+      return info;
+    });
+    const views = ms.id === "71941e30-2f1a-4149-a9b7-35c6d2d162bf" ? SANDBOX_VIEWS : [{ name: ms.name, documents: [...new Set(this.docDefs(ms.tests[0]).map((d) => d.fileName))] }];
+    return clone({ tests, views });
   }
 
   // ── Triage ──────────────────────────────────────────────────────

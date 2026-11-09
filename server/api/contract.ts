@@ -81,6 +81,91 @@ export interface ModelSetSummary {
   agentCommand: string;
 }
 export interface TestDocument { documentId: number; urn: string; name: string; discipline?: DisciplineCode }
+/** GET /projects/:p/model-sets/:m/clash-grid?test=<testKey|accTestId> */
+export interface ClashGridDocument {
+  documentId: number;
+  lineageUrn: string;
+  fileName: string;
+  viewName: string;
+  /** Discipline code; "SIN" = Sin asignar. */
+  discipline: string;
+  disciplineSource: "assignment" | "rule" | "matrix" | "elements" | "unassigned";
+  /** Share (0..1) of the dominant element discipline when computed. */
+  disciplineShare?: number;
+  /** Rule that decided it (source = rule). */
+  ruleId?: string;
+  /** Token to pre-fill "aplicar a archivos que contengan …" (ISO role code or first word). */
+  suggestedToken?: string;
+  /** ACC folder of the file; filled when two documents share a file name (disambiguation). */
+  folderPath?: string;
+  clashes: number;
+  groups: number;
+}
+export interface ClashGridCell {
+  /** Unordered pair: a <= b; a === b is a model clashing with itself. */
+  a: number;
+  b: number;
+  clashes: number;
+  /** Distinct groups (0 until classified). */
+  groups: number;
+  /** Clashes with validity real (0 until classified). */
+  real: number;
+  /** Clashes in P1 groups (0 until classified). */
+  p1: number;
+  /** Clashes in groups that need review (0 until classified). */
+  needsReview: number;
+  /** New or reappeared since the previous cached version (ledger). */
+  newSinceLast: number;
+}
+export interface ClashGrid {
+  testKey?: string;
+  accTestId: string;
+  modelSetVersion: number;
+  state: "none" | "counts" | "classified";
+  documents: ClashGridDocument[];
+  cells: ClashGridCell[];
+}
+/** GET /projects/:p/model-sets/:m/views */
+export interface ModelSetView { name: string; documents: string[] }
+export interface DisciplineRule {
+  id: string;
+  match: "contains" | "startsWith" | "regex";
+  value: string;
+  field: "fileName" | "folder" | "viewName";
+  discipline: string;
+  createdBy: string;
+  createdAt: string;
+}
+/** GET /projects/:p/disciplines */
+export interface DisciplineConfig {
+  version: number;
+  /** lineageUrn → code. */
+  assignments: Record<string, string>;
+  /** Ordered; first match wins. */
+  rules: DisciplineRule[];
+  codes: Array<{ code: string; label: string }>;
+  fileNameDetection: "off" | "matrix";
+  /** Agent suggestions waiting for a human decision. */
+  pendingProposals: Array<{ id: string; summary: string; rationale: string; createdAt: string; payload: Record<string, unknown> }>;
+}
+/** POST /projects/:p/disciplines/preview */
+export interface DisciplinePreview {
+  rules: Array<{ index: number; id?: string; matches: Array<{ lineageUrn: string; fileName: string; viewName: string; modelSetId: string }>; effective: number }>;
+}
+/** GET /ingest-jobs/:jobId */
+export interface IngestJob {
+  jobId: string;
+  phase: "downloading" | "clash_grid_ready" | "properties" | "classifying" | "done" | "failed";
+  progress: number;
+  message: string;
+  testKey?: string;
+  accTestId: string;
+  error?: string;
+  startedAt: string;
+  updatedAt: string;
+  timings: Record<string, number>;
+}
+
 export interface TestRun {
   /** Test key T-xxxxxxxx (cached tests). For not-yet-ingested tests: the ACC test id and `cached: false`. */
   id: string;
@@ -92,6 +177,10 @@ export interface TestRun {
   clashCount: number;
   analyzed: boolean;
   documents: TestDocument[];
+  documentCount?: number;
+  state: "none" | "counts" | "classified";
+  /** vs the previous cached version (ledger): new includes reappeared, resolved includes element-deleted. */
+  delta?: { new: number; resolved: number; persisting: number };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -160,6 +249,9 @@ export interface ClashGroup {
   priority: Priority;
   confidence: number;
   reviewState: "auto_ok" | "needs_review" | "proposed" | "decided";
+  /** Dominant engine rule of the group (most member clashes). */
+  ruleId: string | null;
+  ruleIds: string[];
 }
 
 export interface ElementProperties { ref: string; found: boolean; props: Record<string, string | number | boolean | null> }

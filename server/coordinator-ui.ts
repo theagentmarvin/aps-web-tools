@@ -10,6 +10,7 @@ import { applyApproved, approvalOptions, approveBatch, verifyBatchApproval, with
 import type { AssignedGroupCreate, CloseReason, ClosedGroupCreate } from "./aps/types";
 import { AGENT_ACTOR, type Coordinator, proposalSummary, type ReviewState } from "./coordinator";
 import { CLOSABLE, loadRules } from "./engine";
+import { assertCode, modelLevelDiscipline, outCode, ruleMatches, SIN, suggestedToken, validCodes, type DisciplineRule } from "./disciplines";
 import { sanitizeModelText } from "./sanitize";
 import type {
   Actor,
@@ -127,25 +128,40 @@ export class CoordinatorUi {
     return this.core.source.listHubs();
   }
 
+  /** Model set counts per project: one ACC call per project, so cache them briefly. */
+  private readonly modelSetCountCache = new Map<string, { n: number; at: number }>();
+  private static readonly MODEL_SET_COUNT_TTL_MS = 60_000;
+
+  private async modelSetCount(projectId: string, fallback: number): Promise<number> {
+    const key = bareProjectId(projectId);
+    const hit = this.modelSetCountCache.get(key);
+    if (hit && Date.now() - hit.at < CoordinatorUi.MODEL_SET_COUNT_TTL_MS) return hit.n;
+    const sets = await this.core.source.listModelSets(projectId).catch(() => undefined);
+    if (!sets) return fallback;
+    this.modelSetCountCache.set(key, { n: sets.length, at: Date.now() });
+    return sets.length;
+  }
+
+  private async summarize(p: { id: string; name: string; hubId: string; hubName?: string }, tests: TestRecord[]): Promise<C.ProjectSummary> {
+    const mine = tests.filter((t) => bareProjectId(t.projectId) === bareProjectId(p.id));
+    let pending = 0;
+    for (const t of mine) pending += await this.pendingCount(t);
+    const modelSetCount = await this.modelSetCount(p.id, new Set(mine.map((t) => t.modelSetId)).size);
+    return { id: bareProjectId(p.id), name: p.name, hubId: p.hubId, hubName: p.hubName, modelSetCount, pendingDecisions: pending } as C.ProjectSummary;
+  }
+
   async projects(q: { hubId?: string; q?: string } = {}): Promise<C.ProjectSummary[]> {
     const ps = await this.core.source.listProjects({ hubId: q.hubId, nameContains: q.q });
     const tests = await this.store.listTests();
-    const out: C.ProjectSummary[] = [];
-    for (const p of ps) {
-      const mine = tests.filter((t) => bareProjectId(t.projectId) === bareProjectId(p.id));
-      let pending = 0;
-      for (const t of mine) pending += await this.pendingCount(t);
-      const sets = await this.core.source.listModelSets(p.id).catch(() => undefined);
-      const modelSetCount = sets ? sets.length : new Set(mine.map((t) => t.modelSetId)).size;
-      out.push({ id: bareProjectId(p.id), name: p.name, hubId: p.hubId, hubName: p.hubName, modelSetCount, pendingDecisions: pending });
-    }
-    return out;
+    // Projects are independent: summarise them in parallel.
+    return Promise.all(ps.map((p) => this.summarize(p, tests)));
   }
 
+  /** One project: summarise only that one (was: every project in every hub). */
   async project(projectId: string): Promise<C.ProjectSummary> {
-    const p = (await this.projects()).find((x) => x.id === bareProjectId(projectId));
+    const p = await this.core.source.getProject(projectId).catch(() => undefined);
     if (!p) throw new CoordError("not_found", `Proyecto ${projectId} no existe`);
-    return p;
+    return this.summarize(p, await this.store.listTests());
   }
 
   private async pendingCount(t: TestRecord): Promise<number> {
@@ -193,6 +209,8 @@ export class CoordinatorUi {
       completedOn: t.completedOn ?? t.ingestedAt,
       clashCount: t.counts.clashes,
       analyzed,
+      state: analyzed ? "classified" : "counts",
+      documentCount: t.documents.length,
       documents: t.documents.map((d) => ({ documentId: d.documentId, urn: d.urn, name: `${d.name} · ${d.viewableName}`, ...(d.discipline ? { discipline: d.discipline } : {}) })),
     };
   }
@@ -201,10 +219,19 @@ export class CoordinatorUi {
     const remote = await this.core.source.listClashTests(withB(projectId), modelSetId).catch(() => []);
     const cached = (await this.store.listTests()).filter((t) => t.modelSetId === modelSetId);
     const out: C.TestRun[] = [];
-    for (const t of cached) out.push(this.testRun(t, !!(await this.store.getClassification(t.testKey))));
+    for (const t of cached) {
+      const classified = !!(await this.store.getClassification(t.testKey));
+      const diff = t.previousTestKey ? await this.core.diffForTest(t).catch(() => undefined) : undefined;
+      out.push({
+        ...this.testRun(t, classified),
+        documentCount: t.documents.length,
+        state: classified ? "classified" : "counts",
+        ...(diff ? { delta: { new: diff.counts.new + diff.counts.reappeared, resolved: diff.counts.resolved + diff.counts.element_deleted, persisting: diff.counts.persisting } } : {}),
+      });
+    }
     for (const r of remote) {
       if (cached.some((c) => c.testId === r.id)) continue;
-      out.push({ id: r.id, accTestId: r.id, cached: false, modelSetId, modelSetVersion: r.modelSetVersion, completedOn: r.completedOn ?? "", clashCount: 0, analyzed: false, documents: [] });
+      out.push({ id: r.id, accTestId: r.id, cached: false, modelSetId, modelSetVersion: r.modelSetVersion, completedOn: r.completedOn ?? "", clashCount: 0, analyzed: false, documents: [], state: "none" });
     }
     return out.sort((a, b) => b.modelSetVersion - a.modelSetVersion);
   }
@@ -214,6 +241,13 @@ export class CoordinatorUi {
   }
 
   /** Human-started ingest + classification from the UI. */
+  /** Asynchronous phased ingest (+ classification): returns the job immediately; poll GET /ingest-jobs/:jobId. */
+  startIngest(projectId: string, modelSetId: string, accTestId: string, opts: { refresh?: boolean; classify?: boolean }, user: HumanUser) {
+    const actor: Actor = { type: "user", id: user.id, name: user.name };
+    return this.core.startIngestJob({ projectId: withB(projectId), modelSetId, testId: accTestId, refresh: opts.refresh, classify: opts.classify }, { actor });
+  }
+
+  /** Synchronous variant (tests, CLI). */
   async ingestAndClassify(projectId: string, modelSetId: string, accTestId: string, opts: { refresh?: boolean; classify?: boolean }, user: HumanUser) {
     const actor: Actor = { type: "user", id: user.id, name: user.name };
     const r = await this.core.ingest({ projectId: withB(projectId), modelSetId, testId: accTestId, refresh: opts.refresh }, { actor });
@@ -277,6 +311,8 @@ export class CoordinatorUi {
       priority: g.band,
       confidence: g.confidence,
       reviewState: state,
+      ruleId: g.ruleIds[0] ?? null,
+      ruleIds: g.ruleIds,
     };
   }
 
@@ -1354,6 +1390,229 @@ export class CoordinatorUi {
 
   async appendNote(projectId: string, text: string, kind: string | undefined, user: HumanUser): Promise<C.ProjectNotes> {
     return this.core.appendNote({ projectId: withB(projectId), text, kind }, { actor: { type: "user", id: user.id, name: user.name } });
+  }
+
+  // ── clash grid (documents × documents) ─────────────────────────────────────
+
+  private async findTest(projectId: string, modelSetId: string, test?: string): Promise<TestRecord | undefined> {
+    const mine = (await this.store.listTests())
+      .filter((t) => bareProjectId(t.projectId) === bareProjectId(projectId) && t.modelSetId === modelSetId)
+      .sort((a, b) => b.modelSetVersion - a.modelSetVersion);
+    if (!test) return mine[0];
+    return mine.find((t) => t.testKey === test || t.testId === test);
+  }
+
+  /** Document identity for discipline rules (file name, view, folder when known). */
+  private docInfos(t: TestRecord) {
+    return t.documents.map((d) => ({ documentId: d.documentId, lineageUrn: d.lineageUrn, fileName: d.name, viewName: d.viewableName }));
+  }
+
+  async clashGrid(projectId: string, modelSetId: string, test?: string): Promise<C.ClashGrid> {
+    const t = await this.findTest(projectId, modelSetId, test);
+    if (!t) {
+      const remote = test ? (await this.core.source.listClashTests(withB(projectId), modelSetId).catch(() => [])).find((x) => x.id === test) : undefined;
+      return { accTestId: test ?? "", modelSetVersion: remote?.modelSetVersion ?? 0, state: "none", documents: [], cells: [] };
+    }
+    const raw = await this.core.loadRaw(t);
+    const cls = await this.store.getClassification(t.testKey);
+    const diff = await this.core.diffForTest(t).catch(() => undefined);
+    const fresh = new Set([...(diff?.new ?? []), ...(diff?.reappeared ?? [])]);
+    const rs = loadRules();
+    const pd = await this.core.disciplines.load(t.projectId);
+    const matrixOn = this.core.config.disciplines.fileNameDetection === "matrix";
+    const clsById = new Map((cls?.clashes ?? []).map((c) => [c.id, c]));
+    const gById = new Map((cls?.groups ?? []).map((g) => [g.id, g]));
+    type Cell = { a: number; b: number; clashes: number; groups: Set<string>; real: number; p1: number; needsReview: number; newSinceLast: number };
+    const cells = new Map<string, Cell>();
+    const perDoc = new Map<number, { clashes: number; groups: Set<string> }>();
+    for (const c of raw.clashes) {
+      const a = Math.min(c.left.documentId, c.right.documentId);
+      const b = Math.max(c.left.documentId, c.right.documentId);
+      const k = `${a}|${b}`;
+      const cell = cells.get(k) ?? { a, b, clashes: 0, groups: new Set<string>(), real: 0, p1: 0, needsReview: 0, newSinceLast: 0 };
+      cell.clashes++;
+      if (fresh.has(c.id)) cell.newSinceLast++;
+      const cr = clsById.get(c.id);
+      const g = cr ? gById.get(cr.groupId) : undefined;
+      if (cr && g) {
+        cell.groups.add(g.id);
+        if (cr.validity === "real") cell.real++;
+        if (g.band === 1) cell.p1++;
+        if (g.reviewState === "needs_review") cell.needsReview++;
+      }
+      cells.set(k, cell);
+      for (const d of new Set([a, b])) {
+        const pdc = perDoc.get(d) ?? { clashes: 0, groups: new Set<string>() };
+        pdc.clashes++;
+        if (g) pdc.groups.add(g.id);
+        perDoc.set(d, pdc);
+      }
+    }
+    // Two documents with the same file name (e.g. two MECHANICAL.rvt): look up their ACC folders.
+    const nameCount = new Map<string, number>();
+    for (const d of t.documents) nameCount.set(d.name.toLowerCase(), (nameCount.get(d.name.toLowerCase()) ?? 0) + 1);
+    const folders = new Map<number, string>();
+    const source = this.core.source;
+    if (source.folderOf) {
+      await Promise.all(
+        t.documents
+          .filter((d) => d.lineageUrn && (nameCount.get(d.name.toLowerCase()) ?? 0) > 1)
+          .map(async (d) => {
+            const f = await source.folderOf!(projectId, d.lineageUrn!);
+            if (f) folders.set(d.documentId, f);
+          }),
+      );
+    }
+    const documents: C.ClashGridDocument[] = t.documents.map((d) => {
+      const info = { documentId: d.documentId, lineageUrn: d.lineageUrn, fileName: d.name, viewName: d.viewableName };
+      // Classified tests carry the resolution made by the engine; otherwise model-level only.
+      const r =
+        cls && d.disciplineSource
+          ? { discipline: d.discipline ?? SIN, source: d.disciplineSource, share: d.disciplineShare, ruleId: d.disciplineRuleId }
+          : (() => {
+              const m = modelLevelDiscipline(info, pd, rs, matrixOn);
+              return m ? { discipline: m.discipline, source: m.source, share: undefined, ruleId: m.ruleId } : { discipline: SIN, source: "unassigned" as const, share: undefined, ruleId: undefined };
+            })();
+      const token = suggestedToken(d.name, t.documents.map((x) => x.name));
+      return {
+        documentId: d.documentId,
+        lineageUrn: d.lineageUrn ?? "",
+        fileName: d.name,
+        viewName: d.viewableName,
+        discipline: outCode(r.discipline),
+        disciplineSource: r.source,
+        ...(r.share !== undefined ? { disciplineShare: r.share } : {}),
+        ...(r.ruleId ? { ruleId: r.ruleId } : {}),
+        ...(token ? { suggestedToken: token } : {}),
+        ...(folders.has(d.documentId) ? { folderPath: folders.get(d.documentId) } : {}),
+        clashes: perDoc.get(d.documentId)?.clashes ?? 0,
+        groups: perDoc.get(d.documentId)?.groups.size ?? 0,
+      };
+    });
+    return {
+      testKey: t.testKey,
+      accTestId: t.testId,
+      modelSetVersion: t.modelSetVersion,
+      state: cls ? "classified" : "counts",
+      documents,
+      cells: [...cells.values()]
+        .sort((x, y) => y.clashes - x.clashes || x.a - y.a || x.b - y.b)
+        .map((c) => ({ a: c.a, b: c.b, clashes: c.clashes, groups: c.groups.size, real: c.real, p1: c.p1, needsReview: c.needsReview, newSinceLast: c.newSinceLast })),
+    };
+  }
+
+  /** Saved model set views ("what is being clashed"), file names resolved from cached tests. */
+  async modelSetViews(projectId: string, modelSetId: string): Promise<C.ModelSetView[]> {
+    const views = await this.core.source.listModelSetViews(withB(projectId), modelSetId).catch(() => []);
+    const names = new Map<string, string>();
+    for (const t of (await this.store.listTests()).filter((x) => x.modelSetId === modelSetId)) for (const d of t.documents) if (d.lineageUrn) names.set(d.lineageUrn, d.name);
+    return views.map((v) => ({ name: v.name, documents: v.definition.map((d) => names.get(d.lineageUrn) ?? d.viewableName ?? d.lineageUrn) }));
+  }
+
+  // ── disciplines (human-only writes) ─────────────────────────────────────────
+
+  async disciplineConfig(projectId: string): Promise<C.DisciplineConfig> {
+    const cfg = await this.core.disciplines.load(withB(projectId));
+    const pending = await this.store.listProposals((p) => p.payload.kind === "discipline_mapping" && p.projectId !== undefined && bareProjectId(p.projectId) === bareProjectId(projectId) && (p.state === "pending_review" || p.state === "draft"));
+    return {
+      version: cfg.version,
+      assignments: cfg.assignments,
+      rules: cfg.rules,
+      codes: validCodes(loadRules()),
+      fileNameDetection: this.core.config.disciplines.fileNameDetection,
+      pendingProposals: pending.map((p) => ({ id: p.id, summary: proposalSummary(p), rationale: p.rationale, createdAt: p.createdAt, payload: p.payload as unknown as Record<string, unknown> })),
+    };
+  }
+
+  private ruleFrom(input: { match: DisciplineRule["match"]; value: string; field: DisciplineRule["field"] }, discipline: string, user: HumanUser, existing: DisciplineRule[]): DisciplineRule {
+    if (input.match === "regex") {
+      try {
+        new RegExp(input.value, "i");
+      } catch {
+        throw new CoordError("validation_error", `Expresión regular inválida: ${input.value}`);
+      }
+    }
+    let n = existing.length + 1;
+    while (existing.some((r) => r.id === `DR-${String(n).padStart(3, "0")}`)) n++;
+    return { id: `DR-${String(n).padStart(3, "0")}`, match: input.match, value: input.value, field: input.field, discipline, createdBy: user.name, createdAt: nowIso(this.core.now()) };
+  }
+
+  /** Assign one document (exact lineage), optionally saving a rule from it; re-classify; return the grid. */
+  async setDocumentDiscipline(
+    projectId: string,
+    modelSetId: string,
+    lineageUrn: string,
+    body: { discipline: string; createRule?: { match: DisciplineRule["match"]; value: string; field: DisciplineRule["field"] } },
+    user: HumanUser,
+    test?: string,
+  ): Promise<C.ClashGrid> {
+    const rs = loadRules();
+    const discipline = assertCode(rs, body.discipline);
+    const known = (await this.store.listTests()).some((t) => t.modelSetId === modelSetId && t.documents.some((d) => d.lineageUrn === lineageUrn));
+    if (!known) throw new CoordError("not_found", "Documento no encontrado en las pruebas en caché de este conjunto.");
+    await this.core.disciplines.update(withB(projectId), user, (cfg) => {
+      cfg.assignments[lineageUrn] = discipline;
+      if (body.createRule) cfg.rules.push(this.ruleFrom(body.createRule, discipline, user, cfg.rules));
+    }, "discipline.assigned", { lineageUrn, discipline, ruleCreated: !!body.createRule });
+    await this.core.reclassifyCached({ projectId: withB(projectId), modelSetId }, { actor: { type: "user", id: user.id, name: user.name } });
+    return this.clashGrid(projectId, modelSetId, test);
+  }
+
+  /** Replace the ordered rule list; re-classify every classified test of the project. */
+  async replaceDisciplineRules(projectId: string, rules: Array<Pick<DisciplineRule, "match" | "value" | "field" | "discipline"> & { id?: string }>, user: HumanUser): Promise<C.DisciplineConfig & { reclassified: string[] }> {
+    const rs = loadRules();
+    const prev = new Map((await this.core.disciplines.load(withB(projectId))).rules.map((r) => [r.id, r]));
+    const next: DisciplineRule[] = [];
+    for (const r of rules) {
+      const d = assertCode(rs, r.discipline);
+      const keep = r.id && /^DR-\d{3,}$/.test(r.id) && !next.some((x) => x.id === r.id);
+      const old = keep ? prev.get(r.id!) : undefined;
+      const fresh = this.ruleFrom(r, d, user, [...next, ...prev.values()]);
+      next.push(keep ? { ...fresh, id: r.id!, ...(old ? { createdBy: old.createdBy, createdAt: old.createdAt } : {}) } : fresh);
+    }
+    await this.core.disciplines.update(withB(projectId), user, (cfg) => void (cfg.rules = next), "discipline.rules_replaced", { rules: next.length });
+    const reclassified = await this.core.reclassifyCached({ projectId: withB(projectId) }, { actor: { type: "user", id: user.id, name: user.name } });
+    return { ...(await this.disciplineConfig(projectId)), reclassified };
+  }
+
+  /** Which cached documents each rule would match (no changes). */
+  async previewDisciplineRules(projectId: string, rules: Array<Pick<DisciplineRule, "match" | "value" | "field" | "discipline"> & { id?: string }>): Promise<C.DisciplinePreview> {
+    const docs = new Map<string, { lineageUrn: string; fileName: string; viewName: string; modelSetId: string }>();
+    for (const t of (await this.store.listTests()).filter((x) => bareProjectId(x.projectId) === bareProjectId(projectId))) {
+      for (const d of this.docInfos(t)) {
+        const k = d.lineageUrn ?? `${t.modelSetId}:${d.documentId}`;
+        if (!docs.has(k)) docs.set(k, { lineageUrn: d.lineageUrn ?? "", fileName: d.fileName, viewName: d.viewName, modelSetId: t.modelSetId });
+      }
+    }
+    const all = [...docs.values()];
+    const claimed = new Set<string>();
+    return {
+      rules: rules.map((r, i) => {
+        const matches = all.filter((d) => ruleMatches(r, { documentId: 0, lineageUrn: d.lineageUrn, fileName: d.fileName, viewName: d.viewName }));
+        const effective = matches.filter((d) => !claimed.has(d.lineageUrn));
+        for (const d of effective) claimed.add(d.lineageUrn);
+        return { index: i, ...(r.id ? { id: r.id } : {}), matches, effective: effective.length };
+      }),
+    };
+  }
+
+  /** Human decision on an agent's discipline-mapping proposal. */
+  async decideDisciplineProposal(projectId: string, proposalId: string, decision: "accept" | "reject", user: HumanUser): Promise<C.DisciplineConfig> {
+    const p = await this.store.getProposal(proposalId);
+    if (!p || p.payload.kind !== "discipline_mapping" || !p.projectId || bareProjectId(p.projectId) !== bareProjectId(projectId)) throw new CoordError("not_found", `Propuesta ${proposalId} no existe`);
+    if (decision === "reject") {
+      await this.store.transitionProposal(p.id, "rejected", user.name);
+      return this.disciplineConfig(projectId);
+    }
+    const pl = p.payload;
+    await this.core.disciplines.update(withB(projectId), user, (cfg) => {
+      if (pl.lineageUrn) cfg.assignments[pl.lineageUrn] = pl.discipline;
+      if (pl.rule) cfg.rules.push(this.ruleFrom(pl.rule, pl.discipline, user, cfg.rules));
+    }, "discipline.proposal_accepted", { proposalId: p.id, discipline: pl.discipline });
+    await this.store.transitionProposal(p.id, "approved", user.name);
+    await this.store.transitionProposal(p.id, "applied", user.name, "mapeo de disciplina aplicado (local)");
+    await this.core.reclassifyCached({ projectId: withB(projectId), ...(pl.modelSetId ? { modelSetId: pl.modelSetId } : {}) }, { actor: { type: "user", id: user.id, name: user.name } });
+    return this.disciplineConfig(projectId);
   }
 }
 

@@ -54,6 +54,8 @@ export function toolHandlers(coord: Coordinator): Record<string, (a: Args, extra
     list_feedback: async (a) => coord.listFeedback(a as never),
     evaluate_ruleset: async (a) => coord.evaluateRuleset(a as never),
     propose_rule_change: async (a) => coord.proposeRuleChange(a as never, ctx),
+    list_disciplines: async (a) => coord.listDisciplines(a as never),
+    propose_discipline_mapping: async (a) => coord.proposeDisciplineMapping(a as never, ctx),
     generate_report: async (a) => coord.generateReport(a as never, ctx),
     apply_approved_proposals: async (a) => applyTool(coord, a as { batchId: string; dryRun?: boolean }),
   };

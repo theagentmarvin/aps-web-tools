@@ -12,19 +12,25 @@ import { assignClashes, closeClashes, waitClashJob } from "../aps/clash-writes";
 import { apsRequest, type ApsCtx } from "../aps/http";
 import {
   ensureIndexes,
-  fetchElementProps,
   getIndexFields,
   getIndexManifest,
   indexForVersion,
+  lmvIdQuery,
   loadPropertyAliases,
+  queryIndex,
   resolveManifestViewId,
 } from "../aps/index-properties";
-import { getModelSetVersion, listModelSets, listModelSetVersions, getModelSet } from "../aps/modelset";
+import { compileMapper, FieldDictionary } from "../aps/property-mapping";
+import type { IndexRow } from "../aps/types";
+import { mapLimit, PropertyRowCache } from "../cache/property-cache";
+import { normalizeLinkedExternalIds } from "../group-titles";
+import { join } from "node:path";
+import { getModelSetVersion, listModelSets, listModelSetVersions, getModelSet, listModelSetViews } from "../aps/modelset";
 import { log } from "../util";
 
 /** APS OIDC userinfo host (https://aps.autodesk.com/en/docs/profile/v1/reference/profile/oidcuserinfo/). */
 const USERINFO_BASE_URL = "https://api.userprofile.autodesk.com";
-import type { ClashWriter, DataSource, SourceClashTest, SourceModelSet, SourceProject, SourceTestData } from "./types";
+import type { ClashWriter, DataSource, SourceClashData, SourceClashTest, SourceModelSet, SourceProject, SourceProperties, SourceTestData } from "./types";
 
 /**
  * Hosts allowed for presigned clash resource downloads: Amazon S3 endpoints
@@ -57,7 +63,10 @@ export class LiveSource implements DataSource {
   /** undefined when the APS client id is not configured: every APS call then fails with auth_required. */
   readonly auth: ApsAuth | undefined;
 
-  constructor(auth: ApsAuth | (() => ApsAuth), opts: { region?: "US" | "EMEA"; root?: string } = {}) {
+  /** Root of the property row cache (default <root>/.coordinator/cache). */
+  private readonly cacheRoot: string;
+
+  constructor(auth: ApsAuth | (() => ApsAuth), opts: { region?: "US" | "EMEA"; root?: string; cacheRoot?: string } = {}) {
     let a: ApsAuth | undefined;
     try {
       a = typeof auth === "function" ? auth() : auth;
@@ -80,6 +89,7 @@ export class LiveSource implements DataSource {
       waitJob: async (projectId, jobId, timeoutMs) => waitClashJob(this.ctx, projectId, jobId, { timeoutMs }),
     };
     this.root = opts.root ?? process.cwd();
+    this.cacheRoot = opts.cacheRoot ?? join(this.root, ".coordinator", "cache");
   }
 
   private readonly root: string;
@@ -144,6 +154,29 @@ export class LiveSource implements DataSource {
     return (await this.listProjects()).find((p) => p.id === id);
   }
 
+  private readonly folderCache = new Map<string, string | undefined>();
+
+  /** Parent folder name of a document's lineage item (Data Management); cached; never throws. */
+  async folderOf(projectId: string, lineageUrn: string): Promise<string | undefined> {
+    if (!lineageUrn) return undefined;
+    if (this.folderCache.has(lineageUrn)) return this.folderCache.get(lineageUrn);
+    const dmProject = projectId.startsWith("b.") ? projectId : `b.${projectId}`;
+    try {
+      const r = await apsRequest<{ data?: { attributes?: { displayName?: string; name?: string } } }>(
+        this.ctx,
+        "GET",
+        `/data/v1/projects/${encodeURIComponent(dmProject)}/items/${encodeURIComponent(lineageUrn)}/parent`,
+      );
+      const name = r?.data?.attributes?.displayName ?? r?.data?.attributes?.name;
+      this.folderCache.set(lineageUrn, name);
+      return name;
+    } catch (e) {
+      log.warn("aps.folder_lookup_failed", { message: String((e as Error).message ?? e).slice(0, 200) });
+      this.folderCache.set(lineageUrn, undefined);
+      return undefined;
+    }
+  }
+
   async listModelSets(projectId: string): Promise<SourceModelSet[]> {
     const sets = await listModelSets(this.ctx, projectId);
     const out: SourceModelSet[] = [];
@@ -175,65 +208,125 @@ export class LiveSource implements DataSource {
     return versions.reduce((m, v) => Math.max(m, v.version), 0);
   }
 
-  async fetchTest(projectId: string, modelSetId: string, testId: string, opts: { fetchProperties: boolean; progress?: (s: string, d: number, t: number) => void }): Promise<SourceTestData> {
-    const project = (await this.getProject(projectId)) ?? { id: projectId, name: projectId, hubId: "", hubName: "" };
-    const test = (await this.listClashTests(projectId, modelSetId)).find((t) => t.id === testId);
-    if (!test) throw new Error(`Clash test ${testId} no existe en el model set`);
-    const ms = await getModelSet(this.ctx, projectId, modelSetId);
-    const msv = await getModelSetVersion(this.ctx, projectId, modelSetId, test.modelSetVersion);
-    opts.progress?.("download", 0, 3);
-    const raw = await fetchClashResults(this.ctx, projectId, testId, { allowedHostSuffixes: CLASH_RESOURCE_HOSTS, maxBytes: 256 * 1024 * 1024 });
-    opts.progress?.("normalize", 1, 3);
+  /** Phase 1: clash resources only (seconds). */
+  async fetchClashes(projectId: string, modelSetId: string, testId: string): Promise<SourceClashData> {
+    const [project, tests, ms] = await Promise.all([
+      this.getProject(projectId).catch(() => undefined),
+      listClashTests(this.ctx, projectId, modelSetId),
+      getModelSet(this.ctx, projectId, modelSetId),
+    ]);
+    const t = tests.find((x) => x.id === testId);
+    if (!t) throw new Error(`Clash test ${testId} no existe en el model set`);
+    const test: SourceClashTest = { id: t.id, modelSetId: t.modelSetId, modelSetVersion: t.modelSetVersion, status: t.status, completedOn: t.completedOn, viewName: ms.name };
+    const [msv, raw] = await Promise.all([
+      getModelSetVersion(this.ctx, projectId, modelSetId, test.modelSetVersion),
+      fetchClashResults(this.ctx, projectId, testId, { allowedHostSuffixes: CLASH_RESOURCE_HOSTS, maxBytes: 256 * 1024 * 1024 }),
+    ]);
     const result = normalizeClashTest(raw, { documentVersions: msv.documentVersions });
-    let clashes = result.clashes;
-    const elements: ElementProps[] = [];
-    let propertiesStatus: SourceTestData["propertiesStatus"] = "skipped";
-    if (opts.fetchProperties) {
-      opts.progress?.("properties", 2, 3);
-      try {
-        const config = await loadPropertyAliases(undefined, this.root);
-        const seeds = [...new Set(result.documents.map((d) => d.seedVersionUrn).filter((u): u is string => !!u))];
-        const indexes = await ensureIndexes(this.ctx, projectId, seeds);
-        const tables = new Map<number, Map<number, ElementProps>>();
-        let missing = 0;
-        for (const doc of result.documents) {
-          const idx = doc.seedVersionUrn ? indexForVersion(indexes, doc.seedVersionUrn) : undefined;
-          if (!idx) {
-            missing++;
-            continue;
-          }
-          const lmvIds = clashes.flatMap((c) => [c.left, c.right]).filter((s) => s.documentId === doc.id).map((s) => s.viewerDbId);
-          const fields = await getIndexFields(this.ctx, projectId, idx.indexId);
-          const manifest = await getIndexManifest(this.ctx, projectId, idx.indexId);
-          const viewId = doc.viewableGuid && doc.seedVersionUrn ? resolveManifestViewId(manifest, doc.seedVersionUrn, doc.viewableGuid) : undefined;
-          const map = await fetchElementProps(this.ctx, projectId, idx.indexId, lmvIds, fields, {
-            config,
-            viewId,
-            documentId: doc.id,
-            modelFile: doc.lineageUrn,
-            documentName: doc.displayName,
-          });
-          tables.set(doc.id, map);
-          elements.push(...map.values());
-        }
-        clashes = attachPairKeys(clashes, result.documents, elementLookupFromTables(tables));
-        propertiesStatus = missing === 0 ? "ready" : "partial";
-      } catch (err) {
-        log.warn("ingest.properties_failed", { message: (err as Error).message });
-        propertiesStatus = "pending";
-      }
-    }
-    opts.progress?.("done", 3, 3);
     return {
       test,
-      project,
+      project: project ?? { id: projectId, name: projectId, hubId: "", hubName: "" },
       modelSet: { id: ms.modelSetId, name: ms.name, latestVersion: test.modelSetVersion, documentCount: msv.documentVersions.length },
-      clashes,
+      clashes: result.clashes,
       documents: result.documents,
-      elements,
-      propertiesStatus,
       warnings: result.warnings.map((w) => `${w.code}:${w.count}`),
     };
+  }
+
+  /**
+   * Phase 2: element properties via Model Properties (Index v2).
+   * - one batch-status for all seeds, then documents in PARALLEL (4 at a time);
+   * - query polling capped at 1 s (the API's retryAt asked for ~30 s waits;
+   *   results are ready in ~2 s) — this was ~150 s of a 171 s ingest;
+   * - rows cached per seed file version: unchanged documents of another model
+   *   set version are served from disk and only new lmvIds are queried.
+   */
+  async fetchProperties(projectId: string, data: SourceClashData, progress?: (s: string, d: number, t: number) => void): Promise<SourceProperties> {
+    const config = await loadPropertyAliases(undefined, this.root);
+    const cache = new PropertyRowCache(this.cacheRoot);
+    const docs = data.documents.filter((d) => d.seedVersionUrn);
+    const seeds = [...new Set(docs.map((d) => d.seedVersionUrn!))];
+    const wanted = new Map<number, Set<number>>();
+    for (const c of data.clashes) for (const s of [c.left, c.right]) (wanted.get(s.documentId) ?? wanted.set(s.documentId, new Set()).get(s.documentId)!).add(s.viewerDbId);
+    const cachedBySeed = new Map(await Promise.all(seeds.map(async (s) => [s, await cache.get(s)] as const)));
+    const needIndex = seeds.filter((s) => {
+      const c = cachedBySeed.get(s)!;
+      return docs.filter((d) => d.seedVersionUrn === s).some((d) => !c.fields || [...(wanted.get(d.id) ?? [])].some((id) => !c.rows.has(id) && !c.absent.has(id)));
+    });
+    const indexes = needIndex.length ? await ensureIndexes(this.ctx, projectId, needIndex, undefined, { maxIntervalMs: 2000, defaultIntervalMs: 1000 }) : [];
+    const warnings: string[] = [];
+    let done = 0;
+    let fromCache = 0;
+    const tables = new Map<number, Map<number, ElementProps>>();
+    const elements: ElementProps[] = [];
+    progress?.("properties", 0, docs.length);
+    await mapLimit(docs, 4, async (doc) => {
+      const seed = doc.seedVersionUrn!;
+      const ids = [...(wanted.get(doc.id) ?? [])];
+      try {
+        const cached = cachedBySeed.get(seed)!;
+        const missing = ids.filter((id) => !cached.rows.has(id) && !cached.absent.has(id));
+        let fields = cached.fields;
+        let views = cached.views ?? {};
+        const idx = indexForVersion(indexes, seed);
+        if ((missing.length || !fields) && !idx) throw new Error("sin índice de propiedades");
+        if (!fields || (doc.viewableGuid && views[doc.viewableGuid] === undefined)) {
+          const [f, manifest] = await Promise.all([fields ? Promise.resolve(fields) : getIndexFields(this.ctx, projectId, idx!.indexId), getIndexManifest(this.ctx, projectId, idx!.indexId)]);
+          fields = f;
+          if (doc.viewableGuid) views = { ...views, [doc.viewableGuid]: resolveManifestViewId(manifest, seed, doc.viewableGuid) ?? "" };
+          await cache.putMeta(seed, { fields, views });
+        }
+        if (missing.length) {
+          const chunks: number[][] = [];
+          for (let i = 0; i < missing.length; i += 1000) chunks.push(missing.slice(i, i + 1000));
+          const got: IndexRow[] = [];
+          await mapLimit(chunks, 3, async (chunk) => {
+            for await (const row of queryIndex(this.ctx, projectId, idx!.indexId, { query: lmvIdQuery(chunk) }, { maxIntervalMs: 1000, defaultIntervalMs: 500 })) got.push(row);
+          });
+          for (const r of got) cached.rows.set(r.lmvId, r);
+          const absent = missing.filter((id) => !cached.rows.has(id));
+          await cache.addRows(seed, got, absent, cached.absent);
+          for (const a of absent) cached.absent.add(a);
+        } else fromCache++;
+        const viewId = doc.viewableGuid ? views[doc.viewableGuid] || undefined : undefined;
+        const map = compileMapper(new FieldDictionary(fields), config, { documentId: doc.id, modelFile: doc.lineageUrn, documentName: doc.displayName });
+        const table = new Map<number, ElementProps>();
+        for (const id of ids) {
+          const row = cached.rows.get(id);
+          if (!row || (viewId && !(row.views ?? []).includes(viewId))) continue;
+          table.set(id, map(row));
+        }
+        tables.set(doc.id, table);
+      } catch (err) {
+        warnings.push(`properties:${doc.displayName}:${(err as Error).message.slice(0, 120)}`);
+      } finally {
+        progress?.("properties", ++done, docs.length);
+      }
+    });
+    for (const t of tables.values()) elements.push(...t.values());
+    const normalized = normalizeLinkedExternalIds(elements);
+    const normTables = new Map<number, Map<number, ElementProps>>();
+    for (const e of normalized) if (e.documentId !== undefined) (normTables.get(e.documentId) ?? normTables.set(e.documentId, new Map()).get(e.documentId)!).set(e.lmvId, e);
+    const failed = warnings.length;
+    return {
+      clashes: attachPairKeys(data.clashes, data.documents, elementLookupFromTables(normTables)),
+      elements: normalized,
+      propertiesStatus: failed === 0 ? "ready" : failed < docs.length ? "partial" : "pending",
+      warnings,
+      cachedDocuments: fromCache,
+    };
+  }
+
+  async fetchTest(projectId: string, modelSetId: string, testId: string, opts: { fetchProperties: boolean; progress?: (s: string, d: number, t: number) => void }): Promise<SourceTestData> {
+    const data = await this.fetchClashes(projectId, modelSetId, testId);
+    if (!opts.fetchProperties) return { ...data, elements: [], propertiesStatus: "skipped" };
+    const p = await this.fetchProperties(projectId, data, opts.progress);
+    return { ...data, clashes: p.clashes, elements: p.elements, propertiesStatus: p.propertiesStatus, warnings: [...data.warnings, ...p.warnings] };
+  }
+
+  async listModelSetViews(projectId: string, modelSetId: string) {
+    const views = await listModelSetViews(this.ctx, projectId, modelSetId);
+    return views.map((v) => ({ name: v.name, definition: (v.definition ?? []).map((d) => ({ lineageUrn: d.lineageUrn, ...(d.viewableName ? { viewableName: d.viewableName } : {}) })) }));
   }
 
   async triageState(projectId: string, testId: string) {

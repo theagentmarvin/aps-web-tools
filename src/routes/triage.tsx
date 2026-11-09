@@ -221,7 +221,7 @@ function Workspace({ loading, manualOk, onManual, onTestChange, onReload, onQuer
           ) : showNoAnalysis ? (
             <NoAnalysis command={payload?.modelSet.agentCommand ?? ""} onManual={onManual} />
           ) : (
-            <ListArea onClear={() => onQueryChange({ ...query, filters: { decision: ["pendiente"] }, q: "" })} onSend={() => setSendOpen(true)} readyCount={progress.ready} />
+            <ListArea onClear={() => onQueryChange({ ...query, filters: { decision: ["pendiente"] }, q: "", docs: undefined })} onSend={() => setSendOpen(true)} readyCount={progress.ready} />
           )}
         </section>
         <ResizeHandle label={t("workspace.resizeList")} value={layout.list} onChange={(v) => resize("list", v)} />

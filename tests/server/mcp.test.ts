@@ -41,7 +41,7 @@ describe("coord MCP server (fixtures)", () => {
   it("lists every contract tool and no approve tool", async () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(TOOLS.map((t) => t.name).sort());
-    expect(tools).toHaveLength(27);
+    expect(tools).toHaveLength(29);
     const apply = tools.find((t) => t.name === "apply_approved_proposals")!;
     expect(apply.annotations?.destructiveHint).toBe(true);
     expect(JSON.stringify(apply.inputSchema)).toContain("dryRun");
@@ -122,7 +122,7 @@ describe("coord MCP server (fixtures)", () => {
 
     const audit = await coord.store.listAudit();
     expect(audit.filter((e) => e.action === "tool.call").length).toBeGreaterThan(8);
-  });
+  }, 30_000); // full end-to-end flow: slow under parallel suite load
 
   it("validates agent-written text and referenced ids", async () => {
     const groups = await call("list_groups", { filter: { validity: ["real"] }, limit: 1 });

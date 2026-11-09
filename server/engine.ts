@@ -17,6 +17,8 @@ import type { ElementProps, ModelDocument, NormalizedClash } from "../core/types
 import type { CoordinatorConfig } from "./config";
 import { loadRulesFromDisk } from "./rules-loader";
 import { sanitizeModelText } from "./sanitize";
+import { disambiguateTitles, normalizeLinkedExternalIds } from "./group-titles";
+import { modelLevelDiscipline, outCode, resolveDocument, SIN, type DocDiscipline, type DocInfo, type ProjectDisciplines } from "./disciplines";
 import type {
   AccStatus,
   ClashRecord,
@@ -91,6 +93,8 @@ export interface EngineInput {
   levelMap?: Readonly<Record<string, string>>;
   /** Extra tags per MC clash id (e.g. `regresion`). */
   extraTags?: (c: NormalizedClash) => readonly string[] | undefined;
+  /** Project discipline mappings (server/disciplines.ts). Default: none. */
+  projectDisciplines?: ProjectDisciplines;
   /** For engine-built issue skeletons (due dates). */
   publishDate?: string;
   testId?: string;
@@ -152,12 +156,27 @@ export function representativeOf(members: readonly ClassifiedClash[]): Classifie
 /** Run the deterministic engine and project its output to server records. */
 export function runEngine(input: EngineInput): EngineOutput {
   const rs = input.rules ?? loadRules();
+  // Model discipline per document is decided HERE (assignment > rule > matrix-if-enabled);
+  // everything else is naming-independent (category + unambiguous system), see server/disciplines.ts.
+  // Linked-model elements are keyed by their own uid so twin clashes dedupe (server/group-titles.ts).
+  const elementsIn = normalizeLinkedExternalIds(input.elements);
+  const pd = input.projectDisciplines ?? { version: 0, assignments: {}, rules: [] };
+  const matrixOn = input.config.disciplines.fileNameDetection === "matrix";
+  const docInfo = new Map<number, DocInfo>(
+    input.documents.map((d) => [d.id, { documentId: d.id, lineageUrn: d.lineageUrn, fileName: d.displayName, viewName: d.viewableName }]),
+  );
+  const modelLevel = new Map<number, DocDiscipline | undefined>([...docInfo].map(([id, di]) => [id, modelLevelDiscipline(di, pd, rs, matrixOn)]));
   const res = runCoordination({
     clashes: input.clashes,
-    elements: input.elements,
+    elements: elementsIn,
     documents: input.documents,
     rules: rs,
     options: {
+      modelDiscipline: (docId) => {
+        const m = modelLevel.get(docId);
+        return m && m.discipline !== SIN ? m.discipline : null;
+      },
+      strictCategoryDiscipline: true,
       review: reviewPolicyFrom(input.config),
       ...(input.extraTags ? { extraTags: input.extraTags } : {}),
       ...(input.levelMap && Object.keys(input.levelMap).length ? { levelMap: input.levelMap } : {}),
@@ -166,14 +185,20 @@ export function runEngine(input: EngineInput): EngineOutput {
 
   const docs = new Map(input.documents.map((d) => [d.id, d]));
   const els = new Map<string, ElementProps>();
-  for (const e of input.elements) if (e.documentId !== undefined) els.set(`${e.documentId}:${e.lmvId}`, e);
+  for (const e of elementsIn) if (e.documentId !== undefined) els.set(`${e.documentId}:${e.lmvId}`, e);
 
-  // Document discipline = dominant discipline of its elements as seen by the engine.
-  const docDisc = new Map<number, string[]>();
+  // Element discipline counts per document (distinct elements), for the "elements" step.
+  const docCounts = new Map<number, Map<string, number>>();
+  const seenEl = new Set<string>();
   for (const c of res.classified) {
     for (const el of [c.left, c.right]) {
       const id = Number(el.documentId);
-      if (Number.isFinite(id)) docDisc.set(id, [...(docDisc.get(id) ?? []), el.discipline]);
+      const k = `${id}|${String(el.elementKey ?? el.externalId ?? "")}`;
+      if (!Number.isFinite(id) || seenEl.has(k)) continue;
+      seenEl.add(k);
+      const m = docCounts.get(id) ?? new Map<string, number>();
+      m.set(el.discipline, (m.get(el.discipline) ?? 0) + 1);
+      docCounts.set(id, m);
     }
   }
 
@@ -191,7 +216,7 @@ export function runEngine(input: EngineInput): EngineOutput {
       dbId: s.viewerDbId,
       objectId: s.objectId,
       externalId: el?.externalId,
-      discipline: facts?.discipline ?? "?",
+      discipline: outCode(facts?.discipline),
       category: (facts?.category as string | undefined) ?? el?.category ?? "?",
       name: sanitizeModelText(el?.name ?? `${el?.category ?? "Elemento"} ${s.viewerDbId}`),
       family: el?.family ? sanitizeModelText(el.family) : undefined,
@@ -276,7 +301,7 @@ export function runEngine(input: EngineInput): EngineOutput {
       id: g.id,
       strategy: mapStrategy(g.strategy),
       engineStrategy: g.strategy,
-      title: sanitizeModelText(g.title, 160),
+      title: sanitizeModelText(g.title, 160).replace(/\bUNK\b/g, SIN),
       clashIds: [...g.mcClashIds],
       validity,
       nature: g.nature,
@@ -295,11 +320,11 @@ export function runEngine(input: EngineInput): EngineOutput {
       reviewState: g.reviewState,
       reviewReasons: g.reviewReasons,
       escalate: g.escalate,
-      disciplinePair: g.disciplinePair,
-      pair: [p0 ?? "?", p1 ?? p0 ?? "?"],
+      disciplinePair: g.disciplinePair.split("×").map(outCode).join("×"),
+      pair: [outCode(p0), outCode(p1 ?? p0)],
       categoryPair: g.categoryPair,
       levels: g.levels.map((l) => sanitizeModelText(l, 40)),
-      responsibleDiscipline: g.responsibleDiscipline,
+      responsibleDiscipline: outCode(g.responsibleDiscipline),
       rootCause: g.rootCause,
       suggestedAction: g.suggestedAction,
       ruleIds: g.ruleIds,
@@ -314,6 +339,23 @@ export function runEngine(input: EngineInput): EngineOutput {
     };
   });
 
+  // Unique, self-explaining titles (same type on the same level → state the element).
+  const hubExt = new Map(res.groups.map((g) => [g.id, g.hubElement?.externalId]));
+  disambiguateTitles(groups, {
+    clashById,
+    elementByRef: new Map([...els].map(([k, e]) => [`E-${k}`, e])),
+    hubRef: (g) => {
+      const ext = hubExt.get(g.id);
+      if (!ext) return undefined;
+      for (const id of g.clashIds) {
+        const c = clashById.get(id);
+        if (c?.a.externalId === ext) return c.a.ref;
+        if (c?.b.externalId === ext) return c.b.ref;
+      }
+      return undefined;
+    },
+  });
+
   const documents: TestDocumentRecord[] = input.documents.map((d) => ({
     documentId: d.id,
     urn: d.urn,
@@ -321,7 +363,10 @@ export function runEngine(input: EngineInput): EngineOutput {
     name: sanitizeModelText(d.displayName),
     viewableName: sanitizeModelText(d.viewableName),
     lineageUrn: d.lineageUrn,
-    discipline: dominant(docDisc.get(d.id) ?? []),
+    ...(() => {
+      const r = resolveDocument(docInfo.get(d.id)!, pd, rs, matrixOn, docCounts.get(d.id));
+      return { discipline: outCode(r.discipline), disciplineSource: r.source, ...(r.share !== undefined ? { disciplineShare: r.share } : {}), ...(r.ruleId ? { disciplineRuleId: r.ruleId } : {}) };
+    })(),
   }));
 
   return {

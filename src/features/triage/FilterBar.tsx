@@ -180,6 +180,7 @@ export function FilterBar({ query, onChange }: { query: ListQuery; onChange: (q:
         <IconSearch size={14} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
         <input id="triage-search" type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("common.search")} className={`${inputCls} w-56 pl-7`} />
       </label>
+      {query.docs && <DocsChip docs={query.docs} onClear={() => onChange({ ...query, docs: undefined })} />}
       {shown.map((k) => (
         <FilterChip key={k} fkey={k} query={query} onChange={(filters) => onChange({ ...query, filters })} autoOpen={justAdded === k} />
       ))}
@@ -209,7 +210,7 @@ export function FilterBar({ query, onChange }: { query: ListQuery; onChange: (q:
         )}
       </div>
       {!isDefaultQuery(query) && (
-        <button type="button" onClick={() => onChange({ filters: { decision: ["pendiente"] }, sort: query.sort, view: query.view, q: "" })} className="text-xs text-brand underline-offset-2 hover:underline">
+        <button type="button" onClick={() => onChange({ filters: { decision: ["pendiente"] }, sort: query.sort, view: query.view, q: "", docs: undefined })} className="text-xs text-brand underline-offset-2 hover:underline">
           {t("list.clearFilters")}
         </button>
       )}
@@ -254,5 +255,28 @@ export function FilterBar({ query, onChange }: { query: ListQuery; onChange: (q:
         </div>
       </div>
     </div>
+  );
+}
+
+const NO_DOCS: { documentId: number; name: string }[] = [];
+
+/** Document-pair filter coming from the clash grid (docs=a,b). */
+function DocsChip({ docs, onClear }: { docs: string; onClear: () => void }) {
+  const t = useT();
+  const { store } = useTriageContext();
+  const documents = useTriage(store, (s) => s.payload?.test.documents ?? NO_DOCS);
+  const [a, b] = docs.split(",").map(Number);
+  const name = (id: number | undefined) => {
+    const d = documents.find((x) => x.documentId === id);
+    return d ? d.name.replace(" · ", " - ") : String(id ?? "");
+  };
+  const label = t("grid.docsFilter", { a: name(a), b: name(b ?? a) });
+  return (
+    <span className="inline-flex max-w-[420px] items-center gap-1 rounded-full border border-orange-300 bg-orange-50 px-2.5 py-0.5 text-xs text-orange-900" title={label}>
+      <span className="truncate">{label}</span>
+      <button type="button" onClick={onClear} aria-label={`${t("common.clear")} ${label}`} className="hover:text-brand">
+        <IconX size={11} />
+      </button>
+    </span>
   );
 }

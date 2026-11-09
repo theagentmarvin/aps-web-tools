@@ -97,3 +97,28 @@ All JSON. Errors are `{ error: { code, message } }` with a matching status code.
   - `counts.assignments` when it is 0;
   - the clash count of uncached tests (always 0);
   - `ProjectSummary.modelSetCount` when it is 0.
+
+## Model set page: clash grid and disciplines (phase 4)
+
+- **Route.** `/proyectos/:projectId` has a model set selector (`?modelSet=`), a version selector (`?test=` takes a test key or an ACC test id) and four tabs (`?tab=`):
+  - Matriz de interferencias (default);
+  - Pruebas (clash checks);
+  - Disciplinas;
+  - Cerradas (a placeholder until the server reports closed clashes).
+- **Wire types.** They come from `server/api/contract.ts`: `ClashGrid`, `ClashGridDocument`, `ClashGridCell`, `IngestJob`, `ModelSetView`, `DisciplineRule`, `DisciplineConfig`, `DisciplinePreview`. The UI adds an optional `GridDocument.folderPath`; it is **not in the contract yet** and is needed to tell apart two files with the same name.
+- **Grid behaviour.**
+  - A cell shows groups when the test is classified and clashes otherwise; the legend says which.
+  - Heat scale: linear orange in 7 steps. Columns are the same models as the rows (full symmetric matrix); the diagonal is a model against itself.
+  - Keyboard: roving focus, arrows and Home/End move, Enter or Space opens.
+  - Opening a cell goes to `/coordinacion/:p/:m?test=<testKey>&docs=a,b&decision=`. Empty cells don't navigate. Counts-only tests offer Analizar instead.
+- **Triage `docs` filter.** The triage workspace filters `docs=a,b` client-side, using each group's member document pairs. `GET /tests/:id/groups` has no `docs` parameter yet.
+- **Ingest.** `POST …/ingest` returns `{jobId}`; `GET /ingest-jobs/:jobId` is polled every 800 ms. The grid reloads at `clash_grid_ready`. A plain `{testKey}` reply (older server) counts as done.
+- **Disciplines.**
+  - Assigning a discipline sends `PUT …/documents/:lineageUrnB64/discipline {discipline, createRule?}`. A reply of `{jobId}` is polled, then the grid is refetched.
+  - The preview is `POST …/disciplines/preview {modelSetId?, rules}`.
+  - Rules are saved with `PUT …/disciplines/rules {rules, version?}`.
+  - **Assumed endpoint, not in the contract:** `POST …/disciplines/proposals/:id/decision {decision}`. Accepting first sends the same PUT.
+- **Fallbacks while the server lands.**
+  - A 404 on `…/clash-grid` builds the grid from the triage payload of a cached test (distinct groups per document and per pair).
+  - A 404 on `/disciplines` falls back to the code list from `rules/discipline-matrix.yaml`, and the Disciplinas tab becomes read-only with a notice.
+  - A 404 on `…/views` falls back to an empty list.

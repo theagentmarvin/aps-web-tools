@@ -110,3 +110,79 @@ export function plain(v: MaybeUntrusted | unknown): string {
   if (typeof v === "object" && "untrusted" in (v as object)) return String((v as { untrusted: unknown }).untrusted ?? "");
   return String(v);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Clash grid, ingest jobs, project disciplines — wire types from the server
+// contract; UI-only view models below.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type {
+  ClashGridCell as GridCell,
+  DisciplineConfig,
+  DisciplinePreview,
+  DisciplineRule,
+  IngestJob,
+  ModelSetView,
+} from "../../../server/api/contract";
+import type { ClashGrid as WireClashGrid, ClashGridDocument as WireGridDocument, Discipline as WireDiscipline, DisciplineRule as WireRule, IngestJob as WireJob, TestRun as WireTestRun } from "../../../server/api/contract";
+
+/**
+ * Grid document as the UI uses it. `folderPath` is not in the server contract
+ * yet (requested): it tells apart two files with the same name.
+ */
+export type GridDocument = WireGridDocument & { folderPath?: string };
+export type ClashGrid = Omit<WireClashGrid, "documents"> & { documents: GridDocument[] };
+
+export type GridState = ClashGrid["state"];
+export type IngestPhase = WireJob["phase"];
+
+/** Discipline code for "not assigned yet". */
+export const UNASSIGNED = "SIN";
+
+/** Test as listed on the model set page (TestRun carries state/delta/documentCount). */
+export type TestRunInfo = WireTestRun;
+
+export interface TestsOverview {
+  tests: TestRunInfo[];
+  views: import("../../../server/api/contract").ModelSetView[];
+}
+
+/** POST …/ingest: new servers return a job id; older ones returned the test key directly. */
+export interface IngestStart {
+  jobId?: string;
+  testKey?: string;
+}
+
+/** A rule as edited in the UI (server fills id/createdBy/createdAt). */
+export type DisciplineRuleInput = Pick<WireRule, "match" | "value" | "field" | "discipline"> & { id?: string };
+
+export interface SetDisciplineRequest {
+  discipline: string;
+  /** Also save a project naming rule (applies to other matching files). */
+  createRule?: DisciplineRuleInput;
+}
+
+/** PUT …/discipline returns the regrouped grid, or a job when reclassification runs in the background. */
+export type SetDisciplineResult = ClashGrid | { jobId: string };
+
+/** Agent discipline_mapping proposal, parsed from DisciplineConfig.pendingProposals. */
+export interface DisciplineSuggestion {
+  id: string;
+  summary: string;
+  rationale: string;
+  discipline: string;
+  lineageUrns: string[];
+  fileNames: string[];
+  rule?: DisciplineRuleInput;
+  confidence?: number;
+}
+
+/** Normalised DisciplineConfig for the UI. */
+export interface ProjectDisciplines {
+  version?: number;
+  disciplines: WireDiscipline[];
+  rules: DisciplineRuleInput[];
+  suggestions: DisciplineSuggestion[];
+  /** True when the server has no /disciplines endpoint yet (read-only fallback). */
+  unsupported?: boolean;
+}

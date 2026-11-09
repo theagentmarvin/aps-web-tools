@@ -348,9 +348,48 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
     "POST",
     "/projects/:projectId/model-sets/:modelSetId/tests/:accTestId/ingest",
     async ({ params, body, user }) => {
-      const b = z.object({ refresh: z.boolean().optional(), classify: z.boolean().optional() }).parse(body ?? {});
-      return ui.ingestAndClassify(params.projectId, params.modelSetId, params.accTestId, b, await user());
+      const b = z.object({ refresh: z.boolean().optional(), classify: z.boolean().optional(), wait: z.boolean().optional() }).parse(body ?? {});
+      // Default: asynchronous job (phase 1 makes the clash grid available within seconds).
+      if (b.wait) return ui.ingestAndClassify(params.projectId, params.modelSetId, params.accTestId, b, await user());
+      return ui.startIngest(params.projectId, params.modelSetId, params.accTestId, b, await user());
     },
+    true,
+  );
+  add("GET", "/ingest-jobs/:jobId", async ({ params }) => coord.getIngestJob(params.jobId));
+  add("GET", "/projects/:projectId/model-sets/:modelSetId/clash-grid", async ({ params, query }) => ui.clashGrid(params.projectId, params.modelSetId, query.get("test") ?? undefined));
+  add("GET", "/projects/:projectId/model-sets/:modelSetId/views", async ({ params }) => ui.modelSetViews(params.projectId, params.modelSetId));
+
+  // ── disciplines (writes are human-only, audited) ───────────────────────
+  const RuleIn = z.object({
+    id: z.string().max(20).optional(),
+    match: z.enum(["contains", "startsWith", "regex"]),
+    value: z.string().min(1).max(200),
+    field: z.enum(["fileName", "folder", "viewName"]),
+    discipline: z.string().min(2).max(6),
+  });
+  add("GET", "/projects/:projectId/disciplines", async ({ params }) => ui.disciplineConfig(params.projectId));
+  add(
+    "PUT",
+    "/projects/:projectId/model-sets/:modelSetId/documents/:lineageKey/discipline",
+    async ({ params, query, body, user }) => {
+      const b = z.strictObject({ discipline: z.string().min(2).max(6), createRule: RuleIn.omit({ id: true, discipline: true }).optional() }).parse(body);
+      let lineageUrn: string;
+      try {
+        lineageUrn = Buffer.from(params.lineageKey, "base64url").toString("utf8");
+      } catch {
+        throw new CoordError("validation_error", "lineageUrn mal codificado (base64url)");
+      }
+      if (!/^urn:[A-Za-z0-9:._-]+$/.test(lineageUrn)) throw new CoordError("validation_error", "lineageUrn inválido");
+      return ui.setDocumentDiscipline(params.projectId, params.modelSetId, lineageUrn, b, await user(), query.get("test") ?? undefined);
+    },
+    true,
+  );
+  add("PUT", "/projects/:projectId/disciplines/rules", async ({ params, body, user }) => ui.replaceDisciplineRules(params.projectId, z.object({ rules: z.array(RuleIn).max(200) }).parse(body).rules, await user()), true);
+  add("POST", "/projects/:projectId/disciplines/preview", async ({ params, body }) => ui.previewDisciplineRules(params.projectId, z.object({ rules: z.array(RuleIn).max(200) }).parse(body).rules), true);
+  add(
+    "POST",
+    "/projects/:projectId/disciplines/proposals/:proposalId/decision",
+    async ({ params, body, user }) => ui.decideDisciplineProposal(params.projectId, params.proposalId, z.object({ decision: z.enum(["accept", "reject"]) }).parse(body).decision, await user()),
     true,
   );
 

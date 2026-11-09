@@ -5,6 +5,7 @@
  *
  * Every number shown to the agent or the UI is computed here.
  */
+import { randomBytes } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { diffStateIndex, diffTestVersions } from "../core/ingest";
@@ -18,8 +19,9 @@ import { WebAuthnService } from "./approval/webauthn";
 import { loadOrCreateSecret, readSecret, secureDir } from "./secure/keystore";
 import { ClashCache, type CacheKey } from "./cache/clash-cache";
 import { loadConfig, MAX_SUPPORTED_LEVEL, type AutonomyLevel, type CoordinatorConfig, type LoadedConfig } from "./config";
-import { CLOSABLE, ENGINE_NAME, ENGINE_VERSION, runEngine } from "./engine";
+import { CLOSABLE, ENGINE_NAME, ENGINE_VERSION, loadRules, runEngine } from "./engine";
 import { fixtureLedgerSeed, LedgerService } from "./ledger";
+import { assertCode, DisciplineStore, inCode, outCode, suggestedToken, validCodes } from "./disciplines";
 import type { ClashDiff } from "../core/types";
 import { checkAgentText, referencedIds, untrusted, type Untrusted } from "./sanitize";
 import { FixtureSource } from "./source/fixtures";
@@ -49,6 +51,24 @@ import type {
 import { bareProjectId, CoordError, log, nowIso, paginate, percentile, round, sha256, testKeyOf } from "./util";
 
 export const SERVER_VERSION = "0.1.0";
+
+export type IngestPhase = "downloading" | "clash_grid_ready" | "properties" | "classifying" | "done" | "failed";
+
+/** GET /api/coord/ingest-jobs/:jobId */
+export interface IngestJob {
+  jobId: string;
+  phase: IngestPhase;
+  /** 0..1 */
+  progress: number;
+  /** Spanish status line. */
+  message: string;
+  testKey?: string;
+  accTestId: string;
+  error?: string;
+  startedAt: string;
+  updatedAt: string;
+  timings: Record<string, number>;
+}
 
 /** Summary dimensions whose values come from model data (wrapped as Untrusted in outputs). */
 const MODEL_DIMS = new Set(["level", "categoryPair", "documentPair"]);
@@ -148,13 +168,31 @@ export class Coordinator {
       opts.source ??
       (kind === "fixtures"
         ? new FixtureSource({ home: this.store.home })
-        : new LiveSource(() => new ApsAuth({ config: coordinatorAuthConfig(this.root, { homeOverride }) }), { root: this.root }));
+        : new LiveSource(() => new ApsAuth({ config: coordinatorAuthConfig(this.root, { homeOverride }) }), { root: this.root, cacheRoot: this.store.cacheRoot }));
     const w = this.config.webauthn;
     this.webauthn = new WebAuthnService(sd, () => loadOrCreateApprovalKey(sd), { rpID: w.rpID, rpName: w.rpName, origins: w.origins.length ? w.origins : [this.config.ui.baseUrl.replace(/\/$/, "")] }, this.now);
   }
 
   readonly secureDir: string;
   readonly webauthn: WebAuthnService;
+  /** Project discipline mappings (assignments + ordered rules), see server/disciplines.ts. */
+  get disciplines(): DisciplineStore {
+    return (this.disciplineStore ??= new DisciplineStore(this.store));
+  }
+  private disciplineStore?: DisciplineStore;
+
+  /** Re-classify every classified cached test of a model set (or a project) — no re-download. */
+  async reclassifyCached(filter: { projectId: string; modelSetId?: string }, caller: CallerContext): Promise<string[]> {
+    const done: string[] = [];
+    for (const t of await this.store.listTests()) {
+      if (bareProjectId(t.projectId) !== bareProjectId(filter.projectId) || (filter.modelSetId && t.modelSetId !== filter.modelSetId)) continue;
+      if (!(await this.store.getClassification(t.testKey))) continue;
+      await this.classify({ testKey: t.testKey }, caller);
+      done.push(t.testKey);
+    }
+    return done;
+  }
+
   /** Per-model-set clash ledger (core/ingest/ledger.ts), seeded from the fixture history in fixtures mode. */
   get ledger(): LedgerService {
     return (this.ledgerSvc ??= new LedgerService(this.store, this.source instanceof FixtureSource ? fixtureLedgerSeed(this.source.dir) : undefined));
@@ -386,48 +424,108 @@ export class Coordinator {
 
   // ── ingest ───────────────────────────────────────────────────────────────
 
+  /**
+   * PHASED ingest:
+   *   downloading → clash_grid_ready (clash resources cached: the grid is
+   *   available within seconds) → properties (Model Properties, parallel,
+   *   cached per document version) → done. `onPhase` reports progress.
+   * The clash ledger diff is recorded after phase 1 and refined after phase 2
+   * (pairKeys); both are idempotent per version.
+   */
   async ingest(
     input: { projectId?: string; modelSetId?: string; testId: string; fetchProperties?: boolean; refresh?: boolean },
     caller: CallerContext = { actor: AGENT_ACTOR },
     progress?: (step: string, done: number, total: number) => void,
+    onPhase?: (phase: IngestPhase, progress: number, message: string, testKey?: string) => void,
   ) {
     const t0 = this.now();
+    const timings: Record<string, number> = {};
     const projectId = await this.ctxProject(input.projectId);
     const modelSetId = await this.ctxModelSet(projectId, input.modelSetId);
     const testKey = testKeyOf(projectId, modelSetId, input.testId);
     const existing = await this.store.getTest(testKey);
-    if (existing && !input.refresh && (await this.cache.has(this.cacheKey(existing)))) {
-      return { ...this.ingestOutput(existing), durationMs: this.now() - t0, cached: true };
+    if (existing && !input.refresh && existing.properties.status !== "pending" && (await this.cache.has(this.cacheKey(existing)))) {
+      onPhase?.("clash_grid_ready", 0.3, `Prueba en caché (${existing.counts.clashes} interferencias)`, testKey);
+      return { ...this.ingestOutput(existing), durationMs: this.now() - t0, cached: true, timings };
     }
-    const data = await this.source.fetchTest(projectId, modelSetId, input.testId, { fetchProperties: input.fetchProperties !== false, progress });
-    // Per-clash triage state from ACC clash groups (research §3.3); best effort.
+
+    // ── Phase 1: clash resources only.
+    onPhase?.("downloading", 0.05, "Descargando las interferencias desde ACC…");
+    progress?.("download", 0, 3);
+    const data = await this.source.fetchClashes(projectId, modelSetId, input.testId);
     const triage = await this.source.triageState(projectId, input.testId).catch(() => undefined);
     if (triage) data.clashes = data.clashes.map((c) => ({ ...c, triage: triage.assigned.has(c.id) ? "assigned" : triage.closed.has(c.id) ? "closed" : "open" }));
     const key: CacheKey = { projectId: bareProjectId(projectId), modelSetId, version: data.test.modelSetVersion, testId: input.testId };
     await this.cache.writeTest(key, { clashes: data.clashes, documents: data.documents, meta: { source: this.source.kind, warnings: data.warnings } });
-    await this.cache.writeElements(key, data.elements);
+    await this.cache.writeElements(key, []);
+    const previous = (await this.store.listTests())
+      .filter((t) => bareProjectId(t.projectId) === bareProjectId(projectId) && t.modelSetId === modelSetId && t.modelSetVersion < data.test.modelSetVersion)
+      .sort((a, b) => b.modelSetVersion - a.modelSetVersion)[0];
+    const wantProps = input.fetchProperties !== false;
+    let rec = this.buildTestRecord(testKey, projectId, modelSetId, input.testId, data, [], wantProps ? "pending" : "skipped", previous?.testKey, data.warnings);
+    await this.store.putTest(rec);
+    await this.recordLedgerDiff(rec, previous, data.clashes);
+    const ctx = await this.store.getContext();
+    await this.store.setContext({ ...ctx, projectId, projectName: data.project.name, modelSetId, modelSetName: data.modelSet.name, testKey });
+    timings.clashesMs = this.now() - t0;
+    onPhase?.("clash_grid_ready", 0.3, `${data.clashes.length} interferencias descargadas; leyendo propiedades…`, testKey);
 
+    // ── Phase 2: element properties.
+    if (wantProps) {
+      const t1 = this.now();
+      onPhase?.("properties", 0.35, "Leyendo propiedades de los elementos (Model Properties)…", testKey);
+      progress?.("properties", 1, 3);
+      const p = await this.source.fetchProperties(projectId, data, (_s, d, t) => {
+        onPhase?.("properties", 0.35 + 0.45 * (t ? d / t : 1), `Propiedades: ${d}/${t} modelos`, testKey);
+      });
+      await this.cache.writeTest(key, { clashes: p.clashes, documents: data.documents, meta: { source: this.source.kind, warnings: [...data.warnings, ...p.warnings] } });
+      await this.cache.writeElements(key, p.elements);
+      rec = this.buildTestRecord(testKey, projectId, modelSetId, input.testId, { ...data, clashes: p.clashes }, p.elements, p.propertiesStatus, previous?.testKey, [...data.warnings, ...p.warnings]);
+      await this.store.putTest(rec);
+      await this.recordLedgerDiff(rec, previous, p.clashes, p.allElementKeys);
+      timings.propertiesMs = this.now() - t1;
+      timings.propertyDocsFromCache = p.cachedDocuments ?? 0;
+    }
+    progress?.("done", 3, 3);
+    await this.store.audit({
+      actor: caller.actor,
+      action: "test.ingested",
+      projectId,
+      modelSetId,
+      testId: testKey,
+      accTestId: input.testId,
+      details: { testKey, clashes: rec.counts.clashes, version: rec.modelSetVersion, properties: rec.properties.status, ms: this.now() - t0 },
+    });
+    return { ...this.ingestOutput(rec), durationMs: this.now() - t0, cached: false, timings };
+  }
+
+  private buildTestRecord(
+    testKey: string,
+    projectId: string,
+    modelSetId: string,
+    accTestId: string,
+    data: { project: { name: string }; modelSet: { name: string }; test: { modelSetVersion: number; viewName: string; completedOn?: string }; clashes: NormalizedClash[]; documents: import("../core/types").ModelDocument[] },
+    elements: readonly ElementProps[],
+    propertiesStatus: TestRecord["properties"]["status"],
+    previousTestKey: string | undefined,
+    warnings: string[],
+  ): TestRecord {
     const byStatus: Record<AccStatus, number> = { active: 0, reviewed: 0, resolved: 0, closed: 0 };
     for (const c of data.clashes) if (c.status in byStatus) byStatus[c.status as AccStatus]++;
     const byTriageState = { open: 0, assigned: 0, closed: 0 };
     for (const c of data.clashes) byTriageState[c.triage ?? "open"]++;
-    const afterDedupe = new Set(data.clashes.map((c) => c.pairKey ?? c.id)).size;
     const pens = data.clashes.map((c) => c.penetrationMm).sort((a, b) => a - b);
     const sides = new Set(data.clashes.flatMap((c) => [`${c.left.documentId}:${c.left.viewerDbId}`, `${c.right.documentId}:${c.right.viewerDbId}`]));
-    const found = new Set(data.elements.map((e) => `${e.documentId}:${e.lmvId}`));
+    const found = new Set(elements.map((e) => `${e.documentId}:${e.lmvId}`));
     const coverage = sides.size ? [...sides].filter((s) => found.has(s)).length / sides.size : 0;
-    const previous = (await this.store.listTests())
-      .filter((t) => bareProjectId(t.projectId) === bareProjectId(projectId) && t.modelSetId === modelSetId && t.modelSetVersion < data.test.modelSetVersion)
-      .sort((a, b) => b.modelSetVersion - a.modelSetVersion)[0];
-
-    const rec: TestRecord = {
+    return {
       testKey,
       projectId,
       projectName: data.project.name,
       modelSetId,
       modelSetName: data.modelSet.name,
       modelSetVersion: data.test.modelSetVersion,
-      testId: input.testId,
+      testId: accTestId,
       viewName: data.test.viewName,
       completedOn: data.test.completedOn,
       ingestedAt: nowIso(this.now()),
@@ -439,38 +537,67 @@ export class Coordinator {
         viewableName: untrusted(d.viewableName).untrusted,
         lineageUrn: d.lineageUrn,
       })),
-      counts: { clashes: data.clashes.length, afterDedupe, elements: data.elements.length, byStatus, byTriageState },
+      counts: { clashes: data.clashes.length, afterDedupe: new Set(data.clashes.map((c) => c.pairKey ?? c.id)).size, elements: elements.length, byStatus, byTriageState },
       penetrationMm: { p50: round(percentile(pens, 50)), p90: round(percentile(pens, 90)), max: round(pens[pens.length - 1] ?? 0) },
-      properties: { status: data.propertiesStatus, coveragePct: round(coverage * 100) },
-      previousTestKey: previous?.testKey,
+      properties: { status: propertiesStatus, coveragePct: round(coverage * 100) },
+      previousTestKey,
       clashesHash: sha256(data.clashes.map((c) => `${c.id}:${c.distanceMm}:${c.status}`).join("|")),
-      warnings: data.warnings,
+      warnings,
     };
-    await this.store.putTest(rec);
-    // Clash ledger: diff against the previous cached version using every older recorded version as history.
-    if (previous) {
-      const prevRaw = await this.loadRaw(previous).catch(() => undefined);
-      if (prevRaw) {
-        try {
-          const diff = await this.ledger.diffAndRecord(projectId, modelSetId, { version: previous.modelSetVersion, clashes: prevRaw.clashes }, { version: rec.modelSetVersion, clashes: data.clashes }, data.allElementKeys);
-          await this.store.withLock(() => writeJsonAtomic(this.store.path("tests", testKey, "diff.json"), { prevTestKey: previous.testKey, diff }));
-        } catch (err) {
-          log.warn("ledger.update_failed", { message: (err as Error).message });
-        }
-      }
+  }
+
+  /** Clash ledger diff against the previous cached version (all older recorded versions as history). */
+  private async recordLedgerDiff(rec: TestRecord, previous: TestRecord | undefined, clashes: readonly NormalizedClash[], allElementKeys?: string[]): Promise<void> {
+    if (!previous) return;
+    const prevRaw = await this.loadRaw(previous).catch(() => undefined);
+    if (!prevRaw) return;
+    try {
+      const diff = await this.ledger.diffAndRecord(rec.projectId, rec.modelSetId, { version: previous.modelSetVersion, clashes: prevRaw.clashes }, { version: rec.modelSetVersion, clashes }, allElementKeys);
+      await this.store.withLock(() => writeJsonAtomic(this.store.path("tests", rec.testKey, "diff.json"), { prevTestKey: previous.testKey, diff }));
+    } catch (err) {
+      log.warn("ledger.update_failed", { message: (err as Error).message });
     }
-    const ctx = await this.store.getContext();
-    await this.store.setContext({ ...ctx, projectId, projectName: data.project.name, modelSetId, modelSetName: data.modelSet.name, testKey });
-    await this.store.audit({
-      actor: caller.actor,
-      action: "test.ingested",
-      projectId,
-      modelSetId,
-      testId: testKey,
-      accTestId: input.testId,
-      details: { testKey, clashes: rec.counts.clashes, version: rec.modelSetVersion, properties: rec.properties.status },
-    });
-    return { ...this.ingestOutput(rec), durationMs: this.now() - t0, cached: false };
+  }
+
+  // ── ingest jobs (asynchronous, for the web UI) ─────────────────────────────
+
+  private readonly jobs = new Map<string, IngestJob>();
+
+  /** Start an ingest (+ optional classification) in the background; returns the job id immediately. */
+  startIngestJob(input: { projectId?: string; modelSetId?: string; testId: string; refresh?: boolean; classify?: boolean }, caller: CallerContext): IngestJob {
+    const jobId = `J-${randomBytes(6).toString("hex")}`;
+    const now = nowIso(this.now());
+    const job: IngestJob = { jobId, phase: "downloading", progress: 0, message: "En cola…", startedAt: now, updatedAt: now, accTestId: input.testId, timings: {} };
+    this.jobs.set(jobId, job);
+    if (this.jobs.size > 50) this.jobs.delete(this.jobs.keys().next().value!);
+    const set = (phase: IngestPhase, progress: number, message: string, testKey?: string) => {
+      Object.assign(job, { phase, progress: Math.round(progress * 1000) / 1000, message, updatedAt: nowIso(this.now()), ...(testKey ? { testKey } : {}) });
+    };
+    const t0 = this.now();
+    void (async () => {
+      try {
+        const r = await this.ingest({ projectId: input.projectId, modelSetId: input.modelSetId, testId: input.testId, refresh: input.refresh }, caller, undefined, set);
+        Object.assign(job.timings, r.timings);
+        if (input.classify !== false) {
+          const t2 = this.now();
+          set("classifying", 0.85, "Clasificando y agrupando…", r.testKey);
+          await this.classify({ testKey: r.testKey }, caller);
+          job.timings.classifyMs = this.now() - t2;
+        }
+        job.timings.totalMs = this.now() - t0;
+        set("done", 1, "Listo", r.testKey);
+      } catch (err) {
+        Object.assign(job, { phase: "failed", message: "La ingesta falló", error: (err as Error).message.slice(0, 500), updatedAt: nowIso(this.now()) });
+        log.warn("ingest.job_failed", { jobId, message: (err as Error).message });
+      }
+    })();
+    return job;
+  }
+
+  getIngestJob(jobId: string): IngestJob {
+    const j = this.jobs.get(jobId);
+    if (!j) throw new CoordError("not_found", `Trabajo de ingesta ${jobId} no existe (o el servidor se reinició)`);
+    return j;
   }
 
   private ingestOutput(t: TestRecord) {
@@ -510,9 +637,11 @@ export class Coordinator {
     const { loadRules } = await import("./engine");
     const testDiff = await this.diffForTest(test);
     const reappeared = new Set(testDiff?.reappeared ?? []);
+    const projectDisciplines = await this.disciplines.load(test.projectId);
     const out = runEngine({
       ...(reappeared.size ? { extraTags: (c: NormalizedClash) => (reappeared.has(c.id) ? ["regresion"] : undefined) } : {}),
       levelMap: this.config.levelMap,
+      projectDisciplines,
       clashes: raw.clashes,
       elements: raw.elements,
       documents: raw.documents,
@@ -592,8 +721,18 @@ export class Coordinator {
     if (!input.dryRun && !input.rulesetRef) {
       await this.store.putClassification(rec);
       // Document disciplines learned by the engine.
-      const discOf = new Map(out.documents.map((d) => [d.documentId, d.discipline]));
-      await this.store.putTest({ ...test, documents: test.documents.map((d) => ({ ...d, discipline: discOf.get(d.documentId) ?? d.discipline })) });
+      const discOf = new Map(out.documents.map((d) => [d.documentId, d]));
+      await this.store.putTest({
+        ...test,
+        documents: test.documents.map((d) => {
+          const r = discOf.get(d.documentId);
+          if (!r) return d;
+          const { disciplineShare: _s, disciplineRuleId: _r, ...base } = d;
+          void _s;
+          void _r;
+          return { ...base, discipline: r.discipline, disciplineSource: r.disciplineSource, ...(r.disciplineShare !== undefined ? { disciplineShare: r.disciplineShare } : {}), ...(r.disciplineRuleId ? { disciplineRuleId: r.disciplineRuleId } : {}) };
+        }),
+      });
       if (input.proposeAutoAccepted) batchProposals = await this.createEngineBatchProposals(test, out.groups);
       await this.store.audit({
         actor: caller.actor,
@@ -1070,6 +1209,92 @@ export class Coordinator {
       },
       decisionsCarried: topGroups.filter((x) => x.prev).length,
     };
+  }
+
+  /** Read-only: the project's discipline mappings and how each document of a cached test resolved. */
+  async listDisciplines(input: { testKey?: string }) {
+    const ctx = await this.store.getContext();
+    const testKey = input.testKey ?? ctx?.testKey;
+    const test = testKey ? await this.store.getTest(testKey) : undefined;
+    if (input.testKey && !test) throw new CoordError("not_found", `Test ${input.testKey} no está en caché`, "Usa ingest_clash_test primero.");
+    const projectId = test?.projectId ?? ctx?.projectId;
+    if (!projectId) throw new CoordError("validation_error", "Sin proyecto activo", "Usa set_active_context o indica testKey.");
+    const cfg = await this.disciplines.load(projectId);
+    const rs = loadRules();
+    return {
+      projectId,
+      version: cfg.version,
+      fileNameDetection: this.config.disciplines.fileNameDetection,
+      codes: validCodes(rs),
+      assignments: Object.entries(cfg.assignments).map(([lineageUrn, discipline]) => ({ lineageUrn, discipline })),
+      rules: cfg.rules.map((r) => ({ id: r.id, match: r.match, field: r.field, value: untrusted(r.value), discipline: r.discipline })),
+      ...(test
+        ? {
+            testKey: test.testKey,
+            documents: test.documents.map((d) => ({
+              documentId: d.documentId,
+              lineageUrn: d.lineageUrn ?? null,
+              fileName: untrusted(d.name),
+              viewName: untrusted(d.viewableName),
+              discipline: outCode(d.discipline),
+              source: d.disciplineSource ?? "unassigned",
+              ...(d.disciplineShare !== undefined ? { share: d.disciplineShare } : {}),
+              ...(d.disciplineRuleId ? { ruleId: d.disciplineRuleId } : {}),
+              suggestedToken: suggestedToken(d.name, test.documents.map((x) => x.name)) ?? null,
+            })),
+          }
+        : {}),
+      note: "Solo lectura. Para sugerir un mapeo usa propose_discipline_mapping; un humano lo confirma en la UI.",
+    };
+  }
+
+  /** PROPOSAL only: the agent never sets discipline mappings; a human accepts it in the UI. */
+  async proposeDisciplineMapping(
+    input: { testKey?: string; documentId?: number; discipline: string; rule?: { match: "contains" | "startsWith" | "regex"; value: string; field: "fileName" | "folder" | "viewName" }; rationale: string },
+    caller: CallerContext = { actor: AGENT_ACTOR },
+  ) {
+    this.requireLevel(1, "propose_discipline_mapping");
+    this.checkTexts({ rationale: input.rationale });
+    if (input.documentId === undefined && !input.rule) throw new CoordError("validation_error", "Indica documentId o rule.");
+    const discipline = assertCode(loadRules(), inCode(input.discipline));
+    if (input.rule?.match === "regex") {
+      try {
+        new RegExp(input.rule.value, "i");
+      } catch {
+        throw new CoordError("validation_error", `Expresión regular inválida: ${input.rule.value}`);
+      }
+    }
+    const ctx = await this.store.getContext();
+    const testKey = input.testKey ?? ctx?.testKey;
+    const test = testKey ? await this.store.getTest(testKey) : undefined;
+    if (!test) throw new CoordError("not_found", "Test no está en caché", "Indica testKey de un test ingerido.");
+    let doc: (typeof test.documents)[number] | undefined;
+    if (input.documentId !== undefined) {
+      doc = test.documents.find((d) => d.documentId === input.documentId);
+      if (!doc) throw new CoordError("not_found", `documentId ${input.documentId} no existe en ${test.testKey}`);
+      if (!doc.lineageUrn) throw new CoordError("validation_error", "El documento no tiene lineageUrn; propone una regla.");
+    }
+    const p = await this.store.createProposal({
+      kind: "discipline_mapping",
+      projectId: test.projectId,
+      testKey: test.testKey,
+      createdBy: caller.actor,
+      target: { groupIds: [], clashIds: [] },
+      payload: {
+        kind: "discipline_mapping",
+        discipline,
+        modelSetId: test.modelSetId,
+        ...(doc ? { lineageUrn: doc.lineageUrn!, fileName: doc.name } : {}),
+        ...(input.rule ? { rule: input.rule } : {}),
+      },
+      rationale: input.rationale,
+      evidence: [],
+      confidence: "media",
+      risk: "low",
+      affectedClashes: 0,
+    });
+    await this.store.audit({ actor: caller.actor, action: "discipline.suggested", projectId: test.projectId, targetIds: [p.id], details: { discipline, documentId: input.documentId ?? null, rule: input.rule ? `${input.rule.field} ${input.rule.match}` : null } });
+    return { proposalId: p.id, kind: p.kind, status: p.state, risk: p.risk, affectedClashes: 0, conflictsWith: [], reviewUrl: this.reviewUrl(p.id), note: "Pendiente de confirmación humana en la UI (Disciplinas)." };
   }
 
   async hygieneStats(input: { testKey?: string; checks?: string[]; examplesPerCheck: number }) {
@@ -1957,6 +2182,7 @@ export function proposalSummary(p: ProposalRecord): string {
     case "issue_draft": return pl.issue.title;
     case "group_action": return `acción ${pl.action.type}`;
     case "rule_change": return pl.title;
+    case "discipline_mapping": return `disciplina ${pl.discipline} → ${pl.fileName ?? pl.rule?.value ?? pl.lineageUrn ?? "?"}${pl.rule ? ` (regla ${pl.rule.match} "${pl.rule.value}")` : ""}`;
     case "engine_batch": return `motor: ${pl.groups.length} grupos ${pl.op === "status_change" ? "cerrables" : "reales"}`;
   }
 }

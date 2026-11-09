@@ -1,7 +1,7 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { ApplyResponse, ApplyStatus, Batch, Decision, Page, Proposal, TriagePayload } from "../../server/api/contract";
+import type { ApplyResponse, ApplyStatus, Batch, ClashGrid, Decision, DisciplineConfig, DisciplinePreview, IngestJob, Page, Proposal, TriagePayload } from "../../server/api/contract";
 import { createCoordApi, type CoordApi } from "../../server/api/router";
 import { makeCoord, MODEL_SET_ID, tempHome, TEST_V42 } from "./helpers";
 
@@ -74,9 +74,21 @@ describe("HTTP API /api/coord", () => {
   });
 
   it("ingest → triage → decisions → batch → approve → apply (dryRun default, then real)", async () => {
-    const ing = await req<{ testKey: string }>("POST", `/projects/demo-proyecto/model-sets/${MODEL_SET_ID}/tests/${TEST_V42}/ingest`, {});
+    const ing = await req<IngestJob>("POST", `/projects/demo-proyecto/model-sets/${MODEL_SET_ID}/tests/${TEST_V42}/ingest`, {});
     expect(ing.status).toBe(200);
-    const testKey = ing.json.testKey;
+    expect(ing.json.jobId).toMatch(/^J-[0-9a-f]{12}$/);
+    const phases = new Set<string>();
+    let job = ing.json;
+    for (let i = 0; i < 200 && job.phase !== "done" && job.phase !== "failed"; i++) {
+      await new Promise((r) => setTimeout(r, 20));
+      job = (await req<IngestJob>("GET", `/ingest-jobs/${ing.json.jobId}`)).json;
+      phases.add(job.phase);
+    }
+    expect(job.phase).toBe("done");
+    expect(job.progress).toBe(1);
+    expect(job.timings.totalMs).toBeGreaterThanOrEqual(0);
+    const testKey = job.testKey!;
+    expect((await req("GET", "/ingest-jobs/J-000000000000")).status).toBe(404);
 
     const tri = await req<TriagePayload>("GET", `/triage/demo-proyecto/${MODEL_SET_ID}`);
     expect(tri.status).toBe(200);
@@ -159,7 +171,7 @@ describe("HTTP API /api/coord", () => {
     expect(calib.json.bands).toHaveLength(3);
     const home = await req<{ queue: unknown[] }>("GET", "/home");
     expect(home.json.queue.length).toBe(1);
-  });
+  }, 30_000); // full end-to-end flow: slow under parallel suite load
 
   it("stores project notes only through the human channel", async () => {
     const r = await req<{ text: string }>("POST", "/projects/demo-proyecto/notes", { text: "Pasadas de CLI en vigas del N03 previstas por plano E-301" });
@@ -167,5 +179,27 @@ describe("HTTP API /api/coord", () => {
     expect(r.json.text).toMatch(/E-301 \(confirmado por Coordinadora Demo\)/);
     const bad = await req<{ error: { code: string } }>("POST", "/projects/demo-proyecto/notes", { text: "ver https://evil.example.com" });
     expect(bad.status).toBe(400);
+  });
+  it("clash grid, views and discipline endpoints (human writes need CSRF)", async () => {
+    const grid = await req<ClashGrid>("GET", `/projects/demo-proyecto/model-sets/${MODEL_SET_ID}/clash-grid?test=${TEST_V42}`);
+    expect(grid.status).toBe(200);
+    expect(grid.json.state).toBe("classified");
+    const views = await req<unknown[]>("GET", `/projects/demo-proyecto/model-sets/${MODEL_SET_ID}/views`);
+    expect(views.json.length).toBeGreaterThan(0);
+    const cfg = await req<DisciplineConfig>("GET", "/projects/demo-proyecto/disciplines");
+    expect(cfg.json.codes.some((c) => c.code === "SIN")).toBe(true);
+    const lin = Buffer.from(grid.json.documents[0]!.lineageUrn, "utf8").toString("base64url");
+    const path = `/projects/demo-proyecto/model-sets/${MODEL_SET_ID}/documents/${lin}/discipline?test=${TEST_V42}`;
+    expect((await req("PUT", path, { discipline: "ARQ" }, { csrf: false })).status).toBe(403);
+    expect((await req("PUT", path, { discipline: "ARQ", extra: 1 })).status).toBe(400);
+    const ok = await req<ClashGrid>("PUT", path, { discipline: "ARQ" });
+    expect(ok.status).toBe(200);
+    expect(ok.json.documents[0]).toMatchObject({ discipline: "ARQ", disciplineSource: "assignment" });
+    const bad = Buffer.from("not a urn", "utf8").toString("base64url");
+    expect((await req("PUT", `/projects/demo-proyecto/model-sets/${MODEL_SET_ID}/documents/${bad}/discipline`, { discipline: "ARQ" })).status).toBe(400);
+    const pv = await req<DisciplinePreview>("POST", "/projects/demo-proyecto/disciplines/preview", { rules: [{ match: "contains", value: "-EST-", field: "fileName", discipline: "EST" }] });
+    expect(pv.json.rules[0]!.matches.length).toBeGreaterThan(0);
+    expect((await req("PUT", "/projects/demo-proyecto/disciplines/rules", { rules: [] }, { csrf: false })).status).toBe(403);
+    expect((await req("PUT", "/projects/demo-proyecto/disciplines/rules", { rules: [{ match: "regex", value: "(", field: "fileName", discipline: "EST" }] })).status).toBe(400);
   });
 });

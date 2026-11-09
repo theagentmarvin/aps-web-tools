@@ -21,7 +21,8 @@ import type { AssignedGroupCreate, ClashGroupJob, ClosedGroupCreate, IndexField,
 import { consumeApprovedWriteToken, type ApprovedWriteToken } from "../aps/write-guard";
 import { appendJsonl, readJsonl } from "../store/fs";
 import { sha256, uuidFromHash } from "../util";
-import type { ClashWriter, DataSource, SourceClashTest, SourceModelSet, SourceProject, SourceTestData } from "./types";
+import { linkedElementUid, normalizeLinkedExternalIds } from "../group-titles";
+import type { ClashWriter, DataSource, SourceClashData, SourceClashTest, SourceModelSet, SourceProject, SourceProperties, SourceTestData } from "./types";
 
 export const FIXTURE_PROJECT_ID = "b.demo-proyecto";
 export const FIXTURE_HUB = { id: "b.hub-demo", name: "SalfaCorp (demo)" };
@@ -152,7 +153,7 @@ export class FixtureSource implements DataSource {
     return Math.max(...this.versions);
   }
 
-  async fetchTest(projectId: string, modelSetId: string, testId: string, opts: { fetchProperties: boolean }): Promise<SourceTestData> {
+  async fetchClashes(projectId: string, modelSetId: string, testId: string): Promise<SourceClashData> {
     const test = (await this.listClashTests(projectId, modelSetId)).find((t) => t.id === testId);
     if (!test) throw new Error(`Clash test ${testId} no existe`);
     const v = test.modelSetVersion;
@@ -163,56 +164,66 @@ export class FixtureSource implements DataSource {
     };
     const msv = this.json<RawModelSetVersion>(`mc/v${v}/modelset-version.json`);
     const result = normalizeClashTest(raw, { documentVersions: msv.documentVersions });
+    return { test, modelSet: this.modelSet(), project: this.project, clashes: result.clashes, documents: result.documents, warnings: result.warnings.map((w) => `${w.code}:${w.count}`) };
+  }
 
+  async fetchProperties(_projectId: string, data: SourceClashData): Promise<SourceProperties> {
+    const msv = this.json<RawModelSetVersion>(`mc/v${data.test.modelSetVersion}/modelset-version.json`);
+    const dict = new FieldDictionary(parseNdjson<IndexField>(this.text("index/fields.ndjson")));
+    const config = parsePropertyAliases(readFileSync(join(REPO_ROOT, "rules", "property-aliases.yaml"), "utf8"));
+    const wanted = new Map<number, Set<number>>();
+    for (const c of data.clashes) {
+      for (const s of [c.left, c.right]) {
+        const set = wanted.get(s.documentId) ?? new Set<number>();
+        set.add(s.viewerDbId);
+        wanted.set(s.documentId, set);
+      }
+    }
     const elements: ElementProps[] = [];
     const allKeys = new Set<string>();
-    let clashes = result.clashes;
-    if (opts.fetchProperties) {
-      const dict = new FieldDictionary(parseNdjson<IndexField>(this.text("index/fields.ndjson")));
-      const config = parsePropertyAliases(readFileSync(join(REPO_ROOT, "rules", "property-aliases.yaml"), "utf8"));
-      const wanted = new Map<number, Set<number>>();
-      for (const c of clashes) {
-        for (const s of [c.left, c.right]) {
-          const set = wanted.get(s.documentId) ?? new Set<number>();
-          set.add(s.viewerDbId);
-          wanted.set(s.documentId, set);
-        }
+    const tables = new Map<number, Map<number, ElementProps>>();
+    for (const d of data.documents) {
+      const dv = msv.documentVersions.find((x) => x.versionUrn === d.urn && x.viewableName === d.viewableName);
+      const entry = dv?.originalSeedFileVersionUrn ? this.truth.index[dv.originalSeedFileVersionUrn] : undefined;
+      if (!dv || !entry) continue;
+      const rows = parseNdjson<IndexRow>(this.text(entry.file));
+      const map = compileMapper(dict, config, { documentId: d.id, modelFile: dv.documentLineage?.lineageUrn, documentName: dv.originalSeedFileVersionName });
+      const table = new Map<number, ElementProps>();
+      const ids = wanted.get(d.id) ?? new Set<number>();
+      for (const r of rows) {
+        if (r.externalId) allKeys.add(r.externalId);
+        if (!ids.has(r.lmvId)) continue;
+        const el = map(r);
+        table.set(r.lmvId, el);
+        elements.push(el);
       }
-      const tables = new Map<number, Map<number, ElementProps>>();
-      for (const d of result.documents) {
-        const dv = msv.documentVersions.find((x) => x.versionUrn === d.urn && x.viewableName === d.viewableName);
-        const entry = dv?.originalSeedFileVersionUrn ? this.truth.index[dv.originalSeedFileVersionUrn] : undefined;
-        if (!dv || !entry) continue;
-        const rows = parseNdjson<IndexRow>(this.text(entry.file));
-        const map = compileMapper(dict, config, {
-          documentId: d.id,
-          modelFile: dv.documentLineage?.lineageUrn,
-          documentName: dv.originalSeedFileVersionName,
-        });
-        const table = new Map<number, ElementProps>();
-        const ids = wanted.get(d.id) ?? new Set<number>();
-        for (const r of rows) {
-          if (r.externalId) allKeys.add(r.externalId);
-          if (!ids.has(r.lmvId)) continue;
-          const el = map(r);
-          table.set(r.lmvId, el);
-          elements.push(el);
-        }
-        tables.set(d.id, table);
-      }
-      clashes = attachPairKeys(clashes, result.documents, elementLookupFromTables(tables));
+      tables.set(d.id, table);
     }
+    const normalized = normalizeLinkedExternalIds(elements);
+    const normTables = new Map<number, Map<number, ElementProps>>();
+    for (const e of normalized) if (e.documentId !== undefined) (normTables.get(e.documentId) ?? normTables.set(e.documentId, new Map()).get(e.documentId)!).set(e.lmvId, e);
+    void tables;
     return {
-      test,
-      modelSet: this.modelSet(),
-      project: this.project,
-      clashes,
-      documents: result.documents,
-      elements,
-      propertiesStatus: opts.fetchProperties ? "ready" : "skipped",
-      warnings: result.warnings.map((w) => `${w.code}:${w.count}`),
-      allElementKeys: opts.fetchProperties ? [...allKeys] : undefined,
+      clashes: attachPairKeys(data.clashes, data.documents, elementLookupFromTables(normTables)),
+      elements: normalized,
+      propertiesStatus: "ready",
+      allElementKeys: [...allKeys].map((k) => linkedElementUid(k) ?? k),
+      warnings: [],
     };
+  }
+
+  async fetchTest(projectId: string, modelSetId: string, testId: string, opts: { fetchProperties: boolean }): Promise<SourceTestData> {
+    const data = await this.fetchClashes(projectId, modelSetId, testId);
+    if (!opts.fetchProperties) return { ...data, elements: [], propertiesStatus: "skipped" };
+    const p = await this.fetchProperties(projectId, data);
+    return { ...data, clashes: p.clashes, elements: p.elements, propertiesStatus: p.propertiesStatus, ...(p.allElementKeys ? { allElementKeys: p.allElementKeys } : {}) };
+  }
+
+  async listModelSetViews(projectId: string, modelSetId: string) {
+    this.ensureProject(projectId);
+    if (modelSetId !== this.truth.modelSetId) return [];
+    const f = this.json<{ modelSetViews: Array<{ name: string; definition: Array<{ lineageUrn: string; viewableName?: string }> }> }>("mc/modelset-views.json");
+    return f.modelSetViews.map((v) => ({ name: v.name, definition: v.definition }));
   }
 
   /** Recorded fake writes, for preflight and tests. */

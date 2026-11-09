@@ -75,8 +75,8 @@ export interface PropertyMappingConfig {
 }
 
 /** Lowercase, strip accents, trim, collapse whitespace (rules/discipline-matrix.yaml convention 1). */
-export function normalizeName(s: string): string {
-  return s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim().replace(/\s+/g, " ");
+export function normalizeName(s: string | null | undefined): string {
+  return (s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim().replace(/\s+/g, " ");
 }
 
 /** Map a `uom` string (e.g. "mm", "ft", "autodesk.unit.unit:millimeters-1.0.1") to a length unit. */
@@ -146,7 +146,8 @@ export class FieldDictionary {
     const out: string[] = [];
     for (const a of aliases) {
       for (const k of this.byName.get(normalizeName(a)) ?? []) {
-        if (!this.byKeyMap.get(k)!.category.startsWith("__")) out.push(k);
+        // Real indexes contain fields with a null category (e.g. IFC): treat as non-pseudo.
+        if (!(this.byKeyMap.get(k)!.category ?? "").startsWith("__")) out.push(k);
       }
     }
     return out;

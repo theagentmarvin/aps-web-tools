@@ -62,8 +62,27 @@ export function documentsFor(projectCode: string, version: number): TestDocument
   }));
 }
 
+/** Mock document definition: `placeAs` decides which element templates land in it (may differ from the detected discipline). */
+export interface MockDocDef {
+  documentId: number;
+  fileName: string;
+  viewName: string;
+  folderPath: string;
+  lineageUrn: string;
+  /** Discipline detected from Revit categories ("SIN" = none). */
+  detected: string;
+  /** How it was detected (default: unassigned when detected is SIN, else elements). */
+  detectedSource?: "elements" | "matrix" | "unassigned";
+  /** Share of elements of that discipline (detectedSource "elements"). */
+  confidence?: number;
+  /** Token suggested for "apply to files containing …". */
+  suggestedToken?: string;
+  /** Element discipline placed in this document by the generator; omit for a model with no clashes. */
+  placeAs?: string;
+}
+
 function makeElement(r: Rng, t: ElementTemplate, docs: TestDocument[], level: string, num: number): ElementInfo {
-  const doc = docs.find((d) => d.discipline === t.discipline) ?? docs[0];
+  const doc = docs.find((d) => (d as TestDocument & { placeAs?: string }).placeAs === t.discipline) ?? docs.find((d) => d.discipline === t.discipline) ?? docs[0];
   const dbId = r.int(1200, 980000);
   return {
     ref: `E-${doc.documentId}:${dbId}`,
@@ -217,11 +236,23 @@ export interface GenerateOptions {
   accTestId?: string;
   /** First analysed test of the set: everything is "new". */
   firstTest?: boolean;
+  /** Explicit documents (real-looking file names); default: one per discipline. */
+  documents?: MockDocDef[];
+  /** Mock grid stage when not yet analysed: "counts" = clash grid downloaded, not classified. */
+  stage?: "none" | "counts";
 }
 
 export function generateTest(o: GenerateOptions): GeneratedTest {
   const r = rng(o.seed);
-  const docs = documentsFor(o.projectCode, o.version);
+  const docs: TestDocument[] = o.documents
+    ? o.documents.map((d) => ({
+        documentId: d.documentId,
+        urn: `urn:adsk.wipprod:fs.file:vf.MOCK-${o.projectCode}-${d.documentId}?version=${o.version}`,
+        name: `${d.fileName} · ${d.viewName}`,
+        discipline: d.detected,
+        placeAs: d.placeAs,
+      }))
+    : documentsFor(o.projectCode, o.version);
   const created = new Date(o.completedOn);
   const sizes = groupSizes(r, o.groups, o.clashes);
   const groups: ClashGroup[] = [];
@@ -299,6 +330,8 @@ export function generateTest(o: GenerateOptions): GeneratedTest {
     const createIssue = domainValidity === "real";
     const group: ClashGroup = {
       id: groupId,
+      ruleId: null,
+      ruleIds: [],
       testId: o.testId,
       strategy: shareA ? "by_element" : r.pick(["by_system_run", "by_root_cause", "by_level_zone"] as const),
       engineStrategy: shareA ? "element" : "zone",
@@ -370,6 +403,8 @@ export function generateTest(o: GenerateOptions): GeneratedTest {
       spotCheck: false,
     };
     const minConf = Math.min(vConf, pConf, oConf, p.fields.action.confidence);
+    group.ruleIds = p.ruleIds;
+    group.ruleId = p.ruleIds[0] ?? null;
     group.confidence = minConf;
     group.priority = priority;
     group.reviewState = minConf < 0.7 || domainValidity === "needs_info" ? "needs_review" : "proposed";
@@ -390,6 +425,7 @@ export function generateTest(o: GenerateOptions): GeneratedTest {
 
   const test: TestRun = {
     id: o.testId,
+    state: o.analyzed ? "classified" : "none",
     accTestId: o.accTestId ?? o.testId,
     cached: true,
     modelSetId: o.modelSetId,
