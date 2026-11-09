@@ -17,7 +17,6 @@ import {
   clearClashPair,
   clearClashMarkers,
   computeClashPoint,
-  disposeClashCache,
   fitToCurrent,
   setClashMarkers,
   setSideVisibility,
@@ -114,7 +113,6 @@ export function ClashViewerPane() {
   }, [live, getAccessToken]);
   const canView = live && viewerToken === "ok";
   const modelsRef = useRef<Map<string, ModelHandle>>(new Map());
-  const [simplified, setSimplified] = useState(false);
 
   useEffect(() => {
     store.setViewer({ status: canView ? "init" : "placeholder", loaded: 0, total: docs.length, failedDocs: [] });
@@ -124,7 +122,6 @@ export function ClashViewerPane() {
   useEffect(() => {
     return () => {
       clearClashPair();
-      disposeClashCache();
     };
   }, [payload?.test.id]);
 
@@ -158,8 +155,7 @@ export function ClashViewerPane() {
         return;
       }
       const { a, b } = sidesFor(target);
-      const res = showClashPair(a, b, { mode: viewer.mode, colorA: COLOR_A, colorB: COLOR_B, maxGlowIds: 200 });
-      setSimplified(res.simplified);
+      showClashPair(a, b, { mode: viewer.mode, colorA: COLOR_A, colorB: COLOR_B });
       if (viewer.side !== "both") setSideVisibility(viewer.side);
       if (viewer.markers) {
         const specs = members.slice(0, MAX_MARKERS).flatMap((c, i) => {
@@ -264,7 +260,7 @@ export function ClashViewerPane() {
         </div>
       )}
       <ClashViewerToolbar />
-      <ClashLegend simplified={simplified} />
+      <ClashLegend />
     </div>
   );
 }
@@ -367,7 +363,7 @@ function ClashViewerToolbar() {
   );
 }
 
-function ClashLegend({ simplified }: { simplified: boolean }) {
+function ClashLegend() {
   const t = useT();
   const { fmt, lang } = useI18n();
   const { store } = useTriageContext();
@@ -393,7 +389,6 @@ function ClashLegend({ simplified }: { simplified: boolean }) {
       <div className="mt-0.5 text-gray-500">
         {focus ? t("viewer.distance", { value: fmt.mm(c.distanceMm) }) : t("list.clashesCount", { count: members.length })}
       </div>
-      {simplified && <div className="mt-0.5 text-amber-800">{t("viewer.simplified")}</div>}
     </div>
   );
 }

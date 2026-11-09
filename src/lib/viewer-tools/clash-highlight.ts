@@ -6,16 +6,12 @@
  *    resolved against that model (dbIds are per model);
  *  - context via NATIVE isolate/ghosting (no overlay meshes for non-selected
  *    geometry, so cost is O(selection), not O(model));
- *  - two simultaneous glow overlay scenes (A blue, B orange) plus a solid
- *    theming tint so colours read even when the glow is faint;
- *  - overlay meshes cached per (model, dbId, side) — LRU 2 000 — so j/k back
- *    and forth is instant; disposeClashCache() on test change;
- *  - static glow under prefers-reduced-motion.
+ *  - the clashing elements are coloured with native theming only (A blue, B orange):
+ *    no overlay meshes, shaders or per-frame animation (cheap on modest hardware).
  *
  * Viewer v7 calls used: setGhosting, isolate(ids, model), hide(ids, model),
  * show(ids, model), showAll, setThemingColor(dbId, Vector4, model, recursive),
- * clearThemingColors(model), impl.getRenderProxy(model, fragId),
- * impl.createOverlayScene/addOverlay/removeOverlay/removeOverlayScene,
+ * clearThemingColors(model),
  * navigation.fitBounds(immediate, box), Autodesk.Section setSectionBox.
  */
 import { addObjectMarker, addSonarMarker, clearAllMarkers, setMarkerClickHandler } from "./marker-service";
@@ -39,16 +35,11 @@ export interface ShowClashOptions {
   mode: ClashViewMode;
   colorA: string;
   colorB: string;
-  glow?: boolean;
-  /** Above this many dbIds per side, skip glow overlays (theming tint only). */
-  maxGlowIds?: number;
   /** Fit the camera to the union bbox (default true). */
   fit?: boolean;
 }
 
 export interface ShowClashResult {
-  /** True when the glow was skipped because a side exceeded maxGlowIds. */
-  simplified: boolean;
   /** Union world bbox of both sides (null if no geometry found). */
   bbox: Box3 | null;
 }
@@ -61,9 +52,6 @@ export interface ClashMarkerSpec {
   active: boolean;
 }
 
-const SCENE_A = "clash-glow-a";
-const SCENE_B = "clash-glow-b";
-const CACHE_MAX = 2000;
 
 // ── Module state ───────────────────────────────────────────────────
 
@@ -78,9 +66,6 @@ interface State {
 }
 
 const state: State = { a: [], b: [], opts: null, side: "both", themedModels: new Set(), bbox: null, sectionOn: false };
-const meshCache = new Map<string, any[]>(); // key `${modelId}:${dbId}:${side}` → meshes (LRU via Map order)
-const materials: { a: any | null; b: any | null } = { a: null, b: null };
-let animationId: number | null = null;
 const markerIdMap = new Map<string, string>(); // marker-service id → caller id
 
 // ── Access helpers ─────────────────────────────────────────────────
@@ -110,14 +95,6 @@ function hexToVec(hex: string): { r: number; g: number; b: number } {
   };
 }
 
-function modelId(model: Model): string {
-  try {
-    return String(model.id ?? model.getModelId?.() ?? model.getData?.()?.urn ?? "m");
-  } catch {
-    return "m";
-  }
-}
-
 function allModels(viewer: Viewer): Model[] {
   try {
     return viewer.getAllModels?.() ?? viewer.impl?.modelQueue?.().getModels?.() ?? (viewer.model ? [viewer.model] : []);
@@ -136,146 +113,6 @@ function bySide(sides: ClashSide[]): Map<Model, number[]> {
     m.set(s.model, list);
   }
   return m;
-}
-
-// ── Glow materials / overlays ──────────────────────────────────────
-
-const GLOW_VERTEX = `
-void main() {
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-}`;
-
-const GLOW_FRAGMENT = `
-uniform vec3 uColor;
-uniform float uIntensity;
-uniform float uTime;
-void main() {
-  float pulse = 0.75 + 0.25 * sin(uTime * 3.0);
-  gl_FragColor = vec4(uColor * uIntensity * pulse, 0.45);
-}`;
-
-function makeGlowMaterial(viewer: Viewer, hex: string, name: string): any | null {
-  const T = THREE();
-  if (!T.ShaderMaterial) return null;
-  const c = hexToVec(hex);
-  const ColorCtor = T.Color ?? T.Vector3;
-  const mat = new T.ShaderMaterial({
-    uniforms: {
-      uColor: { type: "c", value: new ColorCtor(c.r, c.g, c.b) },
-      uIntensity: { type: "f", value: 1.4 },
-      uTime: { type: "f", value: 0 },
-    },
-    vertexShader: GLOW_VERTEX,
-    fragmentShader: GLOW_FRAGMENT,
-    transparent: true,
-    depthTest: false, // visible through ghosted context ("x-ray" read)
-    depthWrite: false,
-    blending: T.AdditiveBlending ?? 2,
-    side: T.DoubleSide ?? 2,
-  });
-  try {
-    viewer.impl.matman().addMaterial(name, mat, true);
-  } catch {
-    /* older viewers: material still works without registration */
-  }
-  return mat;
-}
-
-function ensureScene(viewer: Viewer, name: string) {
-  try {
-    if (!viewer.impl.overlayScenes?.[name]) viewer.impl.createOverlayScene(name);
-  } catch {
-    /* exists */
-  }
-}
-
-function clearScene(viewer: Viewer, name: string) {
-  try {
-    viewer.impl.clearOverlay?.(name);
-  } catch {
-    /* ignore */
-  }
-  try {
-    viewer.impl.removeOverlayScene?.(name);
-  } catch {
-    /* ignore */
-  }
-}
-
-function meshesFor(viewer: Viewer, model: Model, dbId: number, side: "a" | "b", material: any): any[] {
-  const key = `${modelId(model)}:${dbId}:${side}`;
-  const hit = meshCache.get(key);
-  if (hit) {
-    meshCache.delete(key);
-    meshCache.set(key, hit);
-    return hit;
-  }
-  const T = THREE();
-  const out: any[] = [];
-  try {
-    const tree = model.getInstanceTree?.();
-    if (!tree || !T.Mesh) return out;
-    tree.enumNodeFragments(
-      dbId,
-      (fragId: number) => {
-        try {
-          const proxy = viewer.impl.getRenderProxy(model, fragId);
-          if (!proxy?.geometry) return;
-          const mesh = new T.Mesh(proxy.geometry, material);
-          mesh.matrix.copy(proxy.matrixWorld);
-          mesh.matrixWorldNeedsUpdate = true;
-          mesh.matrixAutoUpdate = false;
-          mesh.frustumCulled = false;
-          out.push(mesh);
-        } catch {
-          /* skip fragment */
-        }
-      },
-      true,
-    );
-  } catch {
-    /* invalid dbId for this model */
-  }
-  meshCache.set(key, out);
-  while (meshCache.size > CACHE_MAX) {
-    const oldest = meshCache.keys().next().value as string;
-    meshCache.delete(oldest);
-  }
-  return out;
-}
-
-function addGlow(viewer: Viewer, sides: Map<Model, number[]>, side: "a" | "b", scene: string, material: any) {
-  ensureScene(viewer, scene);
-  for (const [model, ids] of sides)
-    for (const id of ids)
-      for (const mesh of meshesFor(viewer, model, id, side, material)) {
-        try {
-          viewer.impl.addOverlay(scene, mesh);
-        } catch {
-          /* ignore */
-        }
-      }
-}
-
-function startPulse() {
-  if (animationId !== null || reducedMotion()) return;
-  const start = performance.now();
-  const tick = (now: number) => {
-    const tsec = (now - start) / 1000;
-    for (const m of [materials.a, materials.b]) if (m?.uniforms?.uTime) m.uniforms.uTime.value = tsec;
-    try {
-      getViewer()?.impl.invalidate(false, false, true);
-    } catch {
-      /* ignore */
-    }
-    animationId = state.opts ? requestAnimationFrame(tick) : null;
-  };
-  animationId = requestAnimationFrame(tick);
-}
-
-function stopPulse() {
-  if (animationId !== null) cancelAnimationFrame(animationId);
-  animationId = null;
 }
 
 // ── Bounding boxes ─────────────────────────────────────────────────
@@ -345,7 +182,7 @@ function unitScale(model: Model): number {
 
 export function showClashPair(a: ClashSide[], b: ClashSide[], opts: ShowClashOptions): ShowClashResult {
   const viewer = getViewer();
-  if (!viewer) return { simplified: false, bbox: null };
+  if (!viewer) return { bbox: null };
   resetVisuals(viewer);
 
   state.a = a;
@@ -361,12 +198,13 @@ export function showClashPair(a: ClashSide[], b: ClashSide[], opts: ShowClashOpt
   // 1. Context: native ghosting/isolate per model.
   applyContext(viewer, involved, opts.mode);
 
-  // 2. Solid tint A/B (colours read even at low glow).
+  // 2. Solid colour A/B with the viewer's native theming (no overlays, no animation: one
+  //    attribute per element, nothing extra to render each frame).
   const T = THREE();
   const tint = (sides: Map<Model, number[]>, hex: string) => {
     if (!T.Vector4) return;
     const c = hexToVec(hex);
-    const v = new T.Vector4(c.r, c.g, c.b, 0.6);
+    const v = new T.Vector4(c.r, c.g, c.b, 1);
     for (const [model, ids] of sides) {
       state.themedModels.add(model);
       for (const id of ids) {
@@ -381,20 +219,7 @@ export function showClashPair(a: ClashSide[], b: ClashSide[], opts: ShowClashOpt
   tint(sa, opts.colorA);
   tint(sb, opts.colorB);
 
-  // 3. Glow overlays (capped).
-  const max = opts.maxGlowIds ?? 200;
-  const countA = a.reduce((s, x) => s + x.dbIds.length, 0);
-  const countB = b.reduce((s, x) => s + x.dbIds.length, 0);
-  const simplified = countA > max || countB > max;
-  if (opts.glow !== false && !simplified) {
-    materials.a ??= makeGlowMaterial(viewer, opts.colorA, "clash-glow-a-mat");
-    materials.b ??= makeGlowMaterial(viewer, opts.colorB, "clash-glow-b-mat");
-    if (materials.a) addGlow(viewer, sa, "a", SCENE_A, materials.a);
-    if (materials.b) addGlow(viewer, sb, "b", SCENE_B, materials.b);
-    startPulse();
-  }
-
-  // 4. Camera.
+  // 3. Camera.
   const ba = sideBox(a);
   const bb = sideBox(b);
   state.bbox = ba && bb ? ba.clone().union(bb) : ba ?? bb;
@@ -406,7 +231,7 @@ export function showClashPair(a: ClashSide[], b: ClashSide[], opts: ShowClashOpt
   } catch {
     /* ignore */
   }
-  return { simplified, bbox: state.bbox };
+  return { bbox: state.bbox };
 }
 
 function applyContext(viewer: Viewer, involved: Map<Model, number[]>, mode: ClashViewMode) {
@@ -434,8 +259,6 @@ function applyContext(viewer: Viewer, involved: Map<Model, number[]>, mode: Clas
 }
 
 function resetVisuals(viewer: Viewer) {
-  clearScene(viewer, SCENE_A);
-  clearScene(viewer, SCENE_B);
   for (const m of state.themedModels) {
     try {
       viewer.clearThemingColors(m);
@@ -466,11 +289,6 @@ export function setSideVisibility(side: "a" | "b" | "both"): void {
     } catch {
       /* ignore */
     }
-  }
-  clearScene(viewer, side === "a" ? SCENE_B : SCENE_A);
-  if (side === "both") {
-    if (materials.a) addGlow(viewer, bySide(state.a), "a", SCENE_A, materials.a);
-    if (materials.b) addGlow(viewer, bySide(state.b), "b", SCENE_B, materials.b);
   }
   try {
     viewer.impl.invalidate(true, true, true);
@@ -563,10 +381,9 @@ export function clearClashMarkers(): void {
   setMarkerClickHandler(null);
 }
 
-/** Remove highlight, glow and markers; restore full visibility. */
+/** Remove highlight and markers; restore full visibility. */
 export function clearClashPair(): void {
   const viewer = getViewer();
-  stopPulse();
   state.opts = null;
   state.a = [];
   state.b = [];
@@ -582,9 +399,3 @@ export function clearClashPair(): void {
   }
 }
 
-/** Drop cached overlay meshes (call on test change). */
-export function disposeClashCache(): void {
-  meshCache.clear();
-  materials.a = null;
-  materials.b = null;
-}
