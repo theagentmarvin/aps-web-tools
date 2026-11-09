@@ -1,0 +1,19 @@
+--- a/rules/classification-rules.yaml
++++ b/rules/classification-rules.yaml
+@@ -333,4 +333,16 @@
+             rationale: "Revestimiento/pavimento '{a.type}' sobre {b.category} estructural: superposición de capas por modelado, no interferencia." }
+ 
++  # FP-018: a pipe enclosure (pipe cover / shaft box) is modeled AROUND the pipes; the clash is the
++  # design intent. Fire and gas pipes are left out (life safety keeps its own review).
++  # New rule: confidence < 0.70 + humanReview until proven on a second project.
++  - id: FP-018
++    name: pipe enclosure (pipe cover / shaft box) vs the pipes it encloses
++    nameEs: "Cubre-tubería contra las tuberías que envuelve"
++    when:
++      a: { elementClass: [pipe, gravity_pipe, pipe_large], discipline: { notIn: [INC, GAS] } }
++      b: { category: [Mechanical Equipment, Plumbing Fixtures, Specialty Equipment, Generic Models], anyOf: [ { family: { matches: 'pipe ?(cover|chase|enclosure|box)|cubre ?tuberia|forro de tuberia|shaft ?box|cajon (de )?(tuberias?|shaft)' } }, { type: { matches: 'pipe ?(cover|chase|enclosure|box)|cubre ?tuberia|forro de tuberia|shaft ?box|cajon (de )?(tuberias?|shaft)' } } ] }
++    then: { validity: false_positive, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, secondaryDiscipline: "$a", severity: none, confidence: 0.65, suggestedAction: close_not_issue, humanReview: true,
++            rationale: "{a.category} {a.systemName} Ø{a.sizeMm} mm queda dentro del cubre-tubería '{b.family}' ({clash.penetrationMm} mm): el envolvente se modela alrededor de las tuberías por diseño. Verificar una vez la holgura interior (Ø + aislación + 25 mm) y el registro para mantención." }
++
+   - id: FP-015
+     name: topography or site

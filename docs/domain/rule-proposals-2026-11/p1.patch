@@ -1,0 +1,31 @@
+--- a/rules/classification-rules.yaml
++++ b/rules/classification-rules.yaml
+@@ -340,4 +340,28 @@
+             rationale: "Elemento enterrado o apoyado en la topografía ({b.category}). Las excavaciones se coordinan aparte; excluir topografía de las pruebas." }
+ 
++  # FP-017/FP-019: the network's own connection to its fixture/equipment. Placed in FP (before TOL-003)
++  # so the verdict no longer depends on the generic MEP×MEP hard tolerance (10 mm; 5 mm gravity):
++  # the stub's depth inside the fixture body is family geometry, not a design conflict.
++  # New rules: confidence < 0.70 + humanReview until proven on a second project.
++  - id: FP-017
++    name: branch pipe connected to its own plumbing fixture
++    nameEs: "Tubería conectada a su artefacto sanitario"
++    when:
++      clash: { penetrationMm: { lte: 50 } }
++      a: { elementClass: [pipe, gravity_pipe], discipline: [AP, ALC, SAN], sizeMm: { lte: 65 } }
++      b: { category: Plumbing Fixtures }
++    then: { validity: false_positive, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, secondaryDiscipline: "$a", severity: none, confidence: 0.65, suggestedAction: close_not_issue, humanReview: true,
++            rationale: "{a.category} de {a.discipline} Ø{a.sizeMm} mm entra {clash.penetrationMm} mm en el artefacto '{b.family}': es la conexión de la red a su propio artefacto (desagüe o alimentación), no una interferencia. Revisar una instancia en el visor: si un tramo recto atraviesa el mueble en vez de terminar en él, reclasificar como real." }
++
++  - id: FP-019
++    name: duct connected to its own fan-coil / air-handling unit
++    nameEs: "Ducto conectado a su equipo de clima"
++    when:
++      clash: { penetrationMm: { lte: 150 } }
++      a: { elementClass: duct, discipline: CLI }
++      b: { category: Mechanical Equipment, discipline: CLI, family: { matches: 'fan ?coil|ventiloconvector|\bfcu\b|\bahu\b|\buma\b|manejadora|air ?handl|cassette' } }
++    then: { validity: false_positive, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, secondaryDiscipline: CLI, severity: none, confidence: 0.65, suggestedAction: close_not_issue, humanReview: true,
++            rationale: "Ducto de {a.sizeMm} mm entra {clash.penetrationMm} mm en el equipo '{b.family}': es la conexión de impulsión/retorno del propio equipo, no una interferencia. Revisar una instancia: si el ducto atraviesa el gabinete en vez de conectarse, reclasificar como real." }
++
+ # ---------------------------------------------------------------------------
+ # SEI — Seismic joints (always real, even inside tolerance).
