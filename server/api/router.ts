@@ -266,7 +266,7 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
   add("GET", "/auth/status", async () => {
     const s = await coord.source.authStatus();
     const u = s.loggedIn ? await ui.me().catch(() => undefined) : undefined;
-    return { loggedIn: s.loggedIn, dataSource: coord.source.kind, ...(u ? { user: u } : {}), ...(s.expiresAt ? { expiresAt: s.expiresAt } : {}), ...(s.scopes ? { scopes: s.scopes } : {}), loginInProgress };
+    return { loggedIn: s.loggedIn, dataSource: coord.source.kind, ...(u ? { user: u } : {}), ...(s.expiresAt ? { expiresAt: s.expiresAt } : {}), ...(s.scopes ? { scopes: s.scopes } : {}), ...(s.needsReauth ? { needsReauth: true } : {}), loginInProgress };
   });
   add(
     "POST",

@@ -32,7 +32,7 @@ Una app por equipo de coordinación es suficiente. La crea quien tenga acceso a 
    - `http://localhost:3000/auth/callback` — inicio de sesión del visor en el navegador.
 4. **Acceso a APIs**: habilita las APIs de Autodesk Construction Cloud / BIM 360 (Model Coordination, Issues), Data Management y Model Derivative (los nombres exactos dependen de la consola).
 5. **Scopes**: no se configuran en la app; los pide la aplicación al iniciar sesión:
-   - Agente y servidor: `data:read data:write data:create`.
+   - Agente y servidor: `data:read data:write data:create user-profile:read` (este último identifica quién revisa y aprueba).
    - Navegador: `data:read viewables:read` (solo lectura, para el visor 3D).
 6. Copia el **Client ID** y el **Client Secret**. El secreto se trata como contraseña: no lo pegues en chats, correos ni en el repo.
 

@@ -41,6 +41,7 @@
     "signInAgain": "Volver a iniciar sesión",
     "loginStarted": "Se abrió el inicio de sesión de Autodesk. Completa el ingreso y vuelve a esta pestaña.",
     "redirecting": "Redirigiendo a Autodesk…",
+    "reauth": "Vuelve a iniciar sesión: la app ahora necesita leer tu perfil de Autodesk para registrar quién revisa y aprueba.",
     "finishing": "Conectando con Autodesk…",
     "returnCancelled": "Autodesk canceló o rechazó el inicio de sesión. Vuelve a intentarlo.",
     "returnIncomplete": "Autodesk devolvió el control, pero el servidor no pudo completar la sesión (revisa el client secret de la app APS). Vuelve a intentarlo.",

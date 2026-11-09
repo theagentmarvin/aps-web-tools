@@ -22,7 +22,10 @@ import { loadEnv } from "./config";
 import { ApsError } from "./errors";
 import { APS_BASE_URL, realSleep, silentLogger, type FetchFn, type Logger, type TokenProvider } from "./http";
 
-export const APS_SCOPES = ["data:read", "data:write", "data:create"] as const;
+/** `user-profile:read`: the OIDC userinfo endpoint (who approved/decided; audit identity). */
+export const APS_SCOPES = ["data:read", "data:write", "data:create", "user-profile:read"] as const;
+/** Scopes a stored session must have; older sessions without them must sign in again. */
+export const REQUIRED_SESSION_SCOPES = ["user-profile:read"] as const;
 export const DEFAULT_CALLBACK_PORT = 8765;
 /** Fallback only; the coordinator uses server/secure/aps-paths.ts apsTokenPath(). */
 export const DEFAULT_TOKEN_PATH = ".coordinator/auth/token.json";
@@ -331,6 +334,8 @@ export interface AuthStatus {
   expiresAt?: number;
   scopes?: string[];
   canRefresh: boolean;
+  /** Logged in with an older session that lacks a now-required scope: sign in again. */
+  needsReauth?: boolean;
 }
 
 /** Token provider for {@link ApsCtx}: cached token, refresh with mutex, interactive login. */
@@ -383,7 +388,8 @@ export class ApsAuth implements TokenProvider {
       try {
         next = await requestToken(
           this.config,
-          { grant_type: "refresh_token", refresh_token: disk.refreshToken, scope: this.config.scopes.join(" ") },
+          // A refresh may only narrow scopes: ask for what the stored session was granted.
+          { grant_type: "refresh_token", refresh_token: disk.refreshToken, scope: disk.scope ?? this.config.scopes.join(" ") },
           this.fetchFn,
           this.baseUrl,
           this.now(),
@@ -438,11 +444,15 @@ export class ApsAuth implements TokenProvider {
   /** Safe status for UIs/tools: never includes tokens. */
   async status(): Promise<AuthStatus> {
     const t = this.memory ?? (await this.store.read());
+    const scopes = t?.scope?.split(" ");
+    // A session granted before a scope was added (e.g. user-profile:read) must sign in again.
+    const needsReauth = !!scopes && REQUIRED_SESSION_SCOPES.some((s) => !scopes.includes(s));
     return {
-      loggedIn: !!t && (t.expiresAt > this.now() || !!t.refreshToken),
+      loggedIn: !!t && !needsReauth && (t.expiresAt > this.now() || !!t.refreshToken),
       expiresAt: t?.expiresAt,
-      scopes: t?.scope?.split(" "),
+      scopes,
       canRefresh: !!t?.refreshToken,
+      ...(needsReauth ? { needsReauth: true } : {}),
     };
   }
 }

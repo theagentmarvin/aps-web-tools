@@ -3,6 +3,7 @@
  * Binds to 127.0.0.1 only. In dev the same middleware is mounted into Vite
  * (vite.config.ts), so the UI uses same-origin `/api/coord/*` either way.
  */
+import "../net/system-ca"; // first: trust the OS certificate store (corporate HTTPS inspection)
 import { createServer } from "node:http";
 import { log } from "../util";
 import { createCoordApi } from "./router";

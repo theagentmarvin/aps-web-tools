@@ -41,6 +41,7 @@
     "signInAgain": "Sign in again",
     "loginStarted": "Autodesk sign-in opened. Complete it and come back to this tab.",
     "redirecting": "Redirecting to Autodesk…",
+    "reauth": "Please sign in again: the app now needs to read your Autodesk profile to record who reviews and approves.",
     "finishing": "Connecting to Autodesk…",
     "returnCancelled": "Autodesk cancelled or rejected the sign-in. Please try again.",
     "returnIncomplete": "Autodesk returned, but the server could not complete the session (check the APS app's client secret). Please try again.",

@@ -43,7 +43,7 @@ export function SignInCard({ title, body }: { title?: string; body?: string }) {
       <div className="max-w-md rounded-lg border border-brand-muted/20 bg-white p-8 text-center shadow-sm">
         <IconLock size={28} className="mx-auto mb-3 text-brand" />
         {title && <h1 className="mb-2 text-xl font-bold text-brand">{title}</h1>}
-        <p className="mb-6 text-sm text-gray-600">{body ?? t("auth.required")}</p>
+        <p className="mb-6 text-sm text-gray-600">{status?.needsReauth ? t("auth.reauth") : (body ?? t("auth.required"))}</p>
         {finishing ? (
           <p role="status" className="flex items-center justify-center gap-2 text-sm text-gray-600">
             <Spinner /> {t("auth.finishing")}

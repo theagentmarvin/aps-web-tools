@@ -17,6 +17,7 @@
  *
  * Data source: COORD_DATA_SOURCE=fixtures for offline mode.
  */
+import "./net/system-ca"; // first: trust the OS certificate store (corporate HTTPS inspection)
 import { userInfo } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { resolve } from "node:path";

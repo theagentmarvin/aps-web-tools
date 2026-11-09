@@ -6,6 +6,7 @@
  *
  * stdout is the protocol channel: everything else logs to stderr.
  */
+import "../net/system-ca"; // first: trust the OS certificate store (corporate HTTPS inspection)
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";

@@ -1,3 +1,4 @@
+import "./server/net/system-ca"; // first: trust the OS certificate store (corporate HTTPS inspection)
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";

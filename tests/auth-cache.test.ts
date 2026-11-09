@@ -32,7 +32,7 @@ describe("config and PKCE", () => {
     const c = resolveAuthConfig("/proj", { VITE_APS_CLIENT_ID: "id" });
     expect(c.port).toBe(8765);
     expect(c.redirectUri).toBe("http://localhost:8765/callback");
-    expect(c.scopes).toEqual(["data:read", "data:write", "data:create"]);
+    expect(c.scopes).toEqual(["data:read", "data:write", "data:create", "user-profile:read"]);
     expect(c.tokenPath.replace(/\\/g, "/")).toMatch(/\.coordinator\/auth\/token\.json$/);
     expect(() => resolveAuthConfig("/p", {})).toThrow();
     expect(() => resolveAuthConfig("/p", { VITE_APS_CLIENT_ID: "id", APS_CALLBACK_PORT: "80" })).toThrow();
@@ -52,7 +52,7 @@ describe("config and PKCE", () => {
       response_type: "code",
       client_id: "client-123",
       redirect_uri: "http://localhost:38765/callback",
-      scope: "data:read data:write data:create",
+      scope: "data:read data:write data:create user-profile:read",
       state: "st",
       code_challenge: "ch",
       code_challenge_method: "S256",

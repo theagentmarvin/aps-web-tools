@@ -3,7 +3,7 @@
  * writer (CLI login/logout, MCP server, HTTP API, browser session plugin)
  * goes through these functions, so they always agree.
  *
- *   coordinator token (3LO, data:read data:write data:create)  <secure dir>/aps-token.json
+ *   coordinator token (3LO, data:* + user-profile:read)     <secure dir>/aps-token.json
  *   browser session refresh token (downscoped)                 <secure dir>/browser-session.json
  *
  * The secure directory is resolved by ./keystore.ts secureDir() (outside the

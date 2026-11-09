@@ -21,6 +21,9 @@ import {
 } from "../aps/index-properties";
 import { getModelSetVersion, listModelSets, listModelSetVersions, getModelSet } from "../aps/modelset";
 import { log } from "../util";
+
+/** APS OIDC userinfo host (https://aps.autodesk.com/en/docs/profile/v1/reference/profile/oidcuserinfo/). */
+const USERINFO_BASE_URL = "https://api.userprofile.autodesk.com";
 import type { ClashWriter, DataSource, SourceClashTest, SourceModelSet, SourceProject, SourceTestData } from "./types";
 
 /**
@@ -84,19 +87,23 @@ export class LiveSource implements DataSource {
   async authStatus() {
     if (!this.auth) return { loggedIn: false };
     const s = await this.auth.status();
-    return { loggedIn: s.loggedIn, expiresAt: s.expiresAt, scopes: s.scopes };
+    return { loggedIn: s.loggedIn, expiresAt: s.expiresAt, scopes: s.scopes, ...(s.needsReauth ? { needsReauth: true } : {}) };
   }
 
   async currentUser() {
     try {
-      const me = await apsRequest<{ userId?: string; userName?: string; firstName?: string; lastName?: string; emailId?: string }>(
-        this.ctx,
+      // OIDC userinfo (scope user-profile:read). The old /userprofile/v1/users/@me returns 410 Gone.
+      const me = await apsRequest<{ sub?: string; name?: string; given_name?: string; family_name?: string; preferred_username?: string; email?: string }>(
+        { ...this.ctx, baseUrl: USERINFO_BASE_URL },
         "GET",
-        "/userprofile/v1/users/@me",
+        "/userinfo",
       );
-      const name = [me.firstName, me.lastName].filter(Boolean).join(" ") || me.userName || "Usuario APS";
-      return { id: me.userId ?? "unknown", name, email: me.emailId };
-    } catch {
+      const name = me.name || [me.given_name, me.family_name].filter(Boolean).join(" ") || me.preferred_username || "Usuario APS";
+      return { id: me.sub ?? "unknown", name, email: me.email };
+    } catch (e) {
+      // Never swallow silently: a missing scope here looks like "not logged in" to the UI.
+      const err = e as { status?: number; code?: string; message?: string };
+      log.warn("aps.user_profile_failed", { status: err.status, code: err.code, message: String(err.message ?? e).slice(0, 300) });
       return undefined;
     }
   }

@@ -42,6 +42,8 @@ export interface AuthStatus {
   user?: UserInfo;
   expiresAt?: number;
   scopes?: string[];
+  /** The stored session predates a now-required scope (e.g. user-profile:read): sign in again. */
+  needsReauth?: boolean;
   /** True while a server-side PKCE login is waiting for the browser callback. */
   loginInProgress: boolean;
 }

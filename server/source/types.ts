@@ -75,7 +75,7 @@ export interface ClashWriter {
 
 export interface DataSource {
   readonly kind: "live" | "fixtures";
-  authStatus(): Promise<{ loggedIn: boolean; expiresAt?: number; scopes?: string[] }>;
+  authStatus(): Promise<{ loggedIn: boolean; expiresAt?: number; scopes?: string[]; needsReauth?: boolean }>;
   currentUser(): Promise<SourceUser | undefined>;
   listHubs(): Promise<Array<{ id: string; name: string }>>;
   listProjects(opts?: { hubId?: string; nameContains?: string }): Promise<SourceProject[]>;
