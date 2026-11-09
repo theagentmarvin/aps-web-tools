@@ -12,7 +12,8 @@ interface CoordAuthValue {
   status: AuthStatus | undefined;
   error: Error | undefined;
   refresh: () => Promise<void>;
-  login: () => Promise<void>;
+  /** Starts the server-side login. Returns the Autodesk authorize URL (if any) so the UI can offer a link when the popup is blocked. Throws on server errors. */
+  login: () => Promise<string | undefined>;
   logout: () => Promise<void>;
 }
 
@@ -49,8 +50,10 @@ export function CoordAuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async () => {
     const res = await api.login();
+    // window.open after an await can be silently blocked as a popup; the caller shows a link too.
     if (res.authorizeUrl) window.open(res.authorizeUrl, "_blank", "noopener");
     await refresh();
+    return res.authorizeUrl;
   }, [api, refresh]);
 
   const logout = useCallback(async () => {

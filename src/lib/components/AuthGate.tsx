@@ -23,11 +23,17 @@ export function SignInCard({ title, body }: { title?: string; body?: string }) {
   const { status, login } = useCoordAuth();
   const [busy, setBusy] = useState(false);
   const [started, setStarted] = useState(false);
+  const [authorizeUrl, setAuthorizeUrl] = useState<string>();
+  const [loginError, setLoginError] = useState<string>();
   async function signIn() {
     setBusy(true);
+    setLoginError(undefined);
     try {
-      await login();
+      setAuthorizeUrl(await login());
       setStarted(true);
+    } catch (e) {
+      setStarted(false);
+      setLoginError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -42,10 +48,25 @@ export function SignInCard({ title, body }: { title?: string; body?: string }) {
         <button type="button" onClick={signIn} disabled={busy} className="rounded-lg bg-brand px-6 py-2 font-medium text-white transition-colors hover:bg-brand-light disabled:opacity-60">
           {t("auth.signIn")}
         </button>
-        {waiting && (
+        {waiting && !loginError && (
           <p role="status" className="mt-4 flex items-center justify-center gap-2 text-xs text-gray-500">
             <Spinner /> {t("auth.loginStarted")}
           </p>
+        )}
+        {authorizeUrl && !loginError && (
+          <p className="mt-2 text-xs text-gray-500">
+            {t("auth.popupBlocked")}{" "}
+            <a href={authorizeUrl} target="_blank" rel="noopener noreferrer" className="font-medium text-brand underline">
+              {t("auth.openLogin")}
+            </a>
+          </p>
+        )}
+        {loginError && (
+          <div role="alert" className="mt-4 rounded border border-red-200 bg-red-50 p-3 text-left text-xs text-red-700">
+            <p className="font-medium">{t("auth.loginFailed")}</p>
+            <p className="mt-1">{loginError}</p>
+            <p className="mt-1 text-red-600">{t("auth.loginFailedHint")}</p>
+          </div>
         )}
       </div>
     </div>

@@ -40,6 +40,10 @@
     "expired": "Tu sesión expiró. Tus decisiones sin guardar se conservan.",
     "signInAgain": "Volver a iniciar sesión",
     "loginStarted": "Se abrió el inicio de sesión de Autodesk. Completa el ingreso y vuelve a esta pestaña.",
+    "popupBlocked": "¿No se abrió una pestaña?",
+    "openLogin": "Abrir el inicio de sesión de Autodesk",
+    "loginFailed": "No se pudo iniciar sesión con Autodesk",
+    "loginFailedHint": "Revisa que exista .env.local con VITE_APS_CLIENT_ID y APS_CLIENT_SECRET y reinicia el servidor (docs/setup.md).",
     "waiting": "Esperando el inicio de sesión…",
     "demoSession": "Sesión de demostración (fixtures)"
   },

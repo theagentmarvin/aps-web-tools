@@ -40,6 +40,10 @@
     "expired": "Your session expired. Your unsaved decisions are kept.",
     "signInAgain": "Sign in again",
     "loginStarted": "Autodesk sign-in opened. Complete it and come back to this tab.",
+    "popupBlocked": "No tab opened?",
+    "openLogin": "Open Autodesk sign-in",
+    "loginFailed": "Could not sign in with Autodesk",
+    "loginFailedHint": "Check that .env.local exists with VITE_APS_CLIENT_ID and APS_CLIENT_SECRET, then restart the server (docs/setup.md).",
     "waiting": "Waiting for sign-in…",
     "demoSession": "Demo session (fixtures)"
   },
