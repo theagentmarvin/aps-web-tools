@@ -388,8 +388,9 @@ export class ApsAuth implements TokenProvider {
       try {
         next = await requestToken(
           this.config,
-          // A refresh may only narrow scopes: ask for what the stored session was granted.
-          { grant_type: "refresh_token", refresh_token: disk.refreshToken, scope: disk.scope ?? this.config.scopes.join(" ") },
+          // No `scope` on refresh: APS keeps the originally granted scopes. Asking for scopes the
+          // session was never granted (e.g. after adding user-profile:read) fails and logs the user out.
+          { grant_type: "refresh_token", refresh_token: disk.refreshToken },
           this.fetchFn,
           this.baseUrl,
           this.now(),
