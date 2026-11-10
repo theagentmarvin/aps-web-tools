@@ -6,6 +6,7 @@
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useApi } from "./api";
+import { withRetry } from "./api/retry";
 import type { AuthStatus } from "./api/types";
 
 interface CoordAuthValue {
@@ -50,9 +51,24 @@ export function CoordAuthProvider({ children }: { children: ReactNode }) {
     }
   }, [api]);
 
+  // G23: the bootstrap call retries with backoff while the local server is (re)starting, so a reload
+  // in dev shows the loading skeleton instead of a blank page or "El servidor local no responde".
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    const signal = { aborted: false };
+    void withRetry(() => api.getAuthStatus(), { signal }).then(
+      (s) => {
+        if (signal.aborted) return;
+        setStatus(s);
+        setError(undefined);
+      },
+      (e: unknown) => {
+        if (!signal.aborted) setError(e instanceof Error ? e : new Error(String(e)));
+      },
+    );
+    return () => {
+      signal.aborted = true;
+    };
+  }, [api]);
 
   // While the server finishes the login (token exchange after the callback), poll the status.
   useEffect(() => {

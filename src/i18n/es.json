@@ -1496,5 +1496,32 @@
     "unassigned": "Sin responsable ACC: la incidencia queda sin asignar en ACC.",
     "openIssue": "Abrir incidencia en ACC",
     "createdIssues": "Incidencias creadas en ACC"
+  },
+  "inheritedBulk": {
+    "menu": "Confirmar heredadas sin cambio ({count})",
+    "title": "Confirmar decisiones heredadas sin cambio",
+    "intro": "Estas ubicaciones no cambiaron desde la decisión anterior, pero la política pide que una persona las vuelva a mirar. Revisa cada sección; las pasadas en estructura y la seguridad de las personas se confirman por separado.",
+    "loading": "Cargando heredadas…",
+    "none": "No hay decisiones heredadas sin cambio pendientes de confirmar.",
+    "changed_one": "{count} heredada cambió desde la decisión: se confirma una por una.",
+    "changed_other": "{count} heredadas cambiaron desde la decisión: se confirman una por una.",
+    "section_structural_opening": "Pasada en estructura (requiere calculista)",
+    "section_life_safety": "Seguridad de las personas",
+    "section_critical": "Severidad crítica",
+    "ackStructural": "Entiendo que estas pasadas siguen sujetas a la aprobación del calculista; solo confirmo la decisión heredada.",
+    "ackLifeSafety": "Revisé que siguen sin afectar vías de evacuación ni la protección contra incendio; confirmo la decisión heredada.",
+    "ackNeeded": "Sin esta confirmación, esta sección no se incluye.",
+    "row": "v{version} · {decision} · {source}",
+    "sourceFamily": "decisión de grupo",
+    "sourceHuman": "decisión por ubicación",
+    "agentProposal": "El agente propone confirmar {count} de estas ubicaciones.",
+    "useProposal": "Usar la propuesta del agente",
+    "typeCount": "Escribe {count} para confirmar",
+    "confirm": "Confirmar {count}",
+    "done": "{count} decisiones heredadas confirmadas",
+    "selectAll": "Todas",
+    "selectNone": "Ninguna",
+    "legacyTitle": "Decisiones anteriores por revisar (grupos que ahora están unidos)",
+    "legacyRow": "{family} v{version}: {validity} → {responsible}"
   }
 }

@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Decision } from "../../server/api/contract";
 import type { Coordinator } from "../../server/coordinator";
 import { CoordinatorUi } from "../../server/coordinator-ui";
+import { inheritPolicyReasons } from "../../server/families";
 import { HUMAN, ingest, makeCoord, MODEL_SET_ID, ROOT, tempHome } from "./helpers";
 
 const P = "demo-proyecto";
@@ -54,7 +55,10 @@ describe("F1 decision memory", () => {
     const k41 = await ingest(coord, 41);
     const k42 = await ingest(coord, 42);
     expect((await ui.triage(P, MODEL_SET_ID, k42)).changeSummary!.baseReason).toBe("previous");
-    const [pair] = await stableGroups(k41, k42);
+    // G7: pick one that no policy reason re-asks (critical, structural opening, life safety).
+    const cls42 = (await coord.requireClassified(k42)).cls;
+    const policyFree = (id: string) => inheritPolicyReasons(cls42.groups.find((g) => g.id === id)!).length === 0;
+    const pair = (await stableGroups(k41, k42)).find((x) => policyFree(x.g42.id));
     expect(pair).toBeDefined();
     await decide(k41, pair!.g41.id, "accept");
     const tri = await ui.triage(P, MODEL_SET_ID, k42);

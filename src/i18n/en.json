@@ -1496,5 +1496,32 @@
     "unassigned": "No ACC assignee: the issue stays unassigned in ACC.",
     "openIssue": "Open issue in ACC",
     "createdIssues": "Issues created in ACC"
+  },
+  "inheritedBulk": {
+    "menu": "Confirm unchanged inherited ({count})",
+    "title": "Confirm unchanged inherited decisions",
+    "intro": "These locations did not change since the previous decision, but policy asks a person to look again. Review each section; structural openings and life safety are confirmed separately.",
+    "loading": "Loading inherited decisions…",
+    "none": "No unchanged inherited decisions waiting for a confirmation.",
+    "changed_one": "{count} inherited item changed since the decision: confirm it one by one.",
+    "changed_other": "{count} inherited items changed since the decision: confirm them one by one.",
+    "section_structural_opening": "Opening in structure (structural engineer)",
+    "section_life_safety": "Life safety",
+    "section_critical": "Critical severity",
+    "ackStructural": "I understand these openings still need the structural engineer's approval; I only confirm the inherited decision.",
+    "ackLifeSafety": "I checked they still do not affect egress routes or fire protection; I confirm the inherited decision.",
+    "ackNeeded": "Without this confirmation, this section is left out.",
+    "row": "v{version} · {decision} · {source}",
+    "sourceFamily": "family decision",
+    "sourceHuman": "location decision",
+    "agentProposal": "The agent proposes confirming {count} of these locations.",
+    "useProposal": "Use the agent's proposal",
+    "typeCount": "Type {count} to confirm",
+    "confirm": "Confirm {count}",
+    "done": "{count} inherited decisions confirmed",
+    "selectAll": "All",
+    "selectNone": "None",
+    "legacyTitle": "Earlier decisions to review (families now merged)",
+    "legacyRow": "{family} v{version}: {validity} → {responsible}"
   }
 }

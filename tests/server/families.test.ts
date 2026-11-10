@@ -60,14 +60,16 @@ describe("signature (F1)", () => {
     const out = run(bundle());
     expect(out.families).toHaveLength(1);
     const f = out.families[0]!;
-    expect(f.parts).toMatchObject({ problemType: "PT02", hostClass: "viga", hostType: '12" x 18"', moverClass: "tub_pres", systemClass: "CAL-hidrónica", sizeBand: "≤h/3", relation: "desplazar≤100" });
+    // Signature v7 (G16): no beam section under the beam, discipline-level system, ≤ 250 mm band.
+    expect(f.parts).toMatchObject({ problemType: "PT02", hostClass: "viga", moverClass: "tub_pres", systemClass: "CAL", sizeBand: "≤h/3", relation: "desplazar≤250" });
+    expect(f.parts.hostType).toBeUndefined();
     expect(f.instanceCount).toBeGreaterThanOrEqual(3);
     expect(f.levels.length).toBeGreaterThanOrEqual(2);
     expect(f.tags).toContain("tipico");
     expect(f.uniqueClashCount).toBe(24);
     expect(f.evidence.moverSizeMm).toEqual({ min: 22, max: 54 });
     expect(f.evidence.hostDepthMm).toBe(457);
-    expect(f.title).toMatch(/CAL-hidrónica Ø22–54 invaden el fondo de vigas 12" x 18" · bajar ≤100 mm/);
+    expect(f.title).toMatch(/CAL Ø22–54 invaden el fondo de vigas · bajar ≤250 mm/);
     expect(f.proposed).toMatchObject({ validity: "real", action: "create_issue" });
     expect(out.groups.some((g) => g.hostLevelLabel?.startsWith("Entretecho Nivel 101 (viga nivel Nivel 201)"))).toBe(true);
   });

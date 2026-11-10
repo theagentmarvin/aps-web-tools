@@ -475,4 +475,11 @@ export class HttpCoordinatorApi implements CoordinatorApi {
     return this.req<T.IssueSettings>("POST", `/projects/${enc(projectId)}/issue-settings/proposals/${enc(proposalId)}/decision`, { decision });
   }
 
+  // G7 (ws-C)
+  getInheritedConfirmations(testId: string) {
+    return this.get<T.InheritedConfirmList>(`/tests/${enc(testId)}/inherited-confirmations`);
+  }
+  confirmInheritedBulk(testId: string, r: Omit<T.InheritedConfirmRequest, "testId">) {
+    return this.req<T.InheritedConfirmResult>("POST", `/tests/${enc(testId)}/inherited-confirmations`, r);
+  }
 }

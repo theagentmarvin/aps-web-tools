@@ -11,6 +11,9 @@ import type {
   AccIssueType,
   IssueSettings,
   AgentStatus,
+  InheritedConfirmList,
+  InheritedConfirmRequest,
+  InheritedConfirmResult,
   ApplyRequest,
   ClashGrid,
   DisciplineConfig,
@@ -213,6 +216,9 @@ export interface CoordinatorApi {
   setIssueAssignee(projectId: string, discipline: string, assignee: { id: string; type: "user" | "role" | "company"; label: string } | null): Promise<IssueSettings>;
   decideIssueSettingsSuggestion(projectId: string, proposalId: string, decision: "accept" | "reject"): Promise<IssueSettings>;
 
+  // G7 (ws-C): "Confirmar heredadas sin cambio" (optional: the mock may not implement it)
+  getInheritedConfirmations?(testId: string): Promise<InheritedConfirmList>;
+  confirmInheritedBulk?(testId: string, req: Omit<InheritedConfirmRequest, "testId">): Promise<InheritedConfirmResult>;
 }
 
 /** Error with an HTTP-ish status and a stable code for the UI to translate. */

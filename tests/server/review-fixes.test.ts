@@ -5,6 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Coordinator } from "../../server/coordinator";
 import { CoordinatorUi } from "../../server/coordinator-ui";
+import { inheritPolicyReasons } from "../../server/families";
 import { accIndexOf, detectScopeChanges } from "../../server/cycle";
 import { datesInQuote, quoteContainsDate, redactContacts } from "../../server/meeting";
 import { pathSegment } from "../../server/store";
@@ -31,18 +32,21 @@ async function approveAllFamilies(testKey: string, filter: (f: Awaited<ReturnTyp
 }
 
 describe("#1 family decisions across versions (PoC fam / batch)", () => {
-  it("a family decision of v41 never silently decides a changed or engine-gated v42 instance", async () => {
+  it("a family decision of v41 never silently decides a changed or policy-gated v42 instance", async () => {
     const k41 = await ingest(coord, 41);
     const k42 = await ingest(coord, 42);
-    const gate = new Map((await coord.requireClassified(k42)).cls.groups.map((g) => [g.id, g.reviewState]));
+    // G7: only policy reasons (critical, structural opening, life safety) re-ask an unchanged instance.
+    const policy = new Map((await coord.requireClassified(k42)).cls.groups.map((g) => [g.id, inheritPolicyReasons(g)]));
     await approveAllFamilies(k41);
     const tri = await ui.triage(P, MODEL_SET_ID, k42);
     const fam = tri.groups.filter((g) => g.inherited?.source === "family");
     expect(fam.length).toBeGreaterThan(0);
     for (const g of fam) {
-      if (g.change !== "unchanged" || gate.get(g.id) === "needs_review") {
+      if (g.change !== "unchanged" || policy.get(g.id)!.length) {
         expect(g.inherited!.needsConfirmation).toBe(true);
         expect(g.reviewState).not.toBe("decided");
+        expect(g.inherited!.confirmReasons!.length).toBeGreaterThan(0);
+        if (g.change !== "unchanged") expect(g.inherited!.confirmReasons).toContain("changed");
       }
     }
   }, 60_000); // full v41->v42 cycle: slow under parallel suite load

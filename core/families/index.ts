@@ -219,7 +219,7 @@ export function moverSizeOf(e: ElementFacts): number | undefined {
 export function sizeFromText(s: string | undefined): number | undefined {
   if (!s) return undefined;
   let best: number | undefined;
-  for (const m of s.matchAll(/(d+(?:[.,]d+)?)s*("|''|”|in|mm)?s*[øØ]/g)) {
+  for (const m of s.matchAll(/(\d+(?:[.,]\d+)?)\s*("|''|”|in\b|mm)?\s*[øØ]/g)) {
     const v = Number(m[1]!.replace(",", "."));
     const mm = m[2] && m[2] !== "mm" ? v * 25.4 : v;
     if (mm > 0 && (best === undefined || mm > best)) best = mm;
@@ -324,8 +324,102 @@ function bandAbs(size: number | undefined, duct: boolean): string {
   return size <= 50 ? "≤Ø50" : size <= 110 ? "Ø51–110" : size <= 160 ? "Ø111–160" : ">Ø160";
 }
 
+/**
+ * Signature v7 (G16): bands that change the solution or the responsible party only.
+ * Displacement under a beam: ≤ 250 mm is the same fix (lower the run, check the ceiling);
+ * > 250 mm is a different conversation (ceiling height, likely a level error).
+ */
 function displacement(pen: number): string {
-  return pen <= 100 ? "desplazar≤100" : pen <= 250 ? "desplazar101–250" : "desplazar>250";
+  return pen <= 250 ? "desplazar≤250" : "desplazar>250";
+}
+
+/** Penetration size through a slab or wall: ≤ Ø160 is a standard sleeve; larger needs a detail. */
+function sleeveBand(size: number | undefined, duct: boolean): string {
+  if (size === undefined) return duct ? "ducto?" : "Ø?";
+  if (duct) return size <= 600 ? "≤600" : ">600";
+  return size <= 160 ? "≤Ø160" : ">Ø160";
+}
+
+/** MEP discipline codes a system class starts with ("AP-agua potable" → AP). */
+const SYSTEM_DISCIPLINES = new Set(["AP", "ALL", "ALC", "CAL", "INC", "CLI", "ELE", "CORR", "GAS", "SAN"]);
+
+/**
+ * Discipline of a system class (G16/G23): the responsible party of a mover is its system's
+ * discipline (AP agua potable, ALL aguas lluvia, ALC alcantarillado…), not the file it is modelled in.
+ */
+export function systemDisciplineOf(systemClass: string | undefined): string | undefined {
+  if (!systemClass) return undefined;
+  const code = systemClass.split("-")[0]!.trim().toUpperCase();
+  return SYSTEM_DISCIPLINES.has(code) ? code : undefined;
+}
+
+/** Coarse system for the signature: sub-systems of one discipline share solution and responsible. */
+function coarseSystem(systemClass: string): string {
+  return systemDisciplineOf(systemClass) ?? systemClass;
+}
+
+/** Slab kind for the signature: only post-tensioned slabs change the solution (cables). */
+function slabKind(host: ElementFacts): string | undefined {
+  return slabKindText(`${str(host.type) ?? ""} ${str(host.family) ?? ""}`);
+}
+function slabKindText(t: string): string | undefined {
+  return /post[\s-]?tens|postensad|\bpt\b/i.test(t) ? "postensada" : undefined;
+}
+
+/** Wall kind for the signature: a light partition and a masonry/concrete wall are different openings. */
+function wallKind(host: ElementFacts): string | undefined {
+  return wallKindText(`${str(host.type) ?? ""} ${str(host.family) ?? ""}`);
+}
+function wallKindText(t: string): string | undefined {
+  if (!t.trim()) return undefined;
+  if (/tabique|volcometal|metalcon|drywall|yeso|gypsum|stud/i.test(t)) return "tabique";
+  if (/alba[ñn]il|ladrillo|bloque|masonry|brick|cmu/i.test(t)) return "albañilería";
+  if (/hormig|concret|h\.?a\.?\b/i.test(t)) return "hormigón";
+  if (/cortafuego|\bf-?\d{2,3}\b|\bri\b|fire/i.test(t)) return "cortafuego";
+  return "otro muro";
+}
+
+/** Signature version: bump when the signature changes (family ids change; decisions are mapped). */
+export const SIGNATURE_VERSION = 7;
+
+/** Signature string of a set of parts (the family id is `familyIdOf` of it). */
+export function signatureOfParts(parts: SignatureParts): string {
+  return [parts.problemType, parts.hostType ? `${parts.hostClass}:${parts.hostType}` : parts.hostClass, parts.moverClass, parts.systemClass, parts.sizeBand, parts.relation].join(" | ");
+}
+
+const MOVER_CLASSES = new Set(["tub_grav", "tub_pres", "ducto", "elec"]);
+const SLEEVE_FROM_ABS: Record<string, string> = { "≤Ø50": "≤Ø160", "Ø51–110": "≤Ø160", "Ø111–160": "≤Ø160", "≤Ø110": "≤Ø160", "≤300": "≤600", "301–600": "≤600" };
+
+/**
+ * Parts of an older signature (v6) translated to v7 — idempotent on v7 parts. Lets a family decided
+ * under the old signature find its new family even when no clash carries its decision any more.
+ * PT12/13/14 (hygiene, duplicates, non-issues) did not change.
+ */
+export function upgradeParts(p: SignatureParts): SignatureParts {
+  if (p.problemType === "PT12" || p.problemType === "PT13" || p.problemType === "PT14") return p;
+  const q: SignatureParts = { ...p };
+  if (!/-\?$/.test(q.systemClass)) q.systemClass = coarseSystem(q.systemClass);
+  const drop = () => delete q.hostType;
+  if (MOVER_CLASSES.has(q.hostClass)) {
+    if (q.hostType && !/-\?$/.test(q.hostType)) q.hostType = coarseSystem(q.hostType);
+  } else if (q.hostClass === "viga") {
+    if (q.relation === "desplazar≤100" || q.relation === "desplazar101–250") q.relation = "desplazar≤250";
+    if (q.problemType !== "PT01" && q.relation !== "atraviesa_alma") drop();
+  } else if (q.hostClass === "losa" || q.hostClass === "losa_fundación") {
+    const k = q.hostType ? slabKindText(q.hostType) : undefined;
+    if (k) q.hostType = k;
+    else drop();
+    q.sizeBand = SLEEVE_FROM_ABS[q.sizeBand] ?? q.sizeBand;
+  } else if (q.hostClass === "muro_hormigón") {
+    drop();
+    q.sizeBand = SLEEVE_FROM_ABS[q.sizeBand] ?? q.sizeBand;
+  } else if (q.hostClass === "muro") {
+    const k = q.hostType ? wallKindText(q.hostType) : undefined;
+    if (k) q.hostType = k;
+    else drop();
+    q.sizeBand = SLEEVE_FROM_ABS[q.sizeBand] ?? q.sizeBand;
+  }
+  return q;
 }
 
 /** Host and mover per §2.1 (higher rank = host; ties: larger element, then key order). */
@@ -367,7 +461,7 @@ export function physicalSignature(c: ClassifiedClash, ctx: Pick<FamilyContext, "
   const ruleHint = isNonIssueRule(ruleId) ? undefined : ruleId;
 
   const done = (parts: SignatureParts, extra: Partial<ClashFamily> = {}): ClashFamily => {
-    const signature = [parts.problemType, parts.hostType ? `${parts.hostClass}:${parts.hostType}` : parts.hostClass, parts.moverClass, parts.systemClass, parts.sizeBand, parts.relation].join(" | ");
+    const signature = signatureOfParts(parts);
     return { familyId: familyIdOf(signature), signature, parts, flags, ...(moverSize !== undefined ? { moverSizeMm: Math.round(moverSize) } : {}), ...extra };
   };
 
@@ -397,21 +491,23 @@ export function physicalSignature(c: ClassifiedClash, ctx: Pick<FamilyContext, "
   let sizeBand: string;
   let relation: string;
   let hostDepth: number | undefined;
-  let systemClass = sys ?? `${mover.discipline === "UNK" ? "SIN" : mover.discipline}-?`;
+  let systemClass = sys ? coarseSystem(sys) : `${mover.discipline === "UNK" ? "SIN" : mover.discipline}-?`;
 
   switch (kind) {
     case "beam": {
-      hostType = str(host.type);
       hostDepth = beamDepthOf(host);
       if (pt === "PT00" || pt === "PT02") pt = hostDepth && pen >= hostDepth / 2 ? "PT01" : "PT02";
       sizeBand = hostDepth && moverSize ? (moverSize <= hostDepth / 3 ? "≤h/3" : ">h/3") : "h?";
       relation = hostDepth && pen >= hostDepth / 2 ? "atraviesa_alma" : displacement(pen);
+      // v7: the beam section only matters for a pasada through the web (the calculista checks that
+      // beam); under the beam the fix (lower the run) and the responsible are the same for every section.
+      if (pt === "PT01" || relation === "atraviesa_alma") hostType = str(host.type);
       break;
     }
     case "slab":
     case "foundation_slab": {
-      hostType = str(host.type);
-      sizeBand = moverDuct || (!isRound(mover) && moverSize !== undefined && mClass !== "tub_grav" && mClass !== "tub_pres") ? "rect" : moverSize === undefined ? "Ø?" : moverSize <= 110 ? "≤Ø110" : moverSize <= 160 ? "Ø111–160" : ">Ø160";
+      hostType = slabKind(host);
+      sizeBand = moverDuct || (!isRound(mover) && moverSize !== undefined && mClass !== "tub_grav" && mClass !== "tub_pres") ? "rect" : sleeveBand(moverSize, false);
       if (kind === "foundation_slab") {
         pt = pt === "PT00" || SLAB_VERTICAL_RULES.has(ruleId) || SLAB_HORIZONTAL_RULES.has(ruleId) || ruleId === "EST-011" ? "PT07" : pt;
         relation = "fundación";
@@ -446,9 +542,8 @@ export function physicalSignature(c: ClassifiedClash, ctx: Pick<FamilyContext, "
       break;
     }
     case "struct_wall": {
-      hostType = str(host.type);
       if (pt === "PT00") pt = "PT06";
-      sizeBand = bandAbs(moverSize, moverDuct);
+      sizeBand = sleeveBand(moverSize, moverDuct);
       relation = "atraviesa";
       break;
     }
@@ -462,7 +557,10 @@ export function physicalSignature(c: ClassifiedClash, ctx: Pick<FamilyContext, "
       break;
     }
     case "mep": {
-      hostType = systemClassOf(host) ?? (host.discipline === "UNK" ? "SIN" : host.discipline);
+      {
+        const hs = systemClassOf(host);
+        hostType = hs ? coarseSystem(hs) : host.discipline === "UNK" ? "SIN" : host.discipline;
+      }
       hostClass = moverClassOf(host);
       if (pt === "PT00") pt = "PT08";
       sizeBand = moverDuct ? "ducto" : mClass === "elec" ? "elec" : "tubería";
@@ -470,9 +568,9 @@ export function physicalSignature(c: ClassifiedClash, ctx: Pick<FamilyContext, "
       break;
     }
     case "arch_wall": {
-      hostType = str(host.type);
+      hostType = wallKind(host);
       if (pt === "PT00") pt = "PT11";
-      sizeBand = bandAbs(moverSize, moverDuct);
+      sizeBand = sleeveBand(moverSize, moverDuct);
       relation = "atraviesa";
       break;
     }

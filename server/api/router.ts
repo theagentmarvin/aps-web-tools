@@ -446,6 +446,18 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
   add("DELETE", "/families/:familyId/exceptions/:groupId", async ({ params, query, user }) => ui.removeFamilyException(params.familyId, TestIdZ.parse(query.get("testId")), params.groupId, await user()), true);
   add("POST", "/families/:familyId/detach", async ({ params, body, user }) => ui.detachInstance(params.familyId, z.strictObject({ testId: TestIdZ, groupId: GroupIdZ }).parse(body), await user()), true);
   add("POST", "/families/:familyId/confirm-inherited", async ({ params, body, user }) => ui.confirmInherited(params.familyId, z.strictObject({ testId: TestIdZ, groupIds: z.array(GroupIdZ).max(500).optional() }).parse(body), await user()), true);
+  // G7 (ws-C): "Confirmar heredadas sin cambio" (list + bulk confirm, human only, typed count, audited per item).
+  add("GET", "/tests/:testId/inherited-confirmations", async ({ params }) => ui.inheritedConfirmList(TestIdZ.parse(params.testId)));
+  add(
+    "POST",
+    "/tests/:testId/inherited-confirmations",
+    async ({ params, body, user }) =>
+      ui.confirmInheritedBulk(
+        { testId: TestIdZ.parse(params.testId), ...z.strictObject({ groupIds: z.array(GroupIdZ).min(1).max(500), typedCount: z.number().int().min(1).max(500), acknowledgeStructural: z.boolean().optional(), acknowledgeLifeSafety: z.boolean().optional(), proposalId: z.string().min(1).max(80).optional() }).parse(body) },
+        await user(),
+      ),
+    true,
+  );
 
   // ── Chat panel (domain agent, propose-only, local `claude -p`) ─────────
   // POST /chat/messages → {messageId}; GET /chat/:messageId/events (SSE, replayable); status; history; cancel.
