@@ -1383,6 +1383,28 @@ export class MockCoordinatorApi implements CoordinatorApi {
     return clone(s);
   }
 
+  async getRulePublishOptions(): Promise<T.RulePublishOptions> {
+    throw new ApiError("Modo demostración: se publica sin passkey.", 400, "validation");
+  }
+
+  async publishRuleSuggestion(id: string, op: "publish" | "revert") {
+    await delay(300);
+    const s = this.suggestions.find((x) => x.id === id);
+    if (!s) throw new ApiError("Sugerencia no encontrada", 404, "not_found");
+    const at = new Date().toISOString();
+    if (op === "publish") {
+      if (s.state !== "approved" && s.state !== "reverted") throw new ApiError("Solo se publica una sugerencia aprobada.", 409, "conflict");
+      s.state = "published";
+      s.publication = { id: `RP-${newId().slice(0, 8)}`, at, by: ME.short, proof: "demo", files: ["rules/classification-rules.yaml"] };
+    } else {
+      if (s.state !== "published" || !s.publication) throw new ApiError("No hay una publicación vigente.", 409, "conflict");
+      s.state = "reverted";
+      s.publication = { ...s.publication, reverted: { at, by: ME.short } };
+    }
+    this.log({ actor: { type: "user", id: ME.id, name: ME.short }, action: op === "publish" ? "rule.published" : "rule.reverted", projectId: PROJECTS[0].id, targetIds: [id], details: { title: s.title } });
+    return clone(s);
+  }
+
   async listCorrections(p?: { projectId?: string; limit?: number; cursor?: string }) {
     await delay();
     const start = Number(p?.cursor ?? 0);

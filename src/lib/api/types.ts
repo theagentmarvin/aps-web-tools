@@ -76,6 +76,11 @@ export type {
   RuleState,
   RuleSuggestion,
   RuleSummary,
+  RuleImpact,
+  RulePublicationView,
+  RulePublishOptions,
+  RulePublishRequest,
+  ChatCard,
   SessionInfo,
   Severity,
   TestDocument,
@@ -314,6 +319,8 @@ export interface ChatProposal {
   id: string;
   kind: "decision" | "family_decision" | "regroup" | "question" | (string & {});
   summary: string;
+  /** G12: server-built card (action, validity, target name and clash count; questions in full). */
+  card?: import("../../../server/api/contract").ChatCard;
   targetCount?: number;
   familyId?: string;
   groupIds?: string[];

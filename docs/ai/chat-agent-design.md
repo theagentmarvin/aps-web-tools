@@ -120,6 +120,14 @@ These join the existing `merge`, `split` and `move_clashes` variants. All are pr
 - **Dev mode:** `COORD_HARNESS_DEV` is stripped from the child environment, so the guards always apply.
 - **Personal data:** the agent writes discipline codes, never names. The server never forwards the auth email. The chat transcript stays local.
 - **Governance:** the UI shows the *Procedimiento Acceso Herramientas IA* notice once per session (O-7 still open).
+- **Spanish-only safety net (G12, `server/chat/narration.ts`):** each text segment is held until it is clearly content.
+  A segment followed by a tool call is dropped when it reads as English or as short narration ("Reviso el grupo…");
+  a Spanish segment past 200 characters streams live; the final segment is always shown.
+- **Cards (G12, `server/chat/cards.ts`):** `proposal` / `question` events and `GET /chat/history` carry a `card`
+  built from the store (action, validity, grupo/ubicación name, clash count; questions in full so the card is
+  answered in place with the Detalle callout's flow). Never from the model's text.
+- **Header chip:** `GET /agent/status` ignores the chat agent's (`agent-chat`) audit events; the panel has its own
+  status line, and it asks for a fresh status when a turn ends (done, error or cancel).
 
 ## 7. Open items for coder C / D
 1. Implement `get_selection_context` and the `propose_group_action` variants. With `COORD_CHAT=1`: skip registering apply, and tag `createdBy`.

@@ -141,9 +141,9 @@ Estados posibles: **parity** · **agent-missing** · **human-missing** · **inte
 | 62 | Ver el feedback que registró el agente (`record_feedback` desde el chat o CC) | `/learning/corrections` muestra solo decisiones | — | **human-missing** |
 | 63 | Calibración de confianza por banda | `GET /learning/calibration` · `rules.tsx`, `detail-accordion` | No tiene | **agent-missing** (bajo) |
 | 64 | Catálogo de reglas | `GET /rules`, `/rules/:id` · `rules.tsx`, `rule.tsx` | `Read rules/` · CC, RC (Chat sin `Read`) | parity |
-| 65 | Redactar un cambio de reglas | Git/PR (regla 8) | `propose_rule_change` + `evaluate_ruleset` · RC vía `/curar-reglas` | intentional (regla 8: un humano hace el merge) |
-| 66 | Evaluar el ruleset y su impacto en datos reales | La UI solo muestra la evaluación de cada sugerencia; ejecutar exige `npm run eval` (CLI) | `evaluate_ruleset`, `run_classification` con dry-run y `rulesetRef` | **human-missing** (bajo) |
-| 67 | Aprobar, rechazar y publicar una sugerencia de regla | `POST /rule-suggestions/:id/decision` | `list_proposals` con `kind: rule_change` (estado) | en curso (WS-D): el agente ve el estado, nunca aprueba ni publica |
+| 65 | Redactar un cambio de reglas | Solo aprobar/publicar lo que propone el agente (regla 8) | `propose_rule_change` + `evaluate_ruleset` · RC vía `/curar-reglas` | intentional (el agente redacta; el humano aprueba y publica en Reglas, sin git) |
+| 66 | Evaluar el ruleset y su impacto en datos reales | Reglas › Sugerencias muestra el efecto en lenguaje simple y el impacto en el test actual (grupos, ubicaciones, interferencias); «Publicar» re-ejecuta `evaluate_ruleset`. Evaluar libremente sigue en `npm run eval` | `evaluate_ruleset`, `run_classification` con dry-run y `rulesetRef` | **human-missing** (bajo: no hay botón «evaluar» suelto) |
+| 67 | Aprobar, rechazar, publicar y revertir una sugerencia de regla | `POST /rule-suggestions/:id/decision` (propuesta → aprobada · pendiente de publicar); `POST …/publish` y `…/revert` con passkey (re-evaluación sin regresiones, respaldo, auditoría `rule.published` / `rule.reverted`) | `list_proposals` con `kind: rule_change`: la columna summary empieza con la etapa (`[aprobada · pendiente de publicar]`, `[publicada]`, `[revertida]`) | intentional (G15): el agente lee la etapa; nunca aprueba, publica ni revierte (no hay herramienta MCP; rutas solo humanas con CSRF + passkey) |
 
 ### K. Informes, notas de proyecto, auditoría y chat
 | # | Capacidad | Humano | Agente | Estado |

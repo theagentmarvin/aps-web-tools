@@ -65,7 +65,7 @@
  *   GET    /api/coord/audit?project=&user=&action=&from=&to=&batch=&limit=&cursor= → Page<AuditEvent>
  */
 import { ApiError, type CoordinatorApi } from "./coordinator-api";
-import { SseParser, toChatEvent } from "./sse";
+import { proposalFromCard, SseParser, toChatEvent } from "./sse";
 import { CHAT_ERROR_CODES } from "./types";
 import type * as T from "./types";
 
@@ -320,7 +320,7 @@ export class HttpCoordinatorApi implements CoordinatorApi {
   }
   async getChat(testId: string, chatId?: string): Promise<T.ChatHistory> {
     // GET /chat/history?testKey (final contract); earlier draft: GET /chat/:chatId.
-    type Wire = { sessionId?: string; chatId?: string; testKey?: string; messages: Array<{ role: string; text: string; at: string; proposalIds?: string[]; questionIds?: string[]; costUsd?: number; cost?: number; durationMs?: number }> };
+    type Wire = { sessionId?: string; chatId?: string; testKey?: string; messages: Array<{ role: string; text: string; at: string; proposalIds?: string[]; questionIds?: string[]; cards?: T.ChatCard[]; costUsd?: number; cost?: number; durationMs?: number }> };
     let s: Wire;
     try {
       s = await this.get<Wire>(`/chat/history?testKey=${enc(testId)}`);
@@ -338,7 +338,17 @@ export class HttpCoordinatorApi implements CoordinatorApi {
         cost: m.costUsd ?? m.cost,
         durationMs: m.durationMs,
         // Cards come from server ids only (never from the history text).
-        proposals: [...(m.proposalIds ?? []).map((id) => ({ id, kind: "other", summary: id })), ...(m.questionIds ?? []).map((id) => ({ id, kind: "question", summary: id, questionId: id }))],
+        // G12: the server resolves each id to a card (action, validity, target); ids without one stay bare.
+        proposals: [
+          ...(m.proposalIds ?? []).map((id) => {
+            const card = m.cards?.find((c) => c.id === id);
+            return card ? proposalFromCard(card) : { id, kind: "other", summary: id };
+          }),
+          ...(m.questionIds ?? []).map((id) => {
+            const card = m.cards?.find((c) => c.id === id);
+            return card ? proposalFromCard(card) : { id, kind: "question", summary: id, questionId: id };
+          }),
+        ],
       })),
     };
   }
@@ -467,6 +477,12 @@ export class HttpCoordinatorApi implements CoordinatorApi {
   listRules() { return this.get<T.RuleSummary[]>("/rules"); }
   getRule(id: string) { return this.get<T.RuleDetail>(`/rules/${enc(id)}`); }
   listRuleSuggestions() { return this.get<T.RuleSuggestion[]>("/rule-suggestions"); }
+  getRulePublishOptions(id: string, op: "publish" | "revert") {
+    return this.get<T.RulePublishOptions>(`/rule-suggestions/${enc(id)}/publish-options?op=${op}`);
+  }
+  publishRuleSuggestion(id: string, op: "publish" | "revert", req: T.RulePublishRequest) {
+    return this.req<T.RuleSuggestion>("POST", `/rule-suggestions/${enc(id)}/${op}`, req);
+  }
   decideRuleSuggestion(id: string, decision: "approve" | "reject") {
     return this.req<T.RuleSuggestion>("POST", `/rule-suggestions/${enc(id)}/decision`, { decision });
   }

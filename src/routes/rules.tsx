@@ -16,6 +16,9 @@ import { Banner, Button, EmptyState, ErrorState, SkeletonRows, cardCls } from "~
 import { downloadBlob } from "~/lib/csv";
 import { BRAND, SERIES_2 } from "~/lib/charts/theme";
 import { FIELD_KEY } from "~/lib/labels";
+import { useCoordAuth } from "~/lib/coord-auth";
+import { passkeyMessage } from "~/lib/passkey-messages";
+import { publishRuleWithPasskey } from "~/lib/webauthn";
 
 const TABS = ["reglas", "sugerencias", "correcciones", "calibracion"] as const;
 type Tab = (typeof TABS)[number];
@@ -66,7 +69,7 @@ function RulesTable() {
             <tr className="border-b border-brand-muted/20 text-left text-xs text-gray-500">
               <th className="px-3 py-2 font-medium">{t("rules.columns.id")}</th>
               <th className="px-3 py-2 font-medium">{t("rules.columns.name")}</th>
-              <th className="px-3 py-2 font-medium">{t("rules.columns.scope")}</th>
+              <th className="px-3 py-2 font-medium">{t("rules.outcome")}</th>
               <th className="px-3 py-2 font-medium">{t("rules.columns.effect")}</th>
               <th className="px-3 py-2 font-medium">{t("rules.columns.state")}</th>
               <th className="px-3 py-2 text-right font-medium">{t("rules.columns.hits")}</th>
@@ -87,8 +90,12 @@ function RulesTable() {
                     {r.id}
                   </Link>
                 </td>
-                <td className="px-3 py-2">{r.name}</td>
-                <td className="px-3 py-2 text-xs text-gray-600">{r.scope}</td>
+                <td className="px-3 py-2" title={r.nameEs && r.nameEs !== r.name ? r.name : undefined} lang="es">
+                  {r.nameEs ?? r.name}
+                </td>
+                <td className="px-3 py-2 text-xs text-gray-600" title={r.scope}>
+                  {r.outcomeEs ?? r.scope}
+                </td>
                 <td className="px-3 py-2 text-xs">{t(effectKey(r.effect))}</td>
                 <td className={`px-3 py-2 text-xs ${RULE_STATE_CLS[r.state]}`}>{t(`rules.state.${r.state}`)}</td>
                 <td className="px-3 py-2 text-right tabular-nums">{fmt.number(r.hits7d)}</td>
@@ -154,40 +161,106 @@ function EvidenceTable({ evidence }: { evidence: NonNullable<RuleSuggestion["evi
   );
 }
 
+const STAGE_CLS: Record<RuleSuggestion["state"], string> = {
+  pending: "bg-gray-100 text-gray-700",
+  approved: "bg-amber-100 text-amber-900",
+  published: "bg-green-100 text-green-800",
+  reverted: "bg-gray-100 text-gray-600",
+  rejected: "bg-gray-100 text-gray-500",
+};
+
 function Suggestions() {
+  const api = useApi();
+  const { data, error, loading, reload, setData } = useAsync(() => api.listRuleSuggestions(), [api]);
+  const t = useT();
+  if (error) return <ErrorState error={error} onRetry={reload} />;
+  if (loading) return <SkeletonRows count={2} height="h-40" />;
+  if (!data?.length) return <EmptyState title={t("rules.noSuggestions")} />;
+  const replace = (s: RuleSuggestion) => setData((prev) => (prev ?? []).map((x) => (x.id === s.id ? s : x)));
+  return (
+    <div className="space-y-4">
+      {data.map((s) => (
+        <SuggestionCard key={s.id} s={s} onChange={replace} />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * One suggestion (G15): plain-language effect first, the stage chain
+ * propuesta → aprobada (pendiente de publicar) → publicada, the human actions
+ * of each stage, and the YAML / evaluation under "Ver detalle técnico".
+ */
+function SuggestionCard({ s, onChange }: { s: RuleSuggestion; onChange: (s: RuleSuggestion) => void }) {
   const t = useT();
   const { fmt } = useI18n();
   const api = useApi();
   const toast = useToast();
-  const { data, error, loading, reload, setData } = useAsync(() => api.listRuleSuggestions(), [api]);
-  if (error) return <ErrorState error={error} onRetry={reload} />;
-  if (loading) return <SkeletonRows count={2} height="h-40" />;
-  if (!data?.length) return <EmptyState title={t("rules.noSuggestions")} />;
-  async function decide(s: RuleSuggestion, d: "approve" | "reject") {
-    const res = await api.decideRuleSuggestion(s.id, d);
-    setData((prev) => (prev ?? []).map((x) => (x.id === s.id ? res : x)));
+  const { status: authStatus } = useCoordAuth();
+  const demo = api.mode === "mock" || authStatus?.dataSource !== "live";
+  const [confirm, setConfirm] = useState<"publish" | "revert" | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  async function decide(d: "approve" | "reject") {
+    onChange(await api.decideRuleSuggestion(s.id, d));
     toast.show(d === "approve" ? t("rules.approved") : t("rules.rejected"));
   }
+  async function run(op: "publish" | "revert") {
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = demo ? await api.publishRuleSuggestion(s.id, op, { demo: true }) : await publishRuleWithPasskey(api, s.id, op);
+      onChange(res);
+      setConfirm(null);
+      toast.show(op === "publish" ? t("rules.publishedToast") : t("rules.revertedToast"));
+    } catch (e) {
+      setErr(passkeyMessage(t, e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  const pub = s.publication;
   return (
-    <div className="space-y-4">
-      {data.map((s) => (
-        <article key={s.id} className={`${cardCls} space-y-3 p-4`}>
-          <header className="flex flex-wrap items-start justify-between gap-2">
-            <div>
-              <p className="text-xs text-gray-500">
-                {s.evidence && !s.feedbackCount
-                  ? t("rules.evidenceOnlyHeader")
-                  : t("rules.suggestionHeader", { count: s.feedbackCount ?? s.count, reason: s.reasonCode, pair: s.pair })}
-              </p>
-              <h2 className="font-medium text-gray-900">{s.title}</h2>
-            </div>
-            <span className="font-mono text-xs text-gray-400">
-              {s.id} · {fmt.dateTime(s.createdAt)}
-            </span>
-          </header>
-          <p className="text-sm text-gray-700" lang="es">
-            {s.summary}
+    <article className={`${cardCls} space-y-3 p-4`}>
+      <header className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-xs text-gray-500">
+            {s.evidence && !s.feedbackCount ? t("rules.evidenceOnlyHeader") : t("rules.suggestionHeader", { count: s.feedbackCount ?? s.count, reason: s.reasonCode, pair: s.pair })}
           </p>
+          <h2 className="font-medium text-gray-900">{s.title}</h2>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STAGE_CLS[s.state]}`}>{t(`rules.stage.${s.state}`)}</span>
+          <span className="font-mono text-xs text-gray-400" title={fmt.dateTime(s.createdAt)}>
+            {s.id}
+          </span>
+        </div>
+      </header>
+      {(s.effect?.length || s.impact) && (
+        <section aria-label={t("rules.effectTitle")} className="rounded border border-brand-muted/20 bg-brand-surface/40 p-3 text-sm text-gray-800" lang="es">
+          <h3 className="mb-1 text-xs font-medium text-gray-600">{t("rules.effectTitle")}</h3>
+          {s.effect?.length ? (
+            <ul className="list-disc space-y-0.5 pl-5">
+              {s.effect.map((e) => (
+                <li key={e}>{e}</li>
+              ))}
+            </ul>
+          ) : null}
+          {s.impact && (
+            <p className="mt-1 font-medium">
+              {s.impact.clashes
+                ? t("rules.impact", { families: fmt.number(s.impact.families), groups: fmt.number(s.impact.groups), clashes: fmt.number(s.impact.clashes), version: s.impact.version })
+                : t("rules.impactNone", { version: s.impact.version })}
+            </p>
+          )}
+        </section>
+      )}
+      <p className="text-sm text-gray-700" lang="es">
+        {s.summary}
+      </p>
+      <details className="text-sm">
+        <summary className="cursor-pointer text-xs text-brand hover:underline">{t("rules.technicalDetail")}</summary>
+        <div className="mt-2 space-y-3">
           {s.evidence && <EvidenceTable evidence={s.evidence} />}
           <div>
             <h3 className="mb-1 text-xs text-gray-500">{t("rules.proposedChange")}</h3>
@@ -197,29 +270,62 @@ function Suggestions() {
             {t("rules.affected", { count: s.affected })}
             {s.evaluation && ` · ${t("rules.evaluation", { from: fmt.number(s.evaluation.baselineMacroF1, 2), to: fmt.number(s.evaluation.candidateMacroF1, 2), unsafe: fmt.pct(s.evaluation.unsafeClosureRate) })}`}
           </p>
-          <footer className="flex flex-wrap gap-2">
-            {s.state === "pending" ? (
-              <>
-                <Button variant="primary" onClick={() => decide(s, "approve")}>
-                  {t("rules.approveRule")}
-                </Button>
-                <Button onClick={() => decide(s, "reject")}>{t("rules.rejectRule")}</Button>
-              </>
-            ) : (
-              <span className={`text-sm ${s.state === "approved" ? "text-green-700" : "text-gray-500"}`}>{s.state === "approved" ? t("rules.approved") : t("rules.rejected")}</span>
-            )}
-            <Button
-              onClick={async () => {
-                const ok = await copyText(`Revisa y ajusta esta propuesta de regla (${s.id}): ${s.title}\n\n${s.patch}`);
-                toast.show(ok ? t("common.copied") : t("common.unknownError"));
-              }}
-            >
-              {t("rules.copyForClaude")}
+        </div>
+      </details>
+      {pub && (
+        <p className="text-xs text-gray-600">
+          {t("rules.publishedBy", { by: pub.by, at: fmt.dateTime(pub.at) })} · <span className="font-mono">{pub.files.join(", ")}</span>
+          {pub.reverted && ` · ${t("rules.revertedBy", { by: pub.reverted.by, at: fmt.dateTime(pub.reverted.at) })}`}
+        </p>
+      )}
+      {s.state === "approved" && <p className="text-xs text-amber-900">{t("rules.approvedNote")}</p>}
+      {confirm && (
+        <div role="alertdialog" aria-labelledby={`rc-${s.id}`} className="rounded border border-amber-300 bg-amber-50 p-2 text-xs">
+          <p id={`rc-${s.id}`} className="font-medium text-amber-900">
+            {t(confirm === "publish" ? "rules.confirmPublish" : "rules.confirmRevert", { title: s.title })}
+          </p>
+          {confirm === "publish" && <p className="mt-0.5 text-amber-900/80">{t("rules.publishHint")}</p>}
+          {demo && <p className="mt-0.5 text-amber-900/80">{t("rules.demoProof")}</p>}
+          <div className="mt-1.5 flex gap-1.5">
+            <Button variant="primary" disabled={busy} onClick={() => void run(confirm)}>
+              {busy ? t("rules.publishing") : t(confirm === "publish" ? "rules.publish" : "rules.revert")}
             </Button>
-          </footer>
-        </article>
-      ))}
-    </div>
+            <Button disabled={busy} onClick={() => setConfirm(null)}>
+              {t("common.cancel")}
+            </Button>
+          </div>
+        </div>
+      )}
+      {err && (
+        <p role="alert" className="text-xs text-red-700">
+          {err}
+        </p>
+      )}
+      <footer className="flex flex-wrap gap-2">
+        {s.state === "pending" && (
+          <>
+            <Button variant="primary" onClick={() => void decide("approve")}>
+              {t("rules.approveRule")}
+            </Button>
+            <Button onClick={() => void decide("reject")}>{t("rules.rejectRule")}</Button>
+          </>
+        )}
+        {(s.state === "approved" || s.state === "reverted") && !confirm && (
+          <Button variant="primary" onClick={() => setConfirm("publish")}>
+            {s.state === "reverted" ? t("rules.publishAgain") : t("rules.publish")}
+          </Button>
+        )}
+        {s.state === "published" && !confirm && <Button onClick={() => setConfirm("revert")}>{t("rules.revert")}</Button>}
+        <Button
+          onClick={async () => {
+            const ok = await copyText(`Revisa y ajusta esta propuesta de regla (${s.id}): ${s.title}\n\n${s.patch}`);
+            toast.show(ok ? t("common.copied") : t("common.unknownError"));
+          }}
+        >
+          {t("rules.copyForClaude")}
+        </Button>
+      </footer>
+    </article>
   );
 }
 

@@ -740,7 +740,7 @@
     "calibrationProposals": "Proposals",
     "calibrationAccepted": "Accepted unchanged",
     "spotCheckRate": "Corrections in random checks: {pct}",
-    "readOnlyNote": "Rules are edited in the repository (with the agent in Claude Code). This view is read-only.",
+    "readOnlyNote": "Rules change through agent suggestions (/curar-reglas): they are approved and published under Suggestions, with a passkey.",
     "description": "Description",
     "conditions": "Conditions",
     "proposedChange": "Proposed change",
@@ -760,7 +760,32 @@
       "unsafe": "Unsafe closures",
       "scenarios": "Evaluation scenarios"
     },
-    "evidenceOnlyHeader": "Backed by a real-data evaluation · no coordinator corrections yet"
+    "evidenceOnlyHeader": "Backed by a real-data evaluation · no coordinator corrections yet",
+    "stage": {
+      "pending": "Proposed",
+      "approved": "Approved · pending publication",
+      "published": "Published",
+      "reverted": "Reverted",
+      "rejected": "Rejected"
+    },
+    "publish": "Publish",
+    "publishAgain": "Publish again",
+    "revert": "Revert",
+    "publishing": "Re-evaluating and publishing…",
+    "publishedToast": "Rule published: the engine uses it from now on.",
+    "revertedToast": "Rule reverted: the previous version was restored.",
+    "publishHint": "Publishing re-runs the evaluation (no regressions allowed), asks for your passkey and writes the file with a backup.",
+    "confirmPublish": "Publish “{title}”? It is re-evaluated against the current rules, your passkey is required and the rules are written (a backup is kept for revert).",
+    "confirmRevert": "Revert “{title}”? Your passkey is required and the previous version of the rules is restored.",
+    "publishedBy": "Published by {by} · {at}",
+    "revertedBy": "Reverted by {by} · {at}",
+    "approvedNote": "Approved: not in effect yet. “Publish” applies it to the engine.",
+    "technicalDetail": "Show technical detail",
+    "effectTitle": "What changes",
+    "impact": "Affects {families} groups ({groups} locations, {clashes} clashes) in the current test (v{version}).",
+    "impactNone": "No clash of the current test changes (v{version}).",
+    "outcome": "Outcome",
+    "demoProof": "Demo mode: published without a passkey."
   },
   "reports": {
     "chart": {
@@ -1352,7 +1377,10 @@
       "family_decision": "Group decision",
       "regroup": "Regroup",
       "question": "Question",
-      "other": "Proposal"
+      "other": "Proposal",
+      "classification": "Decision",
+      "issue_draft": "Issue",
+      "status_change": "Status change"
     },
     "targets_one": "{count} target",
     "targets_other": "{count} targets",
@@ -1388,7 +1416,32 @@
     "noTarget": "The proposal is not in the test yet; refresh proposals and try again.",
     "suggestions": "Suggestions",
     "contextShort": "Context:",
-    "inputHint": "Enter sends · Shift+Enter new line"
+    "inputHint": "Enter sends · Shift+Enter new line",
+    "cardAction": {
+      "create_issue": "Create issue",
+      "close": "Close",
+      "close_not_issue": "Close (not an issue)",
+      "mark_reviewed": "Mark reviewed",
+      "hygiene_issue": "Hygiene issue",
+      "escalate": "Escalate to human review",
+      "request_info": "Request information",
+      "reopen": "Reopen",
+      "regroup": "Regroup",
+      "issue": "Draft issue",
+      "classify": "Classify",
+      "other": "Proposal"
+    },
+    "cardTarget": {
+      "family": "Group: {label}",
+      "group": "Location: {label}",
+      "clash": "Clash {label}"
+    },
+    "cardClashes_one": "{count} clash",
+    "cardClashes_other": "{count} clashes",
+    "cardGroups_one": "{count} location",
+    "cardGroups_other": "{count} locations",
+    "selectTarget": "Select in the tree",
+    "cardQuestion": "Agent question"
   },
   "toolbar": {
     "label": "Coordination workspace toolbar",

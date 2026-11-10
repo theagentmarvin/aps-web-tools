@@ -31,7 +31,7 @@ export function RulePage() {
   if (loading || !r) return <SkeletonRows count={4} height="h-16" />;
   return (
     <div>
-      <PageHeader title={`${r.id} · ${r.name}`} crumbs={[{ label: t("nav.rules"), to: "/reglas" }, { label: r.id }]} subtitle={<span className={RULE_STATE_CLS[r.state]}>{t(`rules.state.${r.state}`)}</span>} />
+      <PageHeader title={`${r.id} · ${r.nameEs ?? r.name}`} crumbs={[{ label: t("nav.rules"), to: "/reglas" }, { label: r.id }]} subtitle={<span className={RULE_STATE_CLS[r.state]}>{t(`rules.state.${r.state}`)}</span>} />
       <Banner tone="info" className="mb-4 rounded">
         {t("rules.readOnlyNote")}
       </Banner>
@@ -40,34 +40,40 @@ export function RulePage() {
           <div>
             <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-500">{t("rules.description")}</h2>
             <p className="mt-1">{r.description}</p>
+            {r.outcomeEs && <p className="mt-1 font-medium text-gray-800">{r.outcomeEs}</p>}
           </div>
-          <div>
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-500">{t("rules.conditions")}</h2>
-            <ul className="mt-1 list-disc pl-5 text-gray-700">
-              {r.conditions.map((c) => (
-                <li key={c}>{c}</li>
-              ))}
-            </ul>
-          </div>
-          <p className="text-xs text-gray-600">
-            {t("rules.columns.scope")}: {r.scope} · {t("rules.columns.hits")}: {fmt.number(r.hits7d)} · {t("rules.columns.acceptance")}: {r.acceptance === null ? "—" : fmt.pct(r.acceptance)} · {t("rules.columns.corrections")}: {r.corrections}
-          </p>
-          <div className="flex items-center gap-2 text-xs">
-            <span className="text-gray-500">{t("rules.file")}:</span>
-            <code className="font-mono">{r.file}</code>
-            <Button
-              onClick={async () => {
-                const ok = await copyText(r.file);
-                toast.show(ok ? t("common.copied") : t("common.unknownError"));
-              }}
-            >
-              {t("rules.copyPath")}
-            </Button>
-          </div>
-          <div>
-            <h2 className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500">{t("rules.yaml")}</h2>
-            <pre className="overflow-auto rounded border border-brand-muted/20 bg-gray-50 p-2 font-mono text-xs">{r.yaml}</pre>
-          </div>
+          <details>
+            <summary className="cursor-pointer text-xs text-brand hover:underline">{t("rules.technicalDetail")}</summary>
+            <div className="mt-2 space-y-3">
+              <div>
+                <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-500">{t("rules.conditions")}</h2>
+                <ul className="mt-1 list-disc pl-5 text-gray-700">
+                  {r.conditions.map((c) => (
+                    <li key={c}>{c}</li>
+                  ))}
+                </ul>
+              </div>
+              <p className="text-xs text-gray-600">
+                {t("rules.columns.hits")}: {fmt.number(r.hits7d)} · {t("rules.columns.acceptance")}: {r.acceptance === null ? "—" : fmt.pct(r.acceptance)} · {t("rules.columns.corrections")}: {r.corrections}
+              </p>
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-gray-500">{t("rules.file")}:</span>
+                <code className="font-mono">{r.file}</code>
+                <Button
+                  onClick={async () => {
+                    const ok = await copyText(r.file);
+                    toast.show(ok ? t("common.copied") : t("common.unknownError"));
+                  }}
+                >
+                  {t("rules.copyPath")}
+                </Button>
+              </div>
+              <div>
+                <h2 className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500">{t("rules.yaml")}</h2>
+                <pre className="overflow-auto rounded border border-brand-muted/20 bg-gray-50 p-2 font-mono text-xs">{r.yaml}</pre>
+              </div>
+            </div>
+          </details>
         </section>
         <div className="space-y-4">
           <ChartCard title={t("rules.reasonDistribution")} filename={`razones-${r.id}`} labels={r.reasonDistribution.map((x) => x.code)} series={[{ label: t("reports.count"), data: r.reasonDistribution.map((x) => x.count), color: BRAND }]} horizontal height={180} />

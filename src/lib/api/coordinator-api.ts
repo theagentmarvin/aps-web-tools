@@ -194,6 +194,10 @@ export interface CoordinatorApi {
   getRule(ruleId: string): Promise<RuleDetail>;
   listRuleSuggestions(): Promise<RuleSuggestion[]>;
   decideRuleSuggestion(id: string, decision: "approve" | "reject"): Promise<RuleSuggestion>;
+  /** G15: WebAuthn options for Publicar / Revertir (challenge bound to the files written). */
+  getRulePublishOptions(id: string, op: "publish" | "revert"): Promise<import("./types").RulePublishOptions>;
+  /** G15: human-only; passkey assertion (live) or demo (fixtures). Re-runs the evaluation, writes the rules. */
+  publishRuleSuggestion(id: string, op: "publish" | "revert", req: import("./types").RulePublishRequest): Promise<RuleSuggestion>;
   listCorrections(params?: { projectId?: string; limit?: number; cursor?: string }): Promise<Page<CorrectionRow>>;
   getCalibration(): Promise<Calibration>;
 

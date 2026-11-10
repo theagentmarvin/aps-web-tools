@@ -23,6 +23,7 @@ import { isRegroup, planRegroup, regroupSummary, type RegroupAction } from "./re
 import { CLOSABLE, ENGINE_NAME, ENGINE_VERSION, loadRules, runEngine } from "./engine";
 import { fixtureLedgerSeed, LedgerService, recordAccInLedger } from "./ledger";
 import { QuestionStore, type StoredQuestion } from "./questions";
+import { RulePublisher } from "./rules-publish";
 import { accIssueGroups, computeIssueChecks, IssueCheckStore } from "./issue-checks";
 import { buildAgenda, cleanNote, MeetingStore, quoteContainsDate, redactContacts, VIEW_MAX_BYTES } from "./meeting";
 import type { SourceIssue } from "./source/types";
@@ -229,6 +230,15 @@ export class Coordinator {
     const raw = await this.loadRaw(test).catch(() => undefined);
     if (!raw) return undefined;
     return (await this.recordLedgerDiff(test, prev, raw.clashes))?.diff;
+  }
+
+  private rulePub?: RulePublisher;
+  /** Rule publication (G15, human-only routes; the MCP server only reads its state). Tests may replace it. */
+  get rulePublisher(): RulePublisher {
+    return (this.rulePub ??= new RulePublisher(this));
+  }
+  set rulePublisher(p: RulePublisher) {
+    this.rulePub = p;
   }
 
   /** Dependencies for server/approval (the only ACC write path). */
@@ -2527,6 +2537,10 @@ export class Coordinator {
       return true;
     });
     const page = paginate(rows.reverse(), input.limit, input.cursor);
+    // Rule suggestions: the publication stage first (read-only for agents; humans approve and publish in Reglas).
+    const RULE_STAGE: Record<string, string> = { pending: "propuesta", approved: "aprobada · pendiente de publicar", published: "publicada", reverted: "revertida", rejected: "rechazada" };
+    const ruleStage = new Map<string, string>();
+    for (const p of page.items) if (p.kind === "rule_change") ruleStage.set(p.id, RULE_STAGE[await this.rulePublisher.stage(p)]!);
     return {
       columns: ["proposalId", "kind", "status", "target", "summary", "risk", "createdAt", "decidedBy"],
       rows: page.items.map((p) => [
@@ -2534,7 +2548,7 @@ export class Coordinator {
         p.kind,
         p.state,
         p.target.groupIds.length === 1 ? p.target.groupIds[0] : p.target.groupIds.length ? `${p.target.groupIds.length} grupos` : `${p.affectedClashes} clashes`,
-        proposalSummary(p).slice(0, 80),
+        (ruleStage.has(p.id) ? `[${ruleStage.get(p.id)}] ${proposalSummary(p)}` : proposalSummary(p)).slice(0, 80),
         p.risk,
         p.createdAt,
         p.history.filter((h) => h.to === "approved" || h.to === "rejected").pop()?.by ?? null,
@@ -2669,12 +2683,12 @@ export class Coordinator {
   // ── evaluation ───────────────────────────────────────────────────────────
 
   /** Apply a unified diff to a temp copy of rules/ and return its directory (validates loading). */
-  async candidateRulesDir(patchP: Promise<string>): Promise<string> {
+  async candidateRulesDir(patchP: Promise<string>, fromDir?: string): Promise<string> {
     const patch = await patchP;
     const { mkdtemp, readdir, readFile, writeFile, mkdir } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");
     const dir = await mkdtemp(join(tmpdir(), "coord-rules-"));
-    const rulesDir = join(this.root, "rules");
+    const rulesDir = fromDir ?? join(this.root, "rules");
     for (const f of await readdir(rulesDir)) {
       if (/\.ya?ml$/.test(f)) await writeFile(join(dir, f), await readFile(join(rulesDir, f)));
     }
@@ -2703,7 +2717,7 @@ export class Coordinator {
    * fixtures (v41→v42 diff vs tests/fixtures/fixture-truth.json), feedback_replay
    * (the project's human decisions and feedback replayed on cached tests).
    */
-  async evaluateRuleset(input: { candidatePatch?: string; suites: Array<"eval_scenarios" | "fixtures" | "feedback_replay"> }) {
+  async evaluateRuleset(input: { candidatePatch?: string; suites: Array<"eval_scenarios" | "fixtures" | "feedback_replay"> }, opts: { rulesDir?: string } = {}) {
     const { loadRules } = await import("./engine");
     const { evaluateScenarios, parseScenarioMarkdown } = await import("../core/eval/scenarios");
     const { readFile } = await import("node:fs/promises");
@@ -2711,7 +2725,7 @@ export class Coordinator {
     let candidateDir: string | undefined;
     if (input.candidatePatch) {
       try {
-        candidateDir = await this.candidateRulesDir(Promise.resolve(input.candidatePatch));
+        candidateDir = await this.candidateRulesDir(Promise.resolve(input.candidatePatch), opts.rulesDir);
       } catch (err) {
         schemaErrors.push((err as Error).message);
       }
@@ -2791,7 +2805,7 @@ export class Coordinator {
       };
     };
 
-    const baseline = await metricsFor();
+    const baseline = await metricsFor(opts.rulesDir);
     const candidate = candidateDir ? await metricsFor(candidateDir) : undefined;
     const regressions: Array<{ scenario: string; field: string; expected: string; got: string }> = [];
     if (candidate) {

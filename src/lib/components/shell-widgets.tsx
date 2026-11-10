@@ -30,6 +30,9 @@ export function LanguageSwitch() {
   );
 }
 
+/** Window event: re-read the agent status now (e.g. a chat turn ended: done, error or cancel). */
+export const AGENT_STATUS_REFRESH = "coord:agent-status-refresh";
+
 export function useAgentStatus(pollMs = 30000): AgentStatus | undefined {
   const api = useApi();
   const [status, setStatus] = useState<AgentStatus>();
@@ -42,9 +45,12 @@ export function useAgentStatus(pollMs = 30000): AgentStatus | undefined {
       );
     void load();
     const id = window.setInterval(load, pollMs);
+    const now = () => void load();
+    window.addEventListener(AGENT_STATUS_REFRESH, now);
     return () => {
       alive = false;
       window.clearInterval(id);
+      window.removeEventListener(AGENT_STATUS_REFRESH, now);
     };
   }, [api, pollMs]);
   return status;

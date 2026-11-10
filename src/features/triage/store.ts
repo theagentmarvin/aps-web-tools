@@ -612,6 +612,15 @@ export class TriageStore {
     this.set({ questions, openQuestionByGroup: openQuestions(questions, [...this.state.groups.values()]) });
   }
 
+  /** G12: a question created by the chat agent after the payload loaded (server data); answered ones are kept. */
+  upsertQuestion(q: AgentQuestion) {
+    const cur = this.state.questions.get(q.id);
+    if (cur && (cur.state !== "open" || cur === q)) return;
+    const questions = new Map(this.state.questions);
+    questions.set(q.id, q);
+    this.set({ questions, openQuestionByGroup: openQuestions(questions, [...this.state.groups.values()]) });
+  }
+
   /** Lens "Qué cambió": changed ubicaciones, plus any with an open agent question (even if unchanged). */
   inChangesLens(e: Evaluated): boolean {
     if (CHANGED.has(this.changeOf(e))) return true;

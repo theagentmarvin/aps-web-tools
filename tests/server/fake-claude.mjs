@@ -1,5 +1,5 @@
 // Fake `claude` binary for the chat tests (selected with COORD_CLAUDE_BIN / resolveBin).
-// FAKE_CLAUDE_MODE: ok | notlogged | slow | mcpdown | manytools | resume_missing
+// FAKE_CLAUDE_MODE: ok | notlogged | slow | mcpdown | manytools | resume_missing | preamble
 // FAKE_CLAUDE_AUTH=out → `auth status` reports logged out. FAKE_CLAUDE_LOG: JSONL of {args, prompt}.
 // FAKE_PROPOSAL_ID: id returned by the fake propose_group_action tool result.
 import { appendFileSync } from "node:fs";
@@ -56,6 +56,34 @@ process.stdin.on("end", () => {
     for (let i = 0; i < 30; i++) out({ type: "assistant", session_id: session, message: { content: [{ type: "tool_use", id: `t${i}`, name: "mcp__coord__get_group", input: { groupId: "G-0000000000" } }] } });
     setInterval(() => undefined, 1000);
     return;
+  }
+  if (mode === "preamble") {
+    // G12: an English preamble before a tool call, then the Spanish answer (real stream_event shape).
+    const ev = (event) => out({ type: "stream_event", session_id: session, event });
+    init();
+    ev({ type: "message_start" });
+    ev({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
+    ev({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "I'll check the family's " } });
+    ev({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "details first." } });
+    ev({ type: "content_block_stop", index: 0 });
+    ev({ type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "tu9", name: "mcp__coord__get_family", input: {} } });
+    ev({ type: "message_delta", delta: { stop_reason: "tool_use" } });
+    out({ type: "assistant", session_id: session, message: { content: [{ type: "tool_use", id: "tu9", name: "mcp__coord__get_family", input: { familyId: "F-aaaaaaaaaa" } }] } });
+    out({ type: "user", session_id: session, message: { content: [{ type: "tool_result", tool_use_id: "tu9", content: [{ type: "text", text: "{\"ok\":true,\"data\":{}}" }] }] } });
+    ev({ type: "message_start" });
+    ev({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
+    ev({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Reviso el grupo…" } });
+    ev({ type: "content_block_stop", index: 0 });
+    ev({ type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "tu10", name: "mcp__coord__get_group", input: {} } });
+    ev({ type: "message_delta", delta: { stop_reason: "tool_use" } });
+    out({ type: "user", session_id: session, message: { content: [{ type: "tool_result", tool_use_id: "tu10", content: [{ type: "text", text: "{\"ok\":true,\"data\":{}}" }] }] } });
+    ev({ type: "message_start" });
+    ev({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
+    ev({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "El grupo es un **Conflicto**: el ducto CLI cruza la viga EST." } });
+    ev({ type: "content_block_stop", index: 0 });
+    ev({ type: "message_delta", delta: { stop_reason: "end_turn" } });
+    result("El grupo es un **Conflicto**: el ducto CLI cruza la viga EST.");
+    process.exit(0);
   }
   init();
   delta("Hola, ");

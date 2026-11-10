@@ -73,6 +73,19 @@ describe("toChatEvent", () => {
     expect(q.proposal).toMatchObject({ id: "Q-7", kind: "question", summary: "¿Mover el ducto?", questionId: "Q-7" });
   });
 
+  it("G12: a server card gives the target ids, the panel kind and the full question", () => {
+    const card = { id: "P-2", kind: "family_decision", action: "create_issue", validity: "real", target: { kind: "family", id: "F-abc", label: "Ductos × vigas", clashCount: 12, groupCount: 3 } };
+    const p = ev("proposal", { type: "proposal", id: "P-2", kind: "family_decision", summary: "familia F-abc: real / create_issue", card });
+    expect(p.proposal).toMatchObject({ id: "P-2", kind: "family_decision", familyId: "F-abc", targetCount: 3, card });
+    const reg = ev("proposal", { type: "proposal", id: "P-3", kind: "group_action", summary: "fusionar", card: { id: "P-3", kind: "group_action", action: "regroup", title: "fusionar" } });
+    expect(reg.proposal).toMatchObject({ kind: "regroup", summary: "fusionar" });
+    const question = { id: "Q-8", testKey: "T-1", version: 42, groupIds: ["G-1"], clashIds: [], question: "¿Atraviesa?", affectedGroups: 1, kind: "validity", state: "open", createdBy: "agent", createdAt: "" };
+    const q = ev("question", { type: "question", id: "Q-8", question: "¿Atraviesa?", card: { id: "Q-8", kind: "question", title: "¿Atraviesa?", target: { kind: "group", id: "G-1", label: "N3 eje B", clashCount: 2 }, question } });
+    expect(q.proposal).toMatchObject({ kind: "question", questionId: "Q-8", groupIds: ["G-1"], summary: "¿Atraviesa?", card: { question } });
+    // A card for another id is ignored (ids come from the event, never from text).
+    expect(ev("proposal", { type: "proposal", id: "P-4", kind: "x", summary: "s", card: { id: "P-9", kind: "x" } }).proposal.card).toBeUndefined();
+  });
+
   it("reads cost and duration from done", () => {
     expect(ev("done", { type: "done", messageId: "M1", costUsd: 0.042, durationMs: 8100 })).toMatchObject({ type: "done", cost: 0.042, durationMs: 8100 });
   });

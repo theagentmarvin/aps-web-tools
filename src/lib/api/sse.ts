@@ -38,6 +38,23 @@ export class SseParser {
 
 import { CHAT_ERROR_CODES, type ChatErrorCode } from "./types";
 
+/** Server card (G12) → the panel's proposal shape (target ids for "Ver", kind for "Aplicar"). */
+export function proposalFromCard(card: import("./types").ChatCard): import("./types").ChatProposal {
+  const t = card.target;
+  const kind = card.kind === "group_action" ? "regroup" : card.kind === "classification" ? "decision" : card.kind;
+  return {
+    id: card.id,
+    kind,
+    summary: card.title ?? card.id,
+    ...(t?.kind === "family" ? { familyId: t.id } : {}),
+    ...(t?.kind === "group" ? { groupIds: [t.id] } : {}),
+    ...(t?.kind === "clash" ? { clashIds: [t.id] } : {}),
+    ...(t?.groupCount !== undefined ? { targetCount: t.groupCount } : {}),
+    ...(card.kind === "question" ? { questionId: card.id } : {}),
+    card,
+  };
+}
+
 /** SSE message → typed chat event (unknown events are ignored). */
 export function toChatEvent(m: SseMessage): import("./types").ChatEvent | null {
   let payload: Record<string, unknown>;
@@ -65,7 +82,11 @@ export function toChatEvent(m: SseMessage): import("./types").ChatEvent | null {
     case "proposal":
     case "question": {
       // Cards come ONLY from these server events (never from the model's text).
-      const p = (payload.proposal ?? payload) as import("./types").ChatProposal & { question?: string };
+      const raw = (payload.proposal ?? payload) as import("./types").ChatProposal & { question?: string };
+      // A card must describe this very id; otherwise it is dropped.
+      const { card, ...p } = raw;
+      // G12: the server's card carries the target and validity; it wins over the bare event.
+      if (card && typeof card === "object" && card.id === raw.id) return { type: "proposal", proposal: { ...proposalFromCard(card), summary: card.title ?? String(p.summary ?? p.question ?? "") } };
       if (m.event === "question") {
         const { question, ...rest } = p;
         return { type: "proposal", proposal: { ...rest, kind: "question", summary: String(question ?? p.summary ?? ""), questionId: (p.questionId ?? p.id) as string } };
