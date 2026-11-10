@@ -149,7 +149,13 @@ export interface GetSessionStatusOutput {
   active?: { projectId: string; projectName: string; modelSetId?: string; modelSetName?: string; testKey?: string };
   projectNotes?: { path: string; lines: number };
   cache: { tests: number; sizeMb: number };
-  pending: { proposals: number; approvedNotApplied: number; feedbackSinceLastCuration: number };
+  pending: {
+    proposals: number;
+    approvedNotApplied: number;
+    feedbackSinceLastCuration: number;
+    /** G3: unapplied batches on an older model set version. Only a human re-bases them (/aprobaciones). */
+    staleBatches?: Array<{ batchId: string; version: number; latestVersion: number; canRebase: boolean; hint: string }>;
+  };
   versions: { server: string; ruleset: string; engine: string };
 }
 

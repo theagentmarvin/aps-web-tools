@@ -205,8 +205,23 @@ export class CoordinatorUi {
   private async pendingCount(t: TestRecord): Promise<number> {
     const cls = await this.store.getClassification(t.testKey);
     if (!cls) return 0;
-    const decided = await this.core.effectiveDecisions(t.testKey);
+    const decided = await this.decidedGroupIds(t, cls);
     return cls.groups.filter((g) => !decided.has(g.id)).length;
+  }
+
+  /**
+   * Groups with a human decision on this test: their own (group) decision, or an inherited instance
+   * of an approved family decision (G2: "Aprobar grupo" decides every inherited instance).
+   */
+  private async decidedGroupIds(t: TestRecord, cls: ClassificationRecord): Promise<Set<string>> {
+    const out = new Set<string>();
+    const own = await this.core.effectiveDecisions(t.testKey);
+    for (const g of cls.groups) if (own.has(g.id)) out.add(g.id);
+    if (cls.families) {
+      const views = await this.core.familyViewsFor(t.testKey).then((r) => r.views).catch(() => []);
+      for (const v of views) if (v.decision?.status === "approved") for (const i of v.instances) if (i.inheritance.state === "inherited") out.add(i.groupId);
+    }
+    return out;
   }
 
   async modelSets(projectId: string): Promise<C.ModelSetSummary[]> {
@@ -219,7 +234,7 @@ export class CoordinatorUi {
       let analyzed: TestRecord | undefined;
       for (const t of mine) if (await this.store.getClassification(t.testKey)) { analyzed = t; break; }
       const cls = analyzed ? await this.store.getClassification(analyzed.testKey) : undefined;
-      const decided = analyzed ? await this.core.effectiveDecisions(analyzed.testKey) : new Map();
+      const decided = analyzed && cls ? await this.decidedGroupIds(analyzed, cls) : new Set<string>();
       const last = mine[0];
       out.push({
         id: s.id,
@@ -604,7 +619,8 @@ export class CoordinatorUi {
       const views = (await this.core.familyViewsFor(test.testKey)).views;
       const props = await this.familyProposals(test.testKey);
       this.familyClashIds.set(test.testKey, new Map(cls.groups.map((g) => [g.id, g.clashIds])));
-      families = views.map((v) => this.familyUi(v, props, test.testKey));
+      const pendingSend = await this.familyPendingSend(test, cls, views);
+      families = views.map((v) => this.familyUi(v, props, test.testKey, pendingSend));
       const inh = new Map(views.flatMap((v) => v.instances.map((i) => [i.groupId, i.inheritance] as const)));
       for (const g of groups) {
         const x = inh.get(g.id);
@@ -999,7 +1015,8 @@ export class CoordinatorUi {
   }
 
   async batchUi(b: BatchRecord): Promise<C.Batch> {
-    const latest = await this.core.source.latestVersion(b.projectId, b.modelSetId).catch(() => b.modelSetVersion);
+    const rb = await this.core.batchRebaseInfo(b);
+    const latest = rb.latestVersion;
     const inc = b.items.filter((i) => !i.excluded);
     // Status changes = clash.setStatus items only (clashes:close). Issue items (clashes:assign) are
     // reported separately in issueEffects: they link clashes to an issue, they are not status changes.
@@ -1079,6 +1096,9 @@ export class CoordinatorUi {
         ...(i.familyId ? { familyId: i.familyId, familyDecisionVersion: i.familyDecisionVersion, groupIds: i.groupIds ?? [] } : {}),
         ...(i.validityChanges?.length ? { validityChanges: i.validityChanges } : {}),
       })),
+      ...(rb.stale && b.state !== "discarded" && b.state !== "applied" ? { rebase: { available: rb.available, targetVersion: rb.latestVersion, ...(rb.reason ? { reason: rb.reason } : {}) } } : {}),
+      ...(b.supersededBy ? { supersededBy: b.supersededBy } : {}),
+      ...(b.rebasedFrom ? { rebasedFrom: b.rebasedFrom } : {}),
     };
   }
 
@@ -1197,6 +1217,197 @@ export class CoordinatorUi {
       await this.store.markDecisionsBatched(b.items.flatMap((i) => i.decisionIds), undefined);
       await this.store.audit({ actor: { type: "user", id: user.id, name: user.name }, action: "batch.discarded", projectId: b.projectId, batchId: id });
       return this.batchUi(updated);
+    });
+  }
+
+  /**
+   * G3 "Llevar decisiones a vN" (HUMAN only; agents never create, edit, approve or apply batches).
+   * A batch prepared on an older model set version cannot be approved once a newer one exists: its
+   * items carry old clash ids and the old testId. This builds a NEW `ready`, UNAPPROVED batch on the
+   * latest, analysed version:
+   *  - group items are carried only when the vN group inherits the batched decision through the
+   *    ledger (source human, ref = decision id), every clash is unchanged, the effective validity /
+   *    effect on vN equals the ledger reference, and never a closure onto a `real` group. Carried
+   *    decisions are copied as vN decision records (audit + ledger refs, no feedback); issue text
+   *    edits are copied when the mapping is 1:1;
+   *  - family items are rebuilt from the current family decisions (old batch ignored);
+   *  - anything else is listed in rebasedFrom.needsReview.
+   * The old batch is discarded with supersededBy (its decisions stay attached to it). The new batch
+   * needs a fresh approval (passkey in live mode).
+   */
+  async rebaseBatch(id: string, user: HumanUser): Promise<C.BatchRebaseResult> {
+    this.core.requireLevel(1, "Llevar decisiones a la versión nueva");
+    return withBatchLock(this.store, async () => {
+      const old = await this.requireBatch(id);
+      const info = await this.core.batchRebaseInfo(old);
+      if (!info.stale) throw new CoordError("validation_error", `El lote ${id} ya está en la versión vigente v${info.latestVersion}.`);
+      if (old.state !== "draft" && old.state !== "ready" && old.state !== "approved") throw new CoordError("invalid_state", info.reason ?? `El lote está ${old.state}.`);
+      if (!info.available || !info.targetTestKey) throw new CoordError("not_ingested", info.reason ?? `La versión v${info.latestVersion} no está analizada.`, `Usa «Analizar v${info.latestVersion}» en el espacio de trabajo.`);
+      const N = info.latestVersion;
+      const { test, cls, byGroup, cycle } = await this.testContext(info.targetTestKey);
+      const now = nowIso(this.core.now());
+      const batchId = await this.store.newBatchId();
+      const needsReview: C.BatchRebaseNote["needsReview"] = [];
+      const items: BatchItemRecord[] = [];
+      const userExcluded = (its: readonly BatchItemRecord[]) => its.length > 0 && its.every((i) => i.excluded && !i.conflict);
+
+      // 1. Families: rebuilt on vN from the current family decisions (the old batch does not count as sent).
+      const famItems = new Map<string, BatchItemRecord[]>();
+      for (const i of old.items) if (i.familyId) famItems.set(i.familyId, [...(famItems.get(i.familyId) ?? []), i]);
+      const views = famItems.size && cls.families ? (await this.core.familyViewsFor(test.testKey)).views : [];
+      const viewOf = (fid: string) => views.find((v) => v.id === fid || v.mergedFrom.includes(fid));
+      const only = new Map<string, string>();
+      for (const [fid, its] of famItems) {
+        const v = viewOf(fid);
+        if (userExcluded(its)) needsReview.push({ label: its[0]!.label, familyId: fid, reason: "Excluida en el lote anterior: no se lleva." });
+        else if (!v) needsReview.push({ label: its[0]!.label, familyId: fid, reason: `El grupo no existe en v${N}.` });
+        else only.set(v.id, its[0]!.label);
+      }
+      const fam = await this.familyBatchItems(batchId, test, cls, user, { ignoreBatchIds: new Set([old.id]), onlyFamilies: new Set(only.keys()) });
+      items.push(...fam.items);
+      const famSent = new Set(fam.items.flatMap((i) => i.groupIds ?? []));
+      for (const [fid, label] of only) {
+        const v = views.find((x) => x.id === fid)!;
+        if (!fam.items.some((i) => i.familyId === v.id)) needsReview.push({ label, familyId: v.id, reason: `Sin instancias heredadas pendientes de enviar en v${N}: revisa el grupo en el espacio de trabajo.` });
+        else if (v.counts.pendingInherited > 0) needsReview.push({ label, familyId: v.id, reason: `${v.counts.pendingInherited} instancia(s) nuevas o cambiadas por confirmar en v${N}: no se incluyen hasta confirmarlas.` });
+      }
+
+      // 2. Group decisions: carried only through the ledger inheritance, unchanged.
+      const decById = new Map((await this.store.listDecisions()).map((d) => [d.id, d]));
+      const own = await this.core.effectiveDecisions(test.testKey);
+      const byDecision = new Map<string, BatchItemRecord[]>();
+      for (const i of old.items) if (!i.familyId && i.groupId && i.decisionIds[0]) byDecision.set(i.decisionIds[0], [...(byDecision.get(i.decisionIds[0]) ?? []), i]);
+      const targets = new Map<string, GroupRecord[]>();
+      for (const g of cls.groups) {
+        const inh = cycle.inherited.get(g.id);
+        if (inh?.source === "human" && byDecision.has(inh.ref)) targets.set(inh.ref, [...(targets.get(inh.ref) ?? []), g]);
+      }
+      const groupOfClash = new Map(cls.clashes.map((c) => [c.id, c.groupId]));
+      const carried: Array<{ g: GroupRecord; d: DecisionRecord; validity: C.Validity; effect: "issue" | "close" | "none" }> = [];
+      for (const [decId, olds] of byDecision) {
+        const first = olds[0]!;
+        const skip = (reason: string, groupId = first.groupId) => needsReview.push({ label: first.label, ...(groupId ? { groupId } : {}), reason });
+        const from = decById.get(decId);
+        if (!from) {
+          skip("No se encontró la decisión original.");
+          continue;
+        }
+        if (userExcluded(olds)) {
+          skip("Excluida en el lote anterior: no se lleva.");
+          continue;
+        }
+        const gs = targets.get(decId) ?? [];
+        if (!gs.length) {
+          const ids = [...new Set(olds.flatMap((i) => i.targetIds.map((t) => t.replace(/^C-/, ""))))];
+          const present = ids.filter((c) => groupOfClash.has(c));
+          if (!present.length) skip(`Resuelta en v${N}: sus interferencias ya no aparecen.`);
+          else if (present.every((c) => cycle.acc.has(c))) skip(`Ya está en ACC en v${N} (asignada o cerrada).`);
+          else if (olds.some((i) => i.mcOperation === "clash.close") && present.some((c) => cls.groups.find((g) => g.id === groupOfClash.get(c))?.validity === "real")) skip(`Cierre de una interferencia real en v${N}: nunca se lleva; revísala.`, groupOfClash.get(present[0]!));
+          else if (present.some((c) => own.has(groupOfClash.get(c)!))) skip(`Ya tiene una decisión en v${N}: envíala desde el espacio de trabajo.`, groupOfClash.get(present[0]!));
+          else skip(`Cambió en v${N} (geometría, elementos o agrupación): revísala en el espacio de trabajo.`, groupOfClash.get(present[0]!));
+          continue;
+        }
+        const oneToOne = gs.length === 1;
+        for (const g of gs) {
+          if (fam.covered.has(g.id)) {
+            if (!famSent.has(g.id)) skip(`Heredada de un grupo aprobado en v${N}: se envía con ese grupo desde el espacio de trabajo.`, g.id);
+            continue;
+          }
+          if (g.clashIds.some((c) => (cycle.changes.get(c) ?? "new") !== "unchanged")) {
+            skip(`Cambió en v${N}: revísala en el espacio de trabajo.`, g.id);
+            continue;
+          }
+          const view = this.proposalView(g, test, cls, byGroup.get(g.id) ?? []);
+          const eff = this.effective(view, from);
+          const effect: "issue" | "close" | "none" = eff.action.createIssue ? "issue" : eff.action.setStatus === "closed" || eff.action.setStatus === "reviewed" ? "close" : "none";
+          // Invariant 3: a closure never reaches a real group, whatever the ledger says.
+          if (effect === "close" && (g.validity === "real" || eff.validity === "real")) {
+            skip(`Cierre de una interferencia real en v${N}: nunca se lleva; revísala.`, g.id);
+            continue;
+          }
+          const inh = cycle.inherited.get(g.id)!;
+          if (eff.validity !== inh.validity || effect !== inh.effect) {
+            skip(`En v${N} la decisión no daría el mismo resultado (validez o acción): revísala.`, g.id);
+            continue;
+          }
+          const d: DecisionRecord = {
+            ...from,
+            id: `D-rb-${sha256(`${from.id}|${test.testKey}|${g.id}`).slice(0, 16)}`,
+            proposalId: view.id,
+            targetId: g.id,
+            testId: test.testKey,
+            modelSetId: test.modelSetId,
+            projectId: bareProjectId(test.projectId),
+            batchId: undefined,
+            bulk: undefined,
+            undoes: undefined,
+            receivedAt: now,
+            carriedFrom: from.id,
+          };
+          const st = (byGroup.get(g.id) ?? []).filter((p) => p.payload.kind === "status_change" && p.state !== "withdrawn" && p.state !== "rejected").pop();
+          const its = this.buildItems(batchId, test, cls, g, view, d, st?.payload.kind === "status_change" ? st.payload.accReason : undefined);
+          if (!its.length) {
+            skip(`Sin cambios que aplicar en ACC en v${N}.`, g.id);
+            continue;
+          }
+          // Issue text edited in the old batch (R13): copied when the old item maps 1:1 to the new one.
+          const oldIssue = olds.filter((i) => i.mcOperation === "clash.assign");
+          const newIssue = its.filter((i) => i.mcOperation === "clash.assign");
+          if (oneToOne && oldIssue.length === 1 && newIssue.length === 1 && oldIssue[0]!.reasonCode === "R13") copyIssueText(oldIssue[0]!, newIssue[0]!);
+          items.push(...its);
+          carried.push({ g, d, validity: eff.validity, effect });
+        }
+      }
+      if (!items.length) {
+        const list = needsReview.slice(0, 3).map((x) => `${x.label}: ${x.reason}`).join(" · ");
+        throw new CoordError("validation_error", `Nada del lote ${id} se puede llevar a v${N} sin revisión: ${list}${needsReview.length > 3 ? ` (+${needsReview.length - 3})` : ""}`, "Revisa esos grupos en el espacio de trabajo y envía un lote nuevo; luego descarta este.");
+      }
+
+      // 3. Writes: carried decisions (+ ledger refs, audit, never feedback), new batch, old batch superseded.
+      const actor: Actor = { type: "user", id: user.id, name: user.name };
+      const { added } = await this.store.appendDecisions(carried.map((c) => c.d));
+      await this.core.recordDecisionRefs(
+        test,
+        cls,
+        carried.map((c) => ({ groupId: c.g.id, ref: { source: "human" as const, ref: c.d.id, decision: c.d.kind, validity: c.validity, effect: c.effect, decidedBy: c.d.userName, decidedAt: c.d.decidedAt } })),
+      );
+      for (const d of added) {
+        await this.store.audit({ actor, action: "decision.carried", projectId: test.projectId, modelSetId: test.modelSetId, testId: test.testKey, accTestId: test.testId, targetIds: [d.targetId, d.id], details: { decisionId: d.id, carriedFrom: d.carriedFrom ?? null, fromBatch: old.id, toBatch: batchId, fromVersion: old.modelSetVersion, toVersion: N } });
+      }
+      const rebasedFrom: C.BatchRebaseNote = { batchId: old.id, fromVersion: old.modelSetVersion, carried: items.length, needsReview };
+      const batch: BatchRecord = {
+        id: batchId,
+        projectId: test.projectId,
+        projectName: test.projectName,
+        modelSetId: test.modelSetId,
+        modelSetName: test.modelSetName,
+        testKey: test.testKey,
+        testId: test.testId,
+        testDate: test.completedOn ?? test.ingestedAt,
+        modelSetVersion: test.modelSetVersion,
+        state: "ready",
+        createdBy: user.name,
+        createdAt: now,
+        updatedAt: now,
+        items,
+        rebasedFrom,
+      };
+      await this.store.putBatch(batch);
+      await this.store.markDecisionsBatched(carried.map((c) => c.d.id), batchId);
+      await this.store.audit({ actor, action: "batch.ready", projectId: test.projectId, modelSetId: test.modelSetId, testId: test.testKey, accTestId: test.testId, batchId, details: { items: items.length, rebasedFrom: old.id, needsReview: needsReview.length } });
+      if (old.state === "approved") {
+        // The old approval is void (other version): back to draft first, like "Devolver a revisión".
+        await this.store.transitionBatch(old.id, "draft");
+        await this.store.deleteApproval(old.id);
+        for (const pid of new Set(old.items.flatMap((i) => i.proposalIds))) {
+          const p = await this.store.getProposal(pid);
+          if (p?.state === "approved") await this.store.transitionProposal(pid, "pending_review", user.name, `lote ${old.id} reemplazado por ${batchId}`);
+        }
+      }
+      // Old decisions stay attached to the old batch: nothing of the old version is offered again.
+      await this.store.transitionBatch(old.id, "discarded", (b) => void (b.supersededBy = batchId));
+      await this.store.audit({ actor, action: "batch.superseded", projectId: old.projectId, modelSetId: old.modelSetId, testId: old.testKey, accTestId: old.testId, batchId: old.id, targetIds: [batchId], details: { supersededBy: batchId, fromVersion: old.modelSetVersion, toVersion: N, carried: items.length, needsReview: needsReview.length } });
+      return { batch: await this.batchUi(batch), previous: old.id, needsReview };
     });
   }
 
@@ -1482,7 +1693,7 @@ export class CoordinatorUi {
     const prev = classified[classified.length - 2];
     const decisions = (await this.store.listDecisions()).filter((d) => tests.some((t) => t.testKey === d.testId) && inRange(d.decidedAt));
     const audit = (await this.store.listAudit()).filter((e) => inRange(e.at) && (!scope.projectId || bareProjectId(e.projectId || "") === bareProjectId(scope.projectId)));
-    const latestDecided = latest ? await this.core.effectiveDecisions(latest.t.testKey) : new Map<string, DecisionRecord>();
+    const latestDecided = latest ? await this.decidedGroupIds(latest.t, latest.cls) : new Set<string>();
     const active = (c?: { cls: ClassificationRecord }) => (c ? c.cls.clashes.filter((x) => x.status === "active").length : 0);
     const disciplines = new Set<string>();
     const matrix: Record<string, Record<string, number>> = {};
@@ -1721,7 +1932,7 @@ export class CoordinatorUi {
 
 // ── solution families (docs/domain/solution-families-proposal.md) ───────
 
-  private familyUi(v: FamilyView, proposals: readonly ProposalRecord[], testKey?: string): C.TriageFamily {
+  private familyUi(v: FamilyView, proposals: readonly ProposalRecord[], testKey?: string, pendingSend?: ReadonlyMap<string, number>): C.TriageFamily {
     const pending = proposals.filter((p) => p.payload.kind === "family_decision" && p.payload.familyId === v.id && PENDING.has(p.state));
     const c = testKey ? this.cycles.get(testKey) : undefined;
     const clsOf = c ? this.familyClashIds.get(testKey!) : undefined;
@@ -1742,6 +1953,7 @@ export class CoordinatorUi {
       ...(v as unknown as Omit<C.TriageFamily, "pendingProposals">),
       ...extra,
       pendingProposals: pending.map((p) => ({ id: p.id, createdAt: p.createdAt, rationale: p.rationale, payload: p.payload as unknown as Record<string, unknown> })),
+      ...(pendingSend ? { pendingSend: pendingSend.get(v.id) ?? 0 } : {}),
     };
   }
 
@@ -1759,14 +1971,15 @@ export class CoordinatorUi {
   }
 
   async families(testKey: string): Promise<C.FamiliesPayload> {
-    const { test, views } = await this.familyContext(testKey);
+    const { test, cls, views } = await this.familyContext(testKey);
     const props = await this.familyProposals(test.testKey);
-    return { testId: test.testKey, families: views.map((v) => this.familyUi(v, props, test.testKey)), problemTypes: PROBLEM_TYPES.map((p) => ({ ...p, options: [...p.options] })) };
+    const pendingSend = await this.familyPendingSend(test, cls, views);
+    return { testId: test.testKey, families: views.map((v) => this.familyUi(v, props, test.testKey, pendingSend)), problemTypes: PROBLEM_TYPES.map((p) => ({ ...p, options: [...p.options] })) };
   }
 
   async family(testKey: string, familyId: string): Promise<C.TriageFamily> {
-    const { test, views } = await this.familyContext(testKey);
-    return this.familyUi(assertFamilyInTest(views, familyId), await this.familyProposals(test.testKey), test.testKey);
+    const { test, cls, views } = await this.familyContext(testKey);
+    return this.familyUi(assertFamilyInTest(views, familyId), await this.familyProposals(test.testKey), test.testKey, await this.familyPendingSend(test, cls, views));
   }
 
   private decisionFields(v: FamilyView, req: Partial<C.FamilyDecisionRequest>): FamilyDecisionFields {
@@ -2164,38 +2377,68 @@ export class CoordinatorUi {
   }
 
   /**
-   * Batch items of decided families: ONE assign (issue) per family (chunks of 1,000 clashes) or one
-   * per instance (issueMode per_instance), or ONE close per family. Only inherited instances: pending
-   * (new since the decision) and exceptions are never included automatically.
+   * Family work still to send for one test: per approved, non-escalate family decision, its inherited
+   * instances (they skip the group flow) and `todo`: those not yet in a non-discarded batch (minus
+   * `ignoreBatchIds`) that still have a clash outside ACC. Shared by {@link familyBatchItems} and
+   * TriageFamily.pendingSend, so the toolbar counts exactly what "Enviar a aprobación" would send.
    */
-  private async familyBatchItems(batchId: string, test: TestRecord, cls: ClassificationRecord, user: HumanUser): Promise<{ items: BatchItemRecord[]; covered: Set<string> }> {
-    const items: BatchItemRecord[] = [];
-    const covered = new Set<string>();
-    if (!cls.families) return { items, covered };
-    const st = await this.core.families.load(test.projectId, test.modelSetId);
-    const views = (await this.core.familyViewsFor(test.testKey)).views;
-    void st;
-    const batches = (await this.store.listBatches()).filter((b) => b.modelSetId === test.modelSetId && b.state !== "discarded");
-    const done = new Set<string>();
+  private async familyTodo(test: TestRecord, cls: ClassificationRecord, views: readonly FamilyView[], opts: { ignoreBatchIds?: ReadonlySet<string> } = {}) {
+    type Inst = FamilyView["instances"][number];
+    const families: Array<{ v: FamilyView; dec: NonNullable<FamilyView["decision"]>; issue: boolean; op: "clash.assign" | "clash.close"; inherited: Inst[]; todo: Inst[] }> = [];
     const issuedFamilies = new Set<string>();
+    if (!cls.families) return { families, issuedFamilies };
+    const batches = (await this.store.listBatches()).filter((b) => b.modelSetId === test.modelSetId && b.state !== "discarded" && !opts.ignoreBatchIds?.has(b.id));
+    const done = new Set<string>();
     for (const b of batches) for (const i of b.items) if (i.familyId && !i.excluded) {
       for (const g of i.groupIds ?? []) done.add(`${i.familyId}|${g}|${i.mcOperation}`);
       if (i.mcOperation === "clash.assign" && b.testKey !== test.testKey) issuedFamilies.add(i.familyId);
     }
-    const byGroup = new Map<string, ClashRecord[]>();
-    for (const c of cls.clashes) byGroup.set(c.groupId, [...(byGroup.get(c.groupId) ?? []), c]);
-    const gById = new Map(cls.groups.map((g) => [g.id, g]));
-    const due = new Date(this.core.now() + this.core.config.issues.defaultDueInDays * 86_400_000).toISOString().slice(0, 10);
+    const hasLive = new Set(cls.clashes.filter(this.notInAcc(test.testKey)).map((c) => c.groupId));
     for (const v of views) {
       const dec = v.decision;
       if (!dec || dec.status !== "approved" || dec.action === "escalate") continue;
       const issue = dec.action === "create_issue" || dec.action === "hygiene_issue";
       const op = issue ? "clash.assign" : "clash.close";
       const inherited = v.instances.filter((i) => i.inheritance.state === "inherited");
-      for (const i of inherited) covered.add(i.groupId);
       // Review fix #1: a close never carries an instance whose CURRENT validity is real / needs_info.
-      const closable = (i: (typeof inherited)[number]) => issue || (i.validity !== "real" && i.validity !== "needs_info");
-      const todo = inherited.filter((i) => closable(i) && !done.has(`${v.id}|${i.groupId}|${op}`));
+      const closable = (i: Inst) => issue || (i.validity !== "real" && i.validity !== "needs_info");
+      const todo = inherited.filter((i) => closable(i) && hasLive.has(i.groupId) && !done.has(`${v.id}|${i.groupId}|${op}`));
+      families.push({ v, dec, issue, op, inherited, todo });
+    }
+    return { families, issuedFamilies };
+  }
+
+  /** familyId → inherited instances decided but not yet sent to approval (TriageFamily.pendingSend). */
+  private async familyPendingSend(test: TestRecord, cls: ClassificationRecord, views: readonly FamilyView[]): Promise<Map<string, number>> {
+    const { families } = await this.familyTodo(test, cls, views);
+    return new Map(families.map((f) => [f.v.id, f.todo.length]));
+  }
+
+  /**
+   * Batch items of decided families: ONE assign (issue) per family (chunks of 1,000 clashes) or one
+   * per instance (issueMode per_instance), or ONE close per family. Only inherited instances: pending
+   * (new since the decision) and exceptions are never included automatically.
+   */
+  private async familyBatchItems(
+    batchId: string,
+    test: TestRecord,
+    cls: ClassificationRecord,
+    user: HumanUser,
+    opts: { ignoreBatchIds?: ReadonlySet<string>; onlyFamilies?: ReadonlySet<string> } = {},
+  ): Promise<{ items: BatchItemRecord[]; covered: Set<string> }> {
+    const items: BatchItemRecord[] = [];
+    const covered = new Set<string>();
+    if (!cls.families) return { items, covered };
+    const views = (await this.core.familyViewsFor(test.testKey)).views;
+    const { families, issuedFamilies } = await this.familyTodo(test, cls, views, opts);
+    const byGroup = new Map<string, ClashRecord[]>();
+    for (const c of cls.clashes) byGroup.set(c.groupId, [...(byGroup.get(c.groupId) ?? []), c]);
+    const gById = new Map(cls.groups.map((g) => [g.id, g]));
+    const due = new Date(this.core.now() + this.core.config.issues.defaultDueInDays * 86_400_000).toISOString().slice(0, 10);
+    for (const { v, dec, issue, inherited, todo } of families) {
+      // Every approved family covers its inherited instances (they never go through the group flow).
+      for (const i of inherited) covered.add(i.groupId);
+      if (opts.onlyFamilies && !opts.onlyFamilies.has(v.id)) continue;
       if (!todo.length) continue;
       const changes = this.validityChanges(v, dec.validity).filter((c) => todo.some((t) => t.groupId === c.groupId));
       const common = {
@@ -2388,6 +2631,23 @@ export function fitTitle(base: string, suffix: string, max: number): string {
   const cut = base.slice(0, room);
   const sp = cut.lastIndexOf(" ");
   return `${(sp > room * 0.6 ? cut.slice(0, sp) : cut).trimEnd()}…${suffix}`;
+}
+
+/** G3: copy an issue text edited in an old batch item onto its re-based item (ACC body + preview). */
+function copyIssueText(from: BatchItemRecord, to: BatchItemRecord): void {
+  const a = from.accNew as AssignedGroupCreate;
+  const b = to.accNew as AssignedGroupCreate;
+  b.title = a.title;
+  b.description = a.description;
+  if (a.dueDate) b.dueDate = a.dueDate;
+  if (a.assignedTo) {
+    b.assignedTo = a.assignedTo;
+    b.assignedToType = a.assignedToType;
+  }
+  to.issue = { ...(to.issue ?? {}), ...(from.issue ?? {}), linkClashIds: to.issue?.linkClashIds ?? [] } as BatchItemRecord["issue"];
+  to.fields = to.fields.map((f) => (f.field === "issue" ? { ...f, accNew: b.title } : f));
+  if (to.origin === "ai_accepted") to.origin = "ai_corrected";
+  to.reasonCode = "R13";
 }
 
 export { AGENT_ACTOR };

@@ -17,6 +17,7 @@ import { Kbd, ProgressBar, inputCls } from "~/lib/components/ui";
 import { DECISION_KEY, PRIORITY_KEY, VALIDITY_KEY, VALIDITY_ORDER, VALIDITY_TIP } from "~/lib/labels";
 import { latestDecisions } from "~/lib/api/decision-utils";
 import { useTriageContext } from "./actions";
+import { computeProgress } from "./progress";
 import { StatusLine } from "./StatusLine";
 import { useTriage } from "./store";
 
@@ -27,23 +28,11 @@ export function useProgress() {
   const groups = useTriage(store, (s) => s.groups);
   const manual = useTriage(store, (s) => s.manual);
   const clashes = useTriage(store, (s) => s.clashes);
-  return useMemo(() => {
-    const latest = latestDecisions(log);
-    const ids = manual ? [...clashes.keys()] : [...groups.keys()];
-    const breakdown = { accepted: 0, corrected: 0, rejected: 0, postponed: 0 };
-    let ready = 0;
-    for (const id of ids) {
-      const d = latest.get(id);
-      if (!d) continue;
-      if (d.kind === "accept") breakdown.accepted++;
-      if (d.kind === "correct") breakdown.corrected++;
-      if (d.kind === "reject") breakdown.rejected++;
-      if (d.kind === "postpone") breakdown.postponed++;
-      if (d.kind !== "postpone" && !d.batchId) ready++;
-    }
-    const done = breakdown.accepted + breakdown.corrected + breakdown.rejected;
-    return { done, total: ids.length, ready, breakdown };
-  }, [log, groups, clashes, manual]);
+  const families = useTriage(store, (s) => s.families);
+  return useMemo(
+    () => computeProgress({ ids: manual ? [...clashes.keys()] : [...groups.keys()], latest: latestDecisions(log), families: families.values(), manual }),
+    [log, groups, clashes, manual, families],
+  );
 }
 
 /** True while the media query matches (e.g. the 1366 px toolbar overflow breakpoint). */
@@ -167,7 +156,7 @@ export function WorkspaceActions({
   if (!payload) return null;
   const tip = [
     t("workspace.progress", { done: progress.done, total: progress.total }),
-    ...Object.entries(progress.breakdown).map(([k, v]) => `${t(DECISION_KEY[k as keyof typeof DECISION_KEY])}: ${v}`),
+    ...Object.entries(progress.breakdown).map(([k, v]) => `${t(k === "family" ? "workspace.familyDecided" : DECISION_KEY[k as keyof typeof DECISION_KEY])}: ${v}`),
   ].join("\n");
   const analyzeLabel = `${t("modelSets.analyze")} v${uncached?.modelSetVersion ?? ""}`;
   const close = () => setMenu(false);
