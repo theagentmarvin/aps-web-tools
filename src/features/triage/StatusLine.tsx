@@ -146,7 +146,7 @@ export function StatusLine() {
           role="dialog"
           aria-label={t("scope.seeDetail")}
           onKeyDown={(e) => e.key === "Escape" && setOpen(false)}
-          className="absolute left-0 right-0 top-8 z-40 max-h-80 overflow-y-auto rounded-lg border border-brand-muted/20 bg-white p-3 text-xs text-gray-800 shadow-lg"
+          className="absolute right-0 top-8 z-40 max-h-80 w-[26rem] max-w-[90vw] overflow-y-auto rounded-lg border border-brand-muted/20 bg-white p-3 text-xs text-gray-800 shadow-lg"
         >
           {[top, ...rest].map((it, i) => (
             <div key={it.id} className={i ? "mt-2 border-t border-brand-muted/10 pt-2" : ""}>

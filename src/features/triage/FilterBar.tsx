@@ -4,7 +4,7 @@
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useT, type TKey } from "~/i18n";
-import { IconPlus, IconSearch, IconStar, IconX } from "~/lib/components/icons";
+import { IconPlus, IconSearch, IconSort, IconStar, IconX } from "~/lib/components/icons";
 import { inputCls } from "~/lib/components/ui";
 import { readJson, writeJson } from "~/lib/storage";
 import { useTriageContext } from "./actions";
@@ -137,7 +137,67 @@ function FilterChip({ fkey, query, onChange, autoOpen }: { fkey: FilterKey; quer
   );
 }
 
-export function FilterBar({ query, onChange }: { query: ListQuery; onChange: (q: ListQuery) => void }) {
+/** Sort control (icon + dropdown); also rendered inside the toolbar's "⋯" menu when narrow. */
+export function SortSelect({ query, onChange, withLabel }: { query: ListQuery; onChange: (q: ListQuery) => void; withLabel?: boolean }) {
+  const t = useT();
+  return (
+    <label className="flex items-center gap-1 text-xs text-gray-500" title={t("sort.label")}>
+      {withLabel ? <span>{t("sort.label")}</span> : <IconSort size={14} label={t("sort.label")} />}
+      <select aria-label={t("sort.label")} value={query.sort} onChange={(e) => onChange({ ...query, sort: e.target.value as SortKey })} className={`${inputCls} py-0.5 text-xs`}>
+        {SORT_KEYS.map((k) => (
+          <option key={k} value={k}>
+            {t(SORT_LABEL[k])}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+/** Saved views (presets + the user's own); used by the Vistas popover and the "⋯" menu. */
+export function ViewsMenuList({ query, onChange, onDone }: { query: ListQuery; onChange: (q: ListQuery) => void; onDone: () => void }) {
+  const t = useT();
+  const [userViews, setUserViews] = useState<SavedView[]>(() => readJson<SavedView[]>(VIEWS_KEY, []));
+  function saveView() {
+    const name = window.prompt(t("views.name"));
+    if (!name) return;
+    const next = [...userViews, { id: `u${Date.now()}`, label: name, query: { filters: query.filters, sort: query.sort, view: query.view } }];
+    setUserViews(next);
+    writeJson(VIEWS_KEY, next);
+    onDone();
+  }
+  return (
+    <>
+      {[...PRESETS, ...userViews].map((v, i) => (
+        <button
+          key={v.id}
+          type="button"
+          role="menuitem"
+          autoFocus={i === 0}
+          onClick={() => {
+            onChange({ ...v.query, q: "" });
+            onDone();
+          }}
+          className="block w-full px-3 py-1 text-left hover:bg-brand-surface"
+        >
+          {v.labelKey ? t(v.labelKey) : v.label}
+        </button>
+      ))}
+      <div className="my-1 border-t border-brand-muted/20" />
+      <button type="button" role="menuitem" onClick={saveView} className="block w-full px-3 py-1 text-left text-brand hover:bg-brand-surface">
+        {t("views.save")}
+      </button>
+    </>
+  );
+}
+
+/**
+ * Left part of the single workspace toolbar: search · filter chips · Orden ·
+ * Grupos|Interferencias · Vistas. `compact` (≤ 1366 px): the search collapses
+ * to an icon (expands on focus, "/" still focuses it) and Orden / Vistas move
+ * into the toolbar's "⋯" menu.
+ */
+export function FilterBar({ query, onChange, compact }: { query: ListQuery; onChange: (q: ListQuery) => void; compact?: boolean }) {
   const t = useT();
   const { store } = useTriageContext();
   const manual = useTriage(store, (s) => s.manual);
@@ -146,7 +206,6 @@ export function FilterBar({ query, onChange }: { query: ListQuery; onChange: (q:
   const add = usePopover();
   const views = usePopover();
   const [justAdded, setJustAdded] = useState<FilterKey | null>(null);
-  const [userViews, setUserViews] = useState<SavedView[]>(() => readJson<SavedView[]>(VIEWS_KEY, []));
 
   useEffect(() => setSearch(query.q), [query.q]);
   useEffect(() => {
@@ -160,27 +219,14 @@ export function FilterBar({ query, onChange }: { query: ListQuery; onChange: (q:
   const shown = FILTER_KEYS.filter((k) => query.filters[k] !== undefined && (k !== "decision" || (query.filters.decision?.length ?? 0) > 0 || justAdded === "decision"));
   const available = FILTER_KEYS.filter((k) => !shown.includes(k));
 
-  function applyView(v: SavedView) {
-    onChange({ ...v.query, q: "" });
-    views.setOpen(false);
-  }
-
-  function saveView() {
-    const name = window.prompt(t("views.name"));
-    if (!name) return;
-    const next = [...userViews, { id: `u${Date.now()}`, label: name, query: { filters: query.filters, sort: query.sort, view: query.view } }];
-    setUserViews(next);
-    writeJson(VIEWS_KEY, next);
-    views.setOpen(false);
-  }
-
   return (
-    <div className="flex flex-shrink-0 flex-wrap items-center gap-2 border-b border-brand-muted/20 bg-white px-4 py-2">
-      <label className="relative">
+    <div className="flex min-w-0 items-center gap-2">
+      <label className="relative flex-shrink-0" title={t("shortcuts.search")}>
         <span className="sr-only">{t("shortcuts.search")}</span>
         <IconSearch size={14} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
-        <input id="triage-search" type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("common.search")} className={`${inputCls} w-56 pl-7`} />
+        <input id="triage-search" type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("common.search")} className={`${inputCls} py-1 pl-7 transition-[width] ${compact && !search ? "w-8 cursor-pointer placeholder:text-transparent focus:w-44 focus:cursor-text focus:placeholder:text-gray-400" : compact ? "w-44" : "w-48"}`} />
       </label>
+      <div className="flex min-w-0 items-center gap-1.5">
       {query.docs && <DocsChip docs={query.docs} onClear={() => onChange({ ...query, docs: undefined })} />}
       {shown.map((k) => (
         <FilterChip key={k} fkey={k} query={query} onChange={(filters) => onChange({ ...query, filters })} autoOpen={justAdded === k} />
@@ -211,52 +257,37 @@ export function FilterBar({ query, onChange }: { query: ListQuery; onChange: (q:
         )}
       </div>
       {!isDefaultQuery(query) && (
-        <button type="button" onClick={() => onChange({ filters: { decision: ["pendiente"] }, sort: query.sort, view: query.view, q: "", docs: undefined })} className="text-xs text-brand underline-offset-2 hover:underline">
+        <button type="button" onClick={() => onChange({ filters: { decision: ["pendiente"] }, sort: query.sort, view: query.view, q: "", docs: undefined })} className="whitespace-nowrap text-xs text-brand underline-offset-2 hover:underline">
           {t("list.clearFilters")}
         </button>
       )}
-      <div className="ml-auto flex items-center gap-2 text-xs">
-        <label className="flex items-center gap-1 text-gray-500">
-          {t("sort.label")}
-          <select value={query.sort} onChange={(e) => onChange({ ...query, sort: e.target.value as SortKey })} className={`${inputCls} py-0.5 text-xs`}>
-            {SORT_KEYS.map((s) => (
-              <option key={s} value={s}>
-                {t(SORT_LABEL[s])}
-              </option>
-            ))}
-          </select>
-        </label>
+      </div>
+      <div className="flex flex-shrink-0 items-center gap-2 text-xs">
+        {!compact && <SortSelect query={query} onChange={onChange} />}
         {!manual && (
           <div role="group" className="inline-flex overflow-hidden rounded border border-brand-muted/30">
             {(["families", "clashes"] as const).map((v) => {
               const on = v === "clashes" ? query.view === "clashes" : query.view !== "clashes";
               return (
-                <button key={v} type="button" aria-pressed={on} title={v === "families" && !hasFamilies ? t("families.unavailable") : undefined} onClick={() => onChange({ ...query, view: v })} className={`px-2 py-0.5 ${on ? "bg-brand text-white" : "bg-white text-gray-600 hover:text-brand"}`}>
+                <button key={v} type="button" aria-pressed={on} title={v === "families" && !hasFamilies ? t("families.unavailable") : undefined} onClick={() => onChange({ ...query, view: v })} className={`whitespace-nowrap px-2 py-0.5 ${on ? "bg-brand text-white" : "bg-white text-gray-600 hover:text-brand"}`}>
                   {v === "families" ? t("list.viewGroups") : t("list.viewClashes")}
                 </button>
               );
             })}
           </div>
         )}
-        <div ref={views.ref} className="relative">
-          <button type="button" aria-haspopup="menu" aria-expanded={views.open} onClick={() => views.setOpen((o) => !o)} className="inline-flex items-center gap-1 rounded border border-brand-muted/30 px-2 py-0.5 text-gray-600 hover:text-brand">
-            <IconStar size={12} />
-            {t("views.label")}
-          </button>
-          {views.open && (
-            <div className="absolute right-0 top-8 z-30 min-w-[220px] rounded-lg border border-brand-muted/20 bg-white py-1 text-sm shadow-lg" onKeyDown={(e) => e.key === "Escape" && views.setOpen(false)}>
-              {[...PRESETS, ...userViews].map((v, i) => (
-                <button key={v.id} type="button" autoFocus={i === 0} onClick={() => applyView(v)} className="block w-full px-3 py-1 text-left hover:bg-brand-surface">
-                  {v.labelKey ? t(v.labelKey) : v.label}
-                </button>
-              ))}
-              <div className="my-1 border-t border-brand-muted/20" />
-              <button type="button" onClick={saveView} className="block w-full px-3 py-1 text-left text-brand hover:bg-brand-surface">
-                {t("views.save")}
-              </button>
-            </div>
-          )}
-        </div>
+        {!compact && (
+          <div ref={views.ref} className="relative">
+            <button type="button" aria-haspopup="menu" aria-expanded={views.open} title={t("views.label")} aria-label={t("views.label")} onClick={() => views.setOpen((o) => !o)} className="inline-flex h-6 w-7 items-center justify-center rounded border border-brand-muted/30 text-gray-600 hover:text-brand">
+              <IconStar size={13} />
+            </button>
+            {views.open && (
+              <div role="menu" className="absolute right-0 top-8 z-30 min-w-[220px] rounded-lg border border-brand-muted/20 bg-white py-1 text-sm shadow-lg" onKeyDown={(e) => e.key === "Escape" && views.setOpen(false)}>
+                <ViewsMenuList query={query} onChange={onChange} onDone={() => views.setOpen(false)} />
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

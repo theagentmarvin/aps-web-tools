@@ -3,7 +3,7 @@
  * agent status, language switch, user menu.
  */
 import { useEffect, useRef, useState } from "react";
-import { Link, NavLink, useLocation } from "react-router";
+import { Link, NavLink, useLocation, useMatch } from "react-router";
 import { useT, type TKey } from "~/i18n";
 import { useApi } from "~/lib/api";
 import { useCoordAuth } from "~/lib/coord-auth";
@@ -92,15 +92,17 @@ export function Nav() {
   const api = useApi();
   const { status: coordStatus } = useCoordAuth();
   const ready = useReadyBatchCount();
+  // Coordinación workspace: one 44 px header that also carries the context (breadcrumb + test selector).
+  const workspace = !!useMatch("/coordinacion/:projectId/:modelSetId");
   return (
-    <nav aria-label={t("nav.mainNav")} className="flex flex-shrink-0 items-center gap-6 border-b border-brand-muted/20 bg-white px-6 py-2 shadow-sm">
+    <nav aria-label={t("nav.mainNav")} className={`flex flex-shrink-0 items-center border-b border-brand-muted/20 bg-white shadow-sm ${workspace ? "h-11 gap-4 px-4" : "gap-6 px-6 py-2"}`}>
       <Link to="/proyectos" className="flex items-center gap-2 whitespace-nowrap text-lg font-bold tracking-tight text-brand">
         <span aria-hidden className="inline-block h-3 w-3 bg-brand" />
         {t("app.company")}
         <span className="font-normal text-gray-300">|</span>
         <span className="text-base">{t("app.name")}</span>
       </Link>
-      <ul className="flex gap-4 text-sm">
+      <ul className="flex flex-shrink-0 gap-4 text-sm">
         {LINKS.map((l) => (
           <li key={l.to}>
             <NavLink
@@ -116,13 +118,14 @@ export function Nav() {
           </li>
         ))}
       </ul>
-      <div className="ml-auto flex items-center gap-4">
+      {workspace && <div id="nav-workspace-slot" className="flex min-w-0 flex-1 items-center gap-2" />}
+      <div className={`flex flex-shrink-0 items-center gap-4 ${workspace ? "" : "ml-auto"}`}>
         {api.mode === "mock" ? (
-          <span title={t("app.demoModeHint")} className="hidden rounded border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] text-amber-800 lg:inline">
-            {t("app.demoMode")}
+          <span title={t("app.demoModeHint")} className={`hidden rounded border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] text-amber-800 lg:inline`}>
+            {workspace ? t("app.demoShort") : t("app.demoMode")}
           </span>
         ) : (
-          coordStatus?.dataSource === "fixtures" && <span className="hidden rounded border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] text-amber-800 lg:inline">{t("auth.demoSession")}</span>
+          coordStatus?.dataSource === "fixtures" && <span title={t("auth.demoSession")} className={`hidden rounded border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] text-amber-800 lg:inline`}>{workspace ? t("app.demoShort") : t("auth.demoSession")}</span>
         )}
         <AgentStatusIndicator />
         <LanguageSwitch />

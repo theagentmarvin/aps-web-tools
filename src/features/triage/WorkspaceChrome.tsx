@@ -1,14 +1,16 @@
 /**
- * Workspace header (breadcrumb, test selector, progress, send CTA), banners,
+ * Workspace chrome: context in the app header (breadcrumb, test selector), the
+ * right part of the single toolbar (status, progress, Analizar, "⋯", send CTA),
  * selection bar and status bar (spec §3.1–3.3, §3.9, §4.5).
  */
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+import { Link } from "react-router";
 import { useIngest } from "~/features/modelset/useIngest";
 import { useToast } from "~/lib/components/Toast";
-import { Spinner } from "~/lib/components/icons";
+import { IconChevronDown, IconInherited, IconMore, IconRefresh, IconSparkle, Spinner } from "~/lib/components/icons";
 import { useI18n, useT, type TKey } from "~/i18n";
 import type { Priority, Validity } from "~/lib/api/types";
-import { Breadcrumbs } from "~/lib/components/PageHeader";
 import { useAgentStatus } from "~/lib/components/shell-widgets";
 import { IconX } from "~/lib/components/icons";
 import { Kbd, ProgressBar, inputCls } from "~/lib/components/ui";
@@ -44,7 +46,93 @@ export function useProgress() {
   }, [log, groups, clashes, manual]);
 }
 
-export function WorkspaceHeader({ onTestChange, onSend }: { onTestChange: (testId: string) => void; onSend: () => void }) {
+/** True while the media query matches (e.g. the 1366 px toolbar overflow breakpoint). */
+export function useMediaQuery(q: string): boolean {
+  const [on, setOn] = useState(() => typeof window !== "undefined" && window.matchMedia(q).matches);
+  useEffect(() => {
+    const m = window.matchMedia(q);
+    const update = () => setOn(m.matches);
+    update();
+    m.addEventListener("change", update);
+    return () => m.removeEventListener("change", update);
+  }, [q]);
+  return on;
+}
+
+/** The toolbar moves Orden / Vistas / Analizar into "⋯" at 1366 px and below (it never wraps). */
+export const TOOLBAR_COMPACT_QUERY = "(max-width: 1366px)";
+
+/** Where the workspace context lives inside the app header (rendered by Nav on the workspace route only). */
+export const NAV_SLOT_ID = "nav-workspace-slot";
+
+/**
+ * Workspace context inside the main app header: compact breadcrumb
+ * "Proyecto › Conjunto de modelos" (truncated, full text in the tooltip) and
+ * the test selector as a compact "v11 · 14-09" dropdown (the native select is
+ * kept for keyboard and screen readers, drawn over a short label).
+ */
+export function WorkspaceNavContext({ onTestChange }: { onTestChange: (testId: string) => void }) {
+  const t = useT();
+  const { fmt } = useI18n();
+  const { store } = useTriageContext();
+  const payload = useTriage(store, (s) => s.payload);
+  const [slot, setSlot] = useState<HTMLElement | null>(null);
+  useEffect(() => setSlot(document.getElementById(NAV_SLOT_ID)), []);
+  if (!payload || !slot) return null;
+  const full = `${payload.project.name} › ${payload.modelSet.name}`;
+  const cur = payload.tests.find((x) => x.id === payload.test.id);
+  const short = (d: string) => fmt.date(d).slice(0, 5);
+  const label = cur ? `v${cur.modelSetVersion} · ${short(cur.completedOn)}` : t("workspace.test");
+  return createPortal(
+    <>
+      <nav aria-label="breadcrumb" title={full} className="flex min-w-0 items-center gap-1 text-xs text-gray-500">
+        <span aria-hidden className="text-gray-300">|</span>
+        <Link to={`/proyectos/${payload.project.id}`} className="min-w-0 max-w-[16rem] truncate hover:text-brand">
+          {payload.project.name}
+        </Link>
+        <span aria-hidden>›</span>
+        <span aria-current="page" className="min-w-0 max-w-[16rem] truncate text-gray-700">
+          {payload.modelSet.name}
+        </span>
+      </nav>
+      <span
+        className="relative inline-flex flex-shrink-0 items-center gap-1 rounded border border-brand-muted/30 px-2 py-0.5 text-xs text-gray-700 hover:border-brand"
+        title={cur ? `${t("workspace.test")}: ${t("workspace.testOption", { date: fmt.date(cur.completedOn), version: cur.modelSetVersion, count: cur.clashCount })}` : undefined}
+      >
+        <span className="whitespace-nowrap font-medium">{label}</span>
+        <IconChevronDown size={11} />
+        <select aria-label={t("workspace.test")} className="absolute inset-0 cursor-pointer opacity-0" value={payload.test.id} onChange={(e) => onTestChange(e.target.value)}>
+          {payload.tests.map((x) => (
+            <option key={x.accTestId} value={x.id} disabled={!x.cached}>
+              {x.cached
+                ? `${t("workspace.testOption", { date: fmt.date(x.completedOn), version: x.modelSetVersion, count: x.clashCount })} ${x.analyzed ? t("workspace.analyzed") : ""}`
+                : `${fmt.date(x.completedOn)} · v${x.modelSetVersion} · ${t("modelSets.notCached")}`}
+            </option>
+          ))}
+        </select>
+      </span>
+    </>,
+    slot,
+  );
+}
+
+/**
+ * Right part of the single workspace toolbar: status chip · "Preparado por el
+ * agente" (icon + tooltip) · review progress · Analizar · "⋯" · Enviar a
+ * aprobación (primary, right-most). `overflow` holds the items the left part
+ * moves into "⋯" when compact (Orden, Vistas).
+ */
+export function WorkspaceActions({
+  onTestChange,
+  onSend,
+  compact,
+  overflow,
+}: {
+  onTestChange: (testId: string) => void;
+  onSend: () => void;
+  compact: boolean;
+  overflow?: (close: () => void) => ReactNode;
+}) {
   const t = useT();
   const { fmt } = useI18n();
   const { store, actions } = useTriageContext();
@@ -54,6 +142,14 @@ export function WorkspaceHeader({ onTestChange, onSend }: { onTestChange: (testI
   const preparedAt = usePreparedAt();
   const rightTab = useTriage(store, (s) => s.rightTab);
   const toast = useToast();
+  const [menu, setMenu] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!menu) return;
+    const close = (e: MouseEvent) => !menuRef.current?.contains(e.target as Node) && setMenu(false);
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [menu]);
   const uncached = payload?.tests.find((x) => !x.cached);
   const ingest = useIngest(payload?.project.id ?? "", payload?.modelSet.id ?? "", {
     onDone: (_acc, testKey) => {
@@ -69,66 +165,119 @@ export function WorkspaceHeader({ onTestChange, onSend }: { onTestChange: (testI
   }
   const inheritedCount = useTriage(store, (s) => s.rows.filter((r) => !r.nested && !s.latest.has(r.id) && s.proposals.get(r.id)?.inherited).length);
   if (!payload) return null;
-  const tip = Object.entries(progress.breakdown)
-    .map(([k, v]) => `${t(DECISION_KEY[k as keyof typeof DECISION_KEY])}: ${v}`)
-    .join(" · ");
+  const tip = [
+    t("workspace.progress", { done: progress.done, total: progress.total }),
+    ...Object.entries(progress.breakdown).map(([k, v]) => `${t(DECISION_KEY[k as keyof typeof DECISION_KEY])}: ${v}`),
+  ].join("\n");
+  const analyzeLabel = `${t("modelSets.analyze")} v${uncached?.modelSetVersion ?? ""}`;
+  const close = () => setMenu(false);
+  const item = "flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-brand-surface disabled:opacity-50";
+  const prepared = preparedAt ? t("header.preparedBy", { time: fmt.time(preparedAt) }) : "";
 
   return (
-    <header className="flex flex-shrink-0 flex-wrap items-center gap-4 border-b border-brand-muted/20 bg-white px-4 py-2">
-      <Breadcrumbs
-        crumbs={[
-          { label: t("nav.projects"), to: "/proyectos" },
-          { label: payload.project.name, to: `/proyectos/${payload.project.id}` },
-          { label: payload.modelSet.name },
-        ]}
-      />
-      <label className="flex items-center gap-2 text-xs text-gray-500">
-        {t("workspace.test")}
-        <select className={`${inputCls} py-0.5 text-xs`} value={payload.test.id} onChange={(e) => onTestChange(e.target.value)}>
-          {payload.tests.map((x) => (
-            <option key={x.accTestId} value={x.id} disabled={!x.cached}>
-              {x.cached
-                ? `${t("workspace.testOption", { date: fmt.date(x.completedOn), version: x.modelSetVersion, count: x.clashCount })} ${x.analyzed ? t("workspace.analyzed") : ""}`
-                : `${fmt.date(x.completedOn)} · v${x.modelSetVersion} · ${t("modelSets.notCached")}`}
-            </option>
-          ))}
-        </select>
-      </label>
-      {uncached && (
-        <button type="button" disabled={ingesting} onClick={analyze} className="inline-flex items-center gap-1 rounded border border-brand-muted/30 px-2 py-1 text-xs text-gray-700 hover:text-brand disabled:opacity-50">
-          {ingesting && <Spinner />}
-          {ingesting && job ? `${t(`ingest.phase.${job.phase}` as TKey)} ${Math.round(job.progress * 100)} %` : `${t("modelSets.analyze")} v${uncached.modelSetVersion}`}
-        </button>
-      )}
-      {agent?.running && <span className="rounded-full bg-brand-surface px-2 py-0.5 text-xs text-brand">{t("workspace.analyzing", { task: agent.currentTask ?? "" })}</span>}
-      {preparedAt && (
-        <span
-          className="text-xs text-violet-800"
-          title={[t("header.preparedTip"), payload.accSync ? t("header.accSync", { time: fmt.time(payload.accSync.at), assigned: payload.accSync.assignedGroups, closed: payload.accSync.closedGroups }) : ""].filter(Boolean).join("\n")}
-        >
-          {t("header.preparedBy", { time: fmt.time(preparedAt) })}
+    <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
+      {/* One slim status chip (scope / stale / new proposals / pace). */}
+      <div className="flex min-w-[7rem] max-w-[24rem] flex-1">
+        <StatusLine />
+      </div>
+      {agent?.running && (
+        <span className="max-w-[10rem] truncate whitespace-nowrap rounded-full bg-brand-surface px-2 py-0.5 text-xs text-brand" title={t("workspace.analyzing", { task: agent.currentTask ?? "" })}>
+          {t("workspace.analyzing", { task: agent.currentTask ?? "" })}
         </span>
       )}
-      {/* One slim status line (scope / stale / new proposals / pace): replaces the stacked banners. */}
-      <StatusLine />
-      <div className="flex min-w-[180px] flex-col gap-0.5" title={tip}>
-        <span className="text-xs text-gray-500">{t("workspace.progress", { done: progress.done, total: progress.total })}</span>
-        <ProgressBar done={progress.done} total={progress.total} />
+      {preparedAt && (
+        <span
+          role="img"
+          tabIndex={0}
+          aria-label={prepared}
+          className="inline-flex h-6 w-6 items-center justify-center rounded-full text-violet-700 hover:bg-violet-50"
+          title={[prepared, t("header.preparedTip"), payload.accSync ? t("header.accSync", { time: fmt.time(payload.accSync.at), assigned: payload.accSync.assignedGroups, closed: payload.accSync.closedGroups }) : ""].filter(Boolean).join("\n")}
+        >
+          <IconSparkle size={14} />
+        </span>
+      )}
+      <div className="flex w-20 flex-col gap-1" title={tip}>
+        <span className="whitespace-nowrap text-center font-mono text-[11px] leading-none text-gray-600">
+          {progress.done}/{progress.total}
+        </span>
+        <ProgressBar done={progress.done} total={progress.total} className="!h-1" />
       </div>
-      <div className="ml-auto flex items-center gap-2">
-        <button type="button" onClick={() => store.toggleRightTab()} title={t("chat.tabAgentTip")} aria-pressed={rightTab === "agent"} className={`rounded border px-2 py-1 text-xs ${rightTab === "agent" ? "border-violet-400 bg-violet-50 text-violet-900" : "border-brand-muted/30 text-gray-700 hover:text-brand"}`}>
-          {t("chat.tabAgent")}
-        </button>
-        {inheritedCount > 0 && (
-          <button type="button" onClick={actions.acceptInherited} className="rounded border border-brand-muted/30 px-2 py-1 text-xs text-gray-700 hover:text-brand">
-            {t("workspace.acceptInherited", { count: inheritedCount })}
+      {ingesting && job ? (
+        <span className="inline-flex items-center gap-1 whitespace-nowrap text-xs text-gray-600">
+          <Spinner />
+          {t(`ingest.phase.${job.phase}` as TKey)} {Math.round(job.progress * 100)} %
+        </span>
+      ) : (
+        uncached &&
+        !compact && (
+          <button type="button" onClick={analyze} title={analyzeLabel} aria-label={analyzeLabel} className="inline-flex h-6 items-center gap-1 whitespace-nowrap rounded border border-brand-muted/30 px-1.5 text-xs text-gray-700 hover:text-brand">
+            <IconRefresh size={13} />v{uncached.modelSetVersion}
           </button>
-        )}
-        <button type="button" disabled={progress.ready === 0} onClick={onSend} title="Ctrl+Enter" className="rounded-lg bg-brand px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-light disabled:cursor-not-allowed disabled:opacity-50">
-          {t("workspace.sendToApproval", { count: progress.ready })}
+        )
+      )}
+      <div ref={menuRef} className="relative">
+        <button
+          type="button"
+          aria-haspopup="menu"
+          aria-expanded={menu}
+          aria-label={t("toolbar.more")}
+          title={t("toolbar.more")}
+          onClick={() => setMenu((o) => !o)}
+          className="relative inline-flex h-7 w-7 items-center justify-center rounded text-gray-600 hover:bg-brand-surface hover:text-brand"
+        >
+          <IconMore size={16} />
+          {(inheritedCount > 0 || (compact && uncached && !ingesting)) && <span aria-hidden className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-brand" />}
         </button>
+        {menu && (
+          <div role="menu" className="absolute right-0 top-9 z-40 w-64 rounded-lg border border-brand-muted/20 bg-white py-1 shadow-lg" onKeyDown={(e) => e.key === "Escape" && close()}>
+            {compact && overflow?.(close)}
+            {compact && uncached && !ingesting && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  analyze();
+                  close();
+                }}
+                className={item}
+              >
+                <IconRefresh size={14} />
+                {analyzeLabel}
+              </button>
+            )}
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                store.toggleRightTab();
+                close();
+              }}
+              className={item}
+            >
+              <span className="flex-1">{rightTab === "agent" ? t("chat.tabDetail") : t("chat.tabAgent")}</span>
+              <Kbd>Shift+C</Kbd>
+            </button>
+            {inheritedCount > 0 && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  actions.acceptInherited();
+                  close();
+                }}
+                className={item}
+              >
+                <IconInherited size={14} />
+                {t("workspace.acceptInherited", { count: inheritedCount })}
+              </button>
+            )}
+          </div>
+        )}
       </div>
-    </header>
+      <button type="button" disabled={progress.ready === 0} onClick={onSend} title="Ctrl+Enter" className="whitespace-nowrap rounded-lg bg-brand px-3 py-1 text-sm font-medium text-white hover:bg-brand-light disabled:cursor-not-allowed disabled:opacity-50">
+        {t("workspace.sendToApproval", { count: progress.ready })}
+      </button>
+    </div>
   );
 }
 

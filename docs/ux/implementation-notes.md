@@ -347,3 +347,19 @@ Propose-only domain agent (docs/ai/chat-agent-design.md). The UI never applies a
   - It reports cost and duration.
   - `/error <code>` forces an error; `?chat=no_login` / `?chat=no_claude` simulate the preflight states.
 - **Tests:** `tests/ui/chat-client.test.ts` covers SSE chunking at every boundary, CRLF / comments / multi-line data, event mapping (question → card, costUsd, error codes), and selection mapping (dedupe, unknown models, the cap of 50 with its total).
+
+## Two rows above the workspace: app header + one toolbar (2026-11-10, product owner)
+
+- **The app header (`nav.tsx`) is 44 px on the coordinación route.** It holds a slot (`#nav-workspace-slot`).
+  - `WorkspaceNavContext` portals into that slot a compact breadcrumb "Proyecto › Conjunto de modelos". It is truncated, with the full text in the tooltip.
+  - Next to it is the test selector, drawn as a short "v11 · 14-09" label over the native select (keyboard and screen readers unchanged).
+  - The demo pill reads "Demo" there.
+  - Other pages keep today's header: 51 px, no slot.
+- **One toolbar (`role=toolbar`, 40 px, never wraps)**, left → right:
+  - `FilterBar`: search, filter chips + "+ Filtro", Orden (icon + select), Grupos | Interferencias, Vistas (star icon);
+  - `WorkspaceActions`: the StatusLine chip (max 24 rem), a "Preparado por el agente" sparkle icon (tooltip), review progress ("26/150" + a thin bar), Analizar (an icon button "↻ v9" when a version is not analyzed, a spinner + % while it runs), "⋯", and Enviar a aprobación (primary, right-most).
+- **"⋯" menu:**
+  - always: Agente/Detalle toggle (Shift+C), "Aceptar heredadas" (a dot on "⋯" when available).
+  - At ≤ 1366 px (`TOOLBAR_COMPACT_QUERY`) it also gets Orden, Vistas and Analizar.
+  - At that width the search collapses to an icon that expands on focus; "/" still focuses it.
+- **Content top (list | viewer | tabs):** 147 px → 84 px at 1600×1000 (+63 px); 191 px → 84 px at 1366×768 (+107 px; the old workspace row wrapped to 2 lines there).

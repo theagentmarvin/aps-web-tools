@@ -88,3 +88,7 @@ export const IconIssue = (p: IconProps) => <Svg {...p}><rect x="3" y="2.5" width
 export const IconClosed = (p: IconProps) => <Svg {...p}><circle cx="8" cy="8" r="5.5" /><path d="M4.2 11.8l7.6-7.6" /></Svg>;
 /** Meeting note (M4). */
 export const IconNote = (p: IconProps) => <Svg {...p}><path d="M3.5 2.5h7l2 2v9h-9z" /><path d="M5.5 7h5M5.5 9.5h5M5.5 12h3" /></Svg>;
+export const IconSort = (p: IconProps) => <Svg {...p}><path d="M4.5 3v10M2.5 11l2 2 2-2M11.5 13V3M9.5 5l2-2 2 2" /></Svg>;
+export const IconMore = (p: IconProps) => <Svg {...p}><path d="M3.5 8h.1M8 8h.1M12.5 8h.1" strokeWidth={2.4} /></Svg>;
+export const IconSparkle = (p: IconProps) => <Svg {...p}><path d="M8 2l1.4 4.6L14 8l-4.6 1.4L8 14l-1.4-4.6L2 8l4.6-1.4z" /></Svg>;
+export const IconRefresh = (p: IconProps) => <Svg {...p}><path d="M13 8a5 5 0 1 1-1.5-3.5" /><path d="M13 2.5v3h-3" /></Svg>;

@@ -18,7 +18,7 @@ import { TriageContext, useCreateActions, useTriageContext } from "~/features/tr
 import { ClashViewerPane } from "~/features/triage/ClashViewerPane";
 import { DetailPanel, DetailSkeleton } from "~/features/triage/DetailPanel";
 import { WorkspaceDialogs } from "~/features/triage/dialogs";
-import { FilterBar } from "~/features/triage/FilterBar";
+import { FilterBar, SortSelect, ViewsMenuList } from "~/features/triage/FilterBar";
 import { isDefaultQuery, parseQuery, writeQuery, type ListQuery } from "~/features/triage/filters";
 import { GroupList } from "~/features/triage/GroupList";
 import { LensBar } from "~/features/triage/LensBar";
@@ -26,7 +26,7 @@ import { ChatPanel } from "~/features/triage/ChatPanel";
 import { PrintAgenda, printAgenda } from "~/features/triage/MeetingViews";
 import { TriageStore, rowKey, useTriage } from "~/features/triage/store";
 import { useTriageHotkeys } from "~/features/triage/useTriageHotkeys";
-import { SelectionBar, StatusBar, WorkspaceHeader, useProgress } from "~/features/triage/WorkspaceChrome";
+import { SelectionBar, StatusBar, TOOLBAR_COMPACT_QUERY, WorkspaceActions, WorkspaceNavContext, useMediaQuery, useProgress } from "~/features/triage/WorkspaceChrome";
 
 interface LayoutPrefs {
   list: number;
@@ -256,11 +256,38 @@ function Workspace({ loading, manualOk, onManual, onTestChange, onReload, onQuer
   }
 
   const showNoAnalysis = !loading && manual && !manualOk;
+  const compact = useMediaQuery(TOOLBAR_COMPACT_QUERY);
 
   return (
     <div className="flex h-full flex-col">
-      {loading || !payload ? <div className="h-11 flex-shrink-0 border-b border-brand-muted/20 bg-white" /> : <WorkspaceHeader onTestChange={onTestChange} onSend={() => setSendOpen(true)} />}
-      {!loading && !showNoAnalysis && <FilterBar query={query} onChange={onQueryChange} />}
+      {!loading && payload && <WorkspaceNavContext onTestChange={onTestChange} />}
+      {/* The single toolbar: search · filters · Orden · Grupos|Interferencias · Vistas · status · progress · Analizar · ⋯ · Enviar. */}
+      <div role="toolbar" aria-label={t("toolbar.label")} className="flex h-10 flex-shrink-0 items-center gap-3 border-b border-brand-muted/20 bg-white px-3">
+        {!loading && payload && (
+          <>
+            {showNoAnalysis ? <div className="flex-1" /> : <FilterBar query={query} onChange={onQueryChange} compact={compact} />}
+            <WorkspaceActions
+              onTestChange={onTestChange}
+              onSend={() => setSendOpen(true)}
+              compact={compact}
+              overflow={
+                showNoAnalysis
+                  ? undefined
+                  : (close) => (
+                      <>
+                        <div className="px-3 py-1.5">
+                          <SortSelect query={query} onChange={onQueryChange} withLabel />
+                        </div>
+                        <p className="px-3 pt-1 text-[11px] font-medium uppercase tracking-wide text-gray-400">{t("views.label")}</p>
+                        <ViewsMenuList query={query} onChange={onQueryChange} onDone={close} />
+                        <div className="my-1 border-t border-brand-muted/20" />
+                      </>
+                    )
+              }
+            />
+          </>
+        )}
+      </div>
       <div className="relative flex min-h-0 flex-1">
         <a href="#triage-list" className="sr-only focus:not-sr-only focus:absolute focus:z-20 focus:bg-white focus:px-2">
           {t("a11y.skipToList")}

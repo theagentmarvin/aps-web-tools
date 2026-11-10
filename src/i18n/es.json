@@ -8,7 +8,8 @@
     "demoModeHint": "VITE_COORD_API=mock: los datos son de ejemplo y nada se escribe en ACC.",
     "skipToContent": "Ir al contenido",
     "wrongHost": "Estás usando 127.0.0.1. Abre la aplicación como http://localhost:{port} para que las passkeys y el inicio de sesión funcionen.",
-    "wrongHostLink": "Ir a localhost"
+    "wrongHostLink": "Ir a localhost",
+    "demoShort": "Demo"
   },
   "nav": {
     "projects": "Proyectos",
@@ -1371,5 +1372,9 @@
     "duration": "{s} s",
     "newSession": "Nueva conversación",
     "noTarget": "La propuesta aún no aparece en la prueba; actualiza las propuestas y vuelve a intentarlo."
+  },
+  "toolbar": {
+    "label": "Barra de herramientas del espacio de coordinación",
+    "more": "Más acciones"
   }
 }

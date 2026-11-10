@@ -8,7 +8,8 @@
     "demoModeHint": "VITE_COORD_API=mock: data is sample data and nothing is written to ACC.",
     "skipToContent": "Skip to content",
     "wrongHost": "You are on 127.0.0.1. Open the app as http://localhost:{port} so passkeys and sign-in work.",
-    "wrongHostLink": "Go to localhost"
+    "wrongHostLink": "Go to localhost",
+    "demoShort": "Demo"
   },
   "nav": {
     "projects": "Projects",
@@ -1371,5 +1372,9 @@
     "duration": "{s} s",
     "newSession": "New conversation",
     "noTarget": "The proposal is not in the test yet; refresh proposals and try again."
+  },
+  "toolbar": {
+    "label": "Coordination workspace toolbar",
+    "more": "More actions"
   }
 }
