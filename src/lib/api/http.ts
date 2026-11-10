@@ -482,4 +482,20 @@ export class HttpCoordinatorApi implements CoordinatorApi {
   confirmInheritedBulk(testId: string, r: Omit<T.InheritedConfirmRequest, "testId">) {
     return this.req<T.InheritedConfirmResult>("POST", `/tests/${enc(testId)}/inherited-confirmations`, r);
   }
+  // ── Human-side parity (docs/ai/agent-human-parity.md) ──
+  getTestHygiene(testId: string) { return this.get<T.TestHygiene>(`/tests/${enc(testId)}/hygiene`); }
+  getReport(scope: T.ReportScope) { return this.get<T.ReportData>("/reports", { ...scope }); }
+  listReportFiles(projectId: string) { return this.get<T.ReportFile[]>("/reports/files", { projectId }); }
+  getReportFile(projectId: string, name: string) { return this.get<T.ReportFileContent>(`/reports/files/${enc(name)}`, { projectId }); }
+  getProjectNotes(projectId: string) { return this.get<T.ProjectNotes>(`/projects/${enc(projectId)}/notes`); }
+  appendProjectNote(projectId: string, text: string, kind?: string) {
+    return this.req<T.ProjectNotes>("POST", `/projects/${enc(projectId)}/notes`, { text, ...(kind ? { kind } : {}) });
+  }
+  listFeedback(p?: { projectId?: string; source?: T.FeedbackSource[]; limit?: number; cursor?: string }) {
+    return this.get<T.Page<T.FeedbackRow>>("/learning/feedback", p);
+  }
+  detachFamilyInstance(familyId: string, r: { testId: string; groupId: string }) {
+    return this.req<T.FamiliesPayload>("POST", `/families/${enc(familyId)}/detach`, r);
+  }
+  mergeFamilies(r: { testId: string; from: string; into: string }) { return this.req<T.FamiliesPayload>("POST", "/families/merge", r); }
 }

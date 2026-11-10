@@ -19,10 +19,11 @@ import { FIELD_KEY } from "~/lib/labels";
 import { useCoordAuth } from "~/lib/coord-auth";
 import { passkeyMessage } from "~/lib/passkey-messages";
 import { publishRuleWithPasskey } from "~/lib/webauthn";
+import { FeedbackLog } from "~/features/rules/FeedbackLog";
 
-const TABS = ["reglas", "sugerencias", "correcciones", "calibracion"] as const;
+const TABS = ["reglas", "sugerencias", "feedback", "correcciones", "calibracion"] as const;
 type Tab = (typeof TABS)[number];
-const TAB_KEY: Record<Tab, TKey> = { reglas: "rules.tabs.rules", sugerencias: "rules.tabs.suggestions", correcciones: "rules.tabs.corrections", calibracion: "rules.tabs.calibration" };
+const TAB_KEY: Record<Tab, TKey> = { reglas: "rules.tabs.rules", sugerencias: "rules.tabs.suggestions", feedback: "parity.feedback.tab", correcciones: "rules.tabs.corrections", calibracion: "rules.tabs.calibration" };
 
 export function RulesPage() {
   const t = useT();
@@ -40,6 +41,7 @@ export function RulesPage() {
       </div>
       {tab === "reglas" && <RulesTable />}
       {tab === "sugerencias" && <Suggestions />}
+      {tab === "feedback" && <FeedbackLog />}
       {tab === "correcciones" && <Corrections />}
       {tab === "calibracion" && <CalibrationView />}
     </div>

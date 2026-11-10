@@ -361,3 +361,6 @@ export interface ChatHistory {
   testId: string;
   messages: ChatMessage[];
 }
+
+// Human-side parity (docs/ai/agent-human-parity.md): hygiene, report files, agent/UI feedback.
+export type { FeedbackRow, FeedbackSource, HygieneCheck, ReportFile, ReportFileContent, TestHygiene } from "../../../server/api/contract";

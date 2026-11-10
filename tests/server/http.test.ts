@@ -185,7 +185,7 @@ describe("HTTP API /api/coord", () => {
   it("stores project notes only through the human channel", async () => {
     const r = await req<{ text: string }>("POST", "/projects/demo-proyecto/notes", { text: "Pasadas de CLI en vigas del N03 previstas por plano E-301" });
     expect(r.status).toBe(200);
-    expect(r.json.text).toMatch(/E-301 \(confirmado por Coordinadora Demo\)/);
+    expect(r.json.text).toMatch(/E-301 \(confirmado por coordinador\)/);
     const bad = await req<{ error: { code: string } }>("POST", "/projects/demo-proyecto/notes", { text: "ver https://evil.example.com" });
     expect(bad.status).toBe(400);
   });

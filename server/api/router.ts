@@ -25,6 +25,7 @@ import { REASON_CODES } from "../store/types";
 import { LiveSource } from "../source/live";
 import { CoordError, httpStatusFor, log } from "../util";
 import { fetchSiteOk, hostAllowed, originMatches } from "./host-guard";
+import { listFeedbackRows, listReportFiles, readReportFile, testHygiene } from "../parity";
 
 export const API_PREFIX = "/api/coord";
 
@@ -774,6 +775,13 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
       limit: num(query.get("limit")),
       cursor: query.get("cursor") ?? undefined,
     }),
+  );
+  // ── human-side parity reads (server/parity.ts; docs/ai/agent-human-parity.md) ──
+  add("GET", "/tests/:testId/hygiene", async ({ params }) => testHygiene(coord, params.testId));
+  add("GET", "/reports/files", async ({ query }) => listReportFiles(coord, QueryId.parse(query.get("projectId"))));
+  add("GET", "/reports/files/:name", async ({ params, query }) => readReportFile(coord, QueryId.parse(query.get("projectId")), params.name));
+  add("GET", "/learning/feedback", async ({ query }) =>
+    listFeedbackRows(coord, { projectId: query.get("projectId") ?? undefined, source: enumCsv(["ui", "agent", "decision"], query.get("source")), limit: num(query.get("limit")), cursor: query.get("cursor") ?? undefined }),
   );
 
   const middleware = (req: IncomingMessage, res: ServerResponse, next?: Next) => {

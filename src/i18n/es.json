@@ -1523,5 +1523,128 @@
     "selectNone": "Ninguna",
     "legacyTitle": "Decisiones anteriores por revisar (grupos que ahora están unidos)",
     "legacyRow": "{family} v{version}: {validity} → {responsible}"
+  },
+  "parity": {
+    "hygiene": {
+      "tab": "Higiene",
+      "needsAnalysis": "Analiza esta versión para ver la higiene de los modelos.",
+      "intro": "Higiene de modelos de la v{version}: las mismas cifras que lee el agente. Un hallazgo es una incidencia de higiene por archivo responsable, no una por interferencia.",
+      "clean": "Sin hallazgos de higiene en esta versión.",
+      "summary": "Resumen por control",
+      "byDocument": "Por documento ({count})",
+      "agentHint": "Para un informe priorizado por documento, pide al agente /auditar-modelo.",
+      "col": {
+        "check": "Control",
+        "doc": "Documento",
+        "elements": "Elementos",
+        "clashes": "Interferencias",
+        "examples": "Ejemplos",
+        "discipline": "Disciplina",
+        "inClashes": "En interferencias"
+      },
+      "check": {
+        "self_clashes_same_document": "Choques en el mismo archivo",
+        "duplicate_elements": "Elementos duplicados",
+        "missing_level": "Sin nivel",
+        "missing_system": "MEP sin sistema",
+        "generic_or_placeholder_types": "Tipos genéricos",
+        "unassigned_discipline_documents": "Documento sin disciplina",
+        "insulation_hosted_clashes": "Aislación",
+        "linked_model_misplacement": "Vínculo duplicado o desplazado",
+        "category_mismatch_by_name": "Categoría inconsistente",
+        "other": "Otro control"
+      }
+    },
+    "report": {
+      "menu": "Informe del ciclo",
+      "title": "Informe del ciclo de coordinación",
+      "print": "Abrir para imprimir (HTML)",
+      "downloadMd": "Descargar .md",
+      "download": "Descargar",
+      "agentFiles": "Informes del agente",
+      "noFiles": "El agente aún no genera informes para este proyecto.",
+      "kind": {
+        "weekly": "Informe semanal",
+        "test_summary": "Resumen del test",
+        "hygiene": "Higiene de modelos",
+        "proposals_digest": "Resumen de propuestas",
+        "other": "Informe"
+      }
+    },
+    "notes": {
+      "title": "Convenciones del proyecto",
+      "count_one": "{count} línea",
+      "count_other": "{count} líneas",
+      "unavailable": "no disponibles",
+      "hint": "El agente las lee al iniciar cada sesión (notes.md). Cada línea queda fechada y firmada como «confirmado por coordinador». Para cambiar una convención, agrega una línea nueva que la reemplace.",
+      "empty": "Aún no hay convenciones.",
+      "add": "Agregar convención",
+      "kind": "Tipo",
+      "text": "Texto de la convención",
+      "placeholder": "Ej.: Pasadas de CLI en vigas del N03 previstas por plano E-301",
+      "preview": "Vista previa de la línea",
+      "signature": "confirmado por coordinador",
+      "confirm": "Confirmo esta convención para el proyecto; el agente la aplicará en los próximos ciclos.",
+      "save": "Guardar línea",
+      "saved": "Convención guardada en notes.md"
+    },
+    "feedback": {
+      "tab": "Feedback",
+      "intro": "Correcciones registradas en la UI y por el agente (record_feedback). Es lo que lee /curar-reglas.",
+      "empty": "Sin feedback registrado.",
+      "more": "Mostrando {shown} de {total}.",
+      "curatedYes": "Curado",
+      "source": {
+        "all": "Todos",
+        "ui": "UI",
+        "agent": "Agente",
+        "decision": "UI (decisión)"
+      },
+      "col": {
+        "date": "Fecha",
+        "source": "Origen",
+        "target": "Objeto",
+        "pair": "Par",
+        "change": "Corrección",
+        "statement": "Declaración",
+        "scope": "Alcance",
+        "curated": "Estado"
+      },
+      "verdict": {
+        "correct": "Correcto",
+        "incorrect": "Incorrecto",
+        "partially_correct": "Parcialmente correcto"
+      },
+      "scope": {
+        "this_group": "Este grupo",
+        "project": "Proyecto",
+        "company": "Empresa"
+      },
+      "general": {
+        "yes": "Generalizable",
+        "no": "No generalizable",
+        "unsure": "Generalizable: por confirmar"
+      }
+    },
+    "family": {
+      "more": "Más acciones de la familia",
+      "detach": "Separar una ubicación…",
+      "detachSingle": "La familia tiene una sola ubicación.",
+      "merge": "Fusionar con otra familia…",
+      "mergeDecided": "La familia ya tiene una decisión: recházala antes de fusionarla.",
+      "detachTitle": "Separar una ubicación",
+      "mergeTitle": "Fusionar con otra familia",
+      "pickInstance": "Ubicación que sale de la familia",
+      "pickTarget": "Familia de destino",
+      "detachEffect": "{group} ({title}) sale de {family} y queda como familia propia, para decidirla por separado.",
+      "mergeEffect": "Las {count} ubicaciones de {from} pasan a «{into}». {from} deja de existir.",
+      "localOnly": "Reagrupación local: no cambia nada en ACC ni las decisiones ya aprobadas.",
+      "detachConfirm": "Separar",
+      "mergeConfirm": "Fusionar",
+      "detached": "{group} separada en una familia propia",
+      "merged": "{from} fusionada en {into}",
+      "instances_one": "{count} ubicación",
+      "instances_other": "{count} ubicaciones"
+    }
   }
 }

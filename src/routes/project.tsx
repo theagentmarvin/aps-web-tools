@@ -22,10 +22,13 @@ import { TestChecks, testState } from "~/features/modelset/TestChecks";
 import { useIngest } from "~/features/modelset/useIngest";
 import { loadDisciplines, loadGrid } from "~/features/modelset/gridFallback";
 import { RECENT_KEY } from "./projects";
+import { CycleReportMenu } from "~/features/modelset/CycleReportMenu";
+import { HygienePanel } from "~/features/modelset/HygienePanel";
+import { ProjectNotesPanel } from "~/features/modelset/ProjectNotesPanel";
 
-const TABS = ["matriz", "pruebas", "disciplinas", "cerradas"] as const;
+const TABS = ["matriz", "pruebas", "disciplinas", "higiene", "cerradas"] as const;
 type Tab = (typeof TABS)[number];
-const TAB_KEY: Record<Tab, TKey> = { matriz: "grid.tabs.grid", pruebas: "grid.tabs.checks", disciplinas: "grid.tabs.disciplines", cerradas: "grid.tabs.closed" };
+const TAB_KEY: Record<Tab, TKey> = { matriz: "grid.tabs.grid", pruebas: "grid.tabs.checks", disciplinas: "grid.tabs.disciplines", higiene: "parity.hygiene.tab", cerradas: "grid.tabs.closed" };
 
 export function ProjectPage() {
   const t = useT();
@@ -48,6 +51,7 @@ export function ProjectPage() {
   return (
     <div>
       <PageHeader title={project.data?.name ?? t("common.loading")} crumbs={[{ label: t("nav.projects"), to: "/proyectos" }, { label: project.data?.name ?? "…" }]} />
+      <ProjectNotesPanel projectId={projectId} />
       {sets.loading ? (
         <Skeleton className="h-96" />
       ) : sets.error ? (
@@ -72,14 +76,14 @@ export function ProjectPage() {
               ))}
             </div>
           )}
-          {ms && <ModelSetPanel key={ms.id} projectId={projectId} ms={ms} onChanged={sets.reload} />}
+          {ms && <ModelSetPanel key={ms.id} projectId={projectId} projectName={project.data?.name ?? ""} ms={ms} onChanged={sets.reload} />}
         </>
       )}
     </div>
   );
 }
 
-function ModelSetPanel({ projectId, ms, onChanged }: { projectId: string; ms: ModelSetSummary; onChanged: () => void }) {
+function ModelSetPanel({ projectId, projectName, ms, onChanged }: { projectId: string; projectName: string; ms: ModelSetSummary; onChanged: () => void }) {
   const t = useT();
   const { fmt } = useI18n();
   const api = useApi();
@@ -156,6 +160,7 @@ function ModelSetPanel({ projectId, ms, onChanged }: { projectId: string; ms: Mo
             {t("grid.openCoordination")}
           </Link>
         )}
+        <CycleReportMenu projectId={projectId} projectName={projectName} modelSetId={ms.id} modelSetName={ms.name} />
         <span className="ml-auto">
           <CopyCommand text={ms.agentCommand} compact />
         </span>
@@ -227,6 +232,7 @@ function ModelSetPanel({ projectId, ms, onChanged }: { projectId: string; ms: Mo
         ))}
       {tab === "disciplinas" && <DisciplinesPanel projectId={projectId} modelSetId={ms.id} grid={grid} test={test} onGrid={gridQ.setData} />}
       {tab === "disciplinas" && <div className="mt-6"><IssueSettingsPanel projectId={projectId} /></div>}
+      {tab === "higiene" && <HygienePanel testKey={grid?.state === "classified" ? grid.testKey : undefined} version={grid?.modelSetVersion} />}
       {tab === "cerradas" && <EmptyState title={t("grid.tabs.closed")} body={t("grid.closedEmpty")} />}
 
       {queue && disciplines.data && (

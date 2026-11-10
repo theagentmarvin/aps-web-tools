@@ -26,6 +26,7 @@ import { ChangeChip } from "./RowMarks";
 import { CopyReminderButton } from "./IssueViews";
 import { MeetingNoteSection } from "./MeetingViews";
 import { AskAgentLink } from "./DetailPanel";
+import { FamilyMoreMenu } from "./FamilyMoreMenu";
 import { rowKey, useTriage, type FamilyDraft, type TriageStore } from "./store";
 
 export const FAMILY_ACTION_KEY: Record<FamilyAction, TKey> = {
@@ -143,6 +144,7 @@ export function FamilyPanel({ familyId }: { familyId: string }) {
             <button type="button" aria-label={t("shortcuts.next")} title={`${t("shortcuts.next")} (J)`} onClick={() => store.move(1)} className="rounded p-0.5 text-gray-500 hover:bg-brand-surface">
               <IconChevronRight size={14} />
             </button>
+            <FamilyMoreMenu family={f} />
           </span>
         </div>
         <p className="mt-0.5 truncate text-xs text-gray-600" title={f.title} lang="es">

@@ -18,6 +18,7 @@ import { buildIssueChecks } from "./m3";
 import { AGENDA_CAP, buildAgenda } from "./m4";
 import { MockChat } from "./chat";
 import { PROBLEM_TYPES } from "~/lib/problem-types";
+import { MOCK_REPORT_FILES, mockFeedback, mockHygiene, mockReport, resizeFamily } from "./parity";
 
 const ME = USERS[0];
 const delay = (ms = 160) => new Promise<void>((r) => setTimeout(r, ms + Math.random() * 120));
@@ -1498,4 +1499,82 @@ export class MockCoordinatorApi implements CoordinatorApi {
     return clone(s);
   }
 
+  // ── Human-side parity (docs/ai/agent-human-parity.md) ──────────
+
+  private projectNotes = new Map<string, string>();
+  private feedbackRows: T.FeedbackRow[] = mockFeedback();
+
+  async getTestHygiene(testId: string): Promise<T.TestHygiene> {
+    await delay(120);
+    return mockHygiene(testId, this.data(testId));
+  }
+  async getReport(scope: T.ReportScope): Promise<T.ReportData> {
+    await delay(120);
+    const ms = PROJECTS.flatMap((p) => p.modelSets).find((m) => m.id === scope.modelSetId) ?? PROJECTS[0].modelSets[0];
+    const tests = ms.tests.filter((o) => this.isCached(o)).map((o) => this.data(o.testId));
+    return mockReport(scope, tests);
+  }
+  async listReportFiles(projectId: string): Promise<T.ReportFile[]> {
+    await delay(60);
+    return projectId === PROJECTS[0].id ? clone(MOCK_REPORT_FILES) : [];
+  }
+  async getReportFile(_projectId: string, name: string): Promise<T.ReportFileContent> {
+    await delay(60);
+    const f = MOCK_REPORT_FILES.find((x) => x.name === name);
+    if (!f) throw new ApiError("Informe no encontrado", 404, "not_found");
+    return { name, format: f.format, content: f.format === "md" ? "# Informe semanal de coordinación\n\n(mock)\n" : "<h1>Informe semanal de coordinación</h1><p>(mock)</p>" };
+  }
+  async getProjectNotes(projectId: string): Promise<T.ProjectNotes> {
+    await delay(60);
+    const text = this.projectNotes.get(projectId) ?? `# Notas del proyecto ${projectId}\n\n- 2026-10-28 · [convención] Pasadas de CLI en vigas del N03 previstas por plano E-301 (confirmado por coordinador)\n`;
+    return { projectId, path: `.coordinator/projects/${projectId}/notes.md`, text, lines: text.split("\n").length };
+  }
+  async appendProjectNote(projectId: string, text: string, kind?: string): Promise<T.ProjectNotes> {
+    await delay(100);
+    const clean = text.replace(/\s+/g, " ").trim();
+    if (clean.length < 3 || clean.length > 500) throw new ApiError("La nota debe tener entre 3 y 500 caracteres.", 400, "validation");
+    if (/https?:\/\//i.test(clean)) throw new ApiError("La nota no puede contener URLs.", 400, "validation");
+    const prev = (await this.getProjectNotes(projectId)).text;
+    this.projectNotes.set(projectId, `${prev.endsWith("\n") ? prev : `${prev}\n`}- ${new Date().toISOString().slice(0, 10)} · [${kind ?? "convención"}] ${clean} (confirmado por coordinador)\n`);
+    return this.getProjectNotes(projectId);
+  }
+  async listFeedback(p?: { projectId?: string; source?: T.FeedbackSource[]; limit?: number; cursor?: string }): Promise<T.Page<T.FeedbackRow>> {
+    await delay(80);
+    const rows = this.feedbackRows.filter((r) => !p?.source?.length || p.source.includes(r.source));
+    const start = Number(p?.cursor ?? 0);
+    const limit = p?.limit ?? 200;
+    return { items: clone(rows.slice(start, start + limit)), total: rows.length };
+  }
+  async detachFamilyInstance(familyId: string, req: { testId: string; groupId: string }): Promise<T.FamiliesPayload> {
+    await delay(120);
+    const all = this.familiesOf(req.testId);
+    const { fam, byId } = this.familyById(req.testId, familyId);
+    if (!fam.groupIds.includes(req.groupId)) throw new ApiError(`La ubicación ${req.groupId} no pertenece a ${fam.id}`, 404, "not_found");
+    if (fam.groupIds.length < 2) throw new ApiError("La familia tiene una sola ubicación.", 400, "validation");
+    const id = `F-M${newId().replace(/-/g, "").slice(0, 9)}`;
+    fam.groupIds = fam.groupIds.filter((g) => g !== req.groupId);
+    const solo: T.TriageFamily = { ...clone(fam), id, groupIds: [req.groupId], mergedFrom: [], decision: undefined, exceptions: [], pendingProposals: [] };
+    all.families.push(solo);
+    const g = byId.get(req.groupId);
+    if (g) g.familyId = id;
+    for (const f of [fam, solo]) resizeFamily(f, byId);
+    return this.getFamilies(req.testId);
+  }
+  async mergeFamilies(req: { testId: string; from: string; into: string }): Promise<T.FamiliesPayload> {
+    await delay(120);
+    const all = this.familiesOf(req.testId);
+    const { fam: from, byId } = this.familyById(req.testId, req.from);
+    const { fam: into } = this.familyById(req.testId, req.into);
+    if (from.id === into.id) throw new ApiError("No se puede fusionar una familia consigo misma.", 400, "validation");
+    if (from.decision?.status === "approved") throw new ApiError(`${from.id} ya tiene una decisión; recházala antes de fusionarla.`, 409, "conflict");
+    into.groupIds = [...into.groupIds, ...from.groupIds];
+    into.mergedFrom = [...into.mergedFrom, from.id, ...from.mergedFrom];
+    for (const gid of from.groupIds) {
+      const g = byId.get(gid);
+      if (g) g.familyId = into.id;
+    }
+    all.families = all.families.filter((f) => f.id !== from.id);
+    resizeFamily(into, byId);
+    return this.getFamilies(req.testId);
+  }
 }
