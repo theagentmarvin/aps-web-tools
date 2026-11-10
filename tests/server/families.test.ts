@@ -134,16 +134,20 @@ describe("family decisions, inheritance and batches (fixtures)", () => {
     expect(d1.instances.every((i) => i.inheritance.state === "inherited")).toBe(true);
 
     const v42 = await ui.family(k42, f.id);
-    for (const g of kept) expect(v42.instances.find((i) => i.groupId === g)!.inheritance.state).toBe("inherited");
+    // Review fix #1: a kept instance inherits silently only when unchanged AND not engine-gated.
+    const cls42 = (await coord.requireClassified(k42)).cls;
+    const gated = new Set(cls42.groups.filter((g) => g.reviewState === "needs_review").map((g) => g.id));
+    const silent = kept.filter((g) => !gated.has(g));
+    for (const g of kept) expect(v42.instances.find((i) => i.groupId === g)!.inheritance.state).toBe(gated.has(g) ? "inherited_pending" : "inherited");
     for (const g of fresh) expect(v42.instances.find((i) => i.groupId === g)!.inheritance.state).toBe("inherited_pending");
-    expect(v42.counts.pendingInherited).toBe(fresh.length);
+    expect(v42.counts.pendingInherited).toBe(fresh.length + kept.length - silent.length);
 
     // a pending instance is NOT in the batch (never auto-assigned)
-    const b1 = await ui.sendToApproval({ projectId: P, modelSetId: MODEL_SET_ID, testId: k42 }, HUMAN);
-    const it1 = b1.items.filter((i) => i.familyId === f.id);
-    expect(it1).toHaveLength(1);
-    for (const g of fresh) expect(it1[0]!.groupIds).not.toContain(g);
-    await ui.discard(b1.id, HUMAN);
+    const b1 = await ui.sendToApproval({ projectId: P, modelSetId: MODEL_SET_ID, testId: k42 }, HUMAN).catch(() => undefined);
+    const it1 = b1?.items.filter((i) => i.familyId === f.id) ?? [];
+    expect(it1).toHaveLength(silent.length ? 1 : 0);
+    for (const i of it1) for (const g of i.groupIds ?? []) expect(silent).toContain(g);
+    if (b1) await ui.discard(b1.id, HUMAN);
 
     // exception on a kept instance, then confirm the pending ones
     const ex = await ui.addFamilyException(f.id, { testId: k42, groupId: kept[0]!, fields: { action: "escalate" }, reason: "tramo recto atraviesa el mueble" }, HUMAN);
@@ -151,6 +155,7 @@ describe("family decisions, inheritance and batches (fixtures)", () => {
     const conf = await ui.confirmInherited(f.id, { testId: k42 }, HUMAN);
     expect(conf.counts.pendingInherited).toBe(0);
     for (const g of fresh) expect(conf.instances.find((i) => i.groupId === g)!.inheritance.state).toBe("inherited");
+    for (const g of kept.slice(1)) expect(conf.instances.find((i) => i.groupId === g)!.inheritance.state).toBe("inherited");
 
     // a new decision version keeps the exception and marks it "familia cambió"
     const d2 = await ui.decideFamily(f.id, { testId: k42, decision: "approve", spotChecked: [kept[0]!], issueMode: "per_instance" }, HUMAN);
@@ -208,7 +213,7 @@ describe("family decisions, inheritance and batches (fixtures)", () => {
     const pv = await ui.familyDecisionPreview(f.id, { testId: k42, validity: "real", action: "create_issue" });
     expect(pv.validityChanges.length).toBeGreaterThan(0);
     expect(pv.validityChanges.every((c) => c.to === "real" && c.from !== "real")).toBe(true);
-    await expect(ui.decideFamily(f.id, { testId: k42, decision: "approve", validity: "real", spotChecked: [f.groupIds[0]!] }, HUMAN)).rejects.toThrow(/cambiarían de validez/);
+    await expect(ui.decideFamily(f.id, { testId: k42, decision: "approve", validity: "real", spotChecked: [f.groupIds[0]!] }, HUMAN)).rejects.toThrow(/cambiarían? de validez/);
     await expect(ui.decideFamily(f.id, { testId: k42, decision: "approve", validity: "real", action: "close", spotChecked: [f.groupIds[0]!] }, HUMAN)).rejects.toThrow(/no se cierra/);
     const ok = await ui.decideFamily(f.id, { testId: k42, decision: "approve", validity: "real", spotChecked: [f.groupIds[0]!], acknowledgeValidityChanges: true }, HUMAN);
     expect(ok.decision!.acknowledgedValidityChanges!.length).toBe(pv.validityChanges.length);

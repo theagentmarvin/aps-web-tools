@@ -8,7 +8,7 @@
  *   run → by_system_run; zone → by_level_zone (engineStrategy keeps the original).
  */
 import type { ClassifiedClash } from "../core/classified";
-import type { ClashGroup as EngineGroup } from "../core/group";
+import { groupTitle, type ClashGroup as EngineGroup } from "../core/group";
 import { DEFAULT_REVIEW_POLICY, type ReviewPolicy } from "../core/group/review";
 import { buildIssueDraft } from "../core/issues";
 import { runCoordination } from "../core/pipeline";
@@ -290,6 +290,8 @@ export function runEngine(input: EngineInput): EngineOutput {
       b,
       delta: "new",
       pairKey: c.pairKey,
+      // The engine G0 identity of the physical clash (linked copies normalized): ACC matching key (review fix #2).
+      uniqueKey: cc.key,
     });
   }
   const clashById = new Map(clashes.map((c) => [c.id, c]));
@@ -392,6 +394,7 @@ export function runEngine(input: EngineInput): EngineOutput {
     classified: res.classified,
     originFile: (s) => originOf.get(String(s.externalId ?? "")) ?? docName.get(Number(s.documentId)) ?? `doc ${String(s.documentId)}`,
     representativeOf,
+    retitle: (eg, ms) => groupTitle(rs, eg, ms, {}).replace(/UNK/g, SIN),
   });
   const groups = fam.groups;
   // Split parts (invariant 8): the issue skeleton describes the part's own representative.

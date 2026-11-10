@@ -84,10 +84,11 @@ export class QuestionStore {
   }
 }
 
-/** Public projection (no store fields). */
+/** Public projection (no store fields). Legacy string options become label-only options. */
 export function questionView(q: StoredQuestion): CoordinatorQuestion {
   const { projectId: _p, modelSetId: _m, ...rest } = q;
   void _p;
   void _m;
-  return rest;
+  const options = (rest.options as Array<string | CoordinatorQuestion["options"] extends (infer O)[] | undefined ? O : never> | undefined)?.map((o) => (typeof o === "string" ? { label: o } : o));
+  return { ...rest, ...(options ? { options } : {}), affectedGroups: rest.affectedGroups ?? rest.groupIds.length };
 }

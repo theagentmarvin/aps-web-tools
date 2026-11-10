@@ -31,6 +31,7 @@ export function buildIssueChecks(test: TestRun, groups: FamilyGroup[], proposals
     const due = new Date(Date.now() + (i === 1 ? -5 : 7 + i) * 86400000).toISOString().slice(0, 10);
     checks.push({
       issueId,
+      displayId: Number(issueId.replace(/\D/g, "")) || i + 1,
       title: `[${gs[0].pair.join("×")}] ${gs[0].title}`.slice(0, 120),
       accStatus: verdict === "dice_resuelta" ? "in_review" : verdict === "resuelta" ? "open" : "open",
       dueDate: due,

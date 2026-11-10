@@ -30,7 +30,7 @@ interface CycleCtx {
   diff?: ClashDiff;
   previous?: TestRecord;
 }
-import { assertFamilyInTest, familyIssueDescription, familyViews, type FamilyDecisionFields, type FamilyView } from "./families";
+import { assertFamilyInTest, familyIssueDescription, type FamilyDecisionFields, type FamilyView } from "./families";
 import type {
   Actor,
   BatchItemRecord,
@@ -43,7 +43,8 @@ import type {
   TestRecord,
 } from "./store/types";
 import { REASON_CODES } from "./store/types";
-import { bareProjectId, CoordError, nowIso, paginate, round, sha256, uuidFromHash } from "./util";
+import { pathSegment } from "./store";
+import { bareProjectId, CoordError, nowIso, paginate, plural, round, sha256, uuidFromHash } from "./util";
 
 export interface HumanUser {
   id: string;
@@ -360,6 +361,8 @@ export class CoordinatorUi {
         const qs = c.questions.filter((q) => q.state === "open" && (q.groupIds.includes(g.id) || q.clashIds.some((x) => clashSet.has(x)))).map((q) => q.id);
         return {
           ...(acc ? { acc } : {}),
+          // Closed in ACC while the engine says real (D8 vs invariant 1): surfaced, never overridden.
+          ...(acc && acc.status === "closed" && g.validity === "real" ? { closedInAccWhileReal: true } : {}),
           change: itemChange(g.clashIds, c.changes),
           ...(inh ? { inherited: inh } : {}),
           // F1: an inherited decision counts as decided ("Pendiente" filter) unless it needs a confirmation.
@@ -466,7 +469,7 @@ export class CoordinatorUi {
         { label: "Par", value: g.disciplinePair },
         { label: "Naturaleza", value: g.nature },
         ...(g.reviewReasons.length ? [{ label: "Revisión", value: g.reviewReasons.join("; ") }] : []),
-        ...(accState ? [{ label: "ACC", value: `${accState.status === "assigned" ? "asignada" : accState.status === "closed" ? "cerrada" : "mixta"} (${accState.existing} interf.${accState.issueIds.length ? `, ${accState.issueIds.length} incidencia(s)` : ""})` }] : []),
+        ...(accState ? [{ label: "ACC", value: `${accState.status === "assigned" ? "asignada" : accState.status === "closed" ? "cerrada" : "mixta"} (${accState.existing} interf.${accState.issueIds.length ? `, ${plural(accState.issueIds.length, "incidencia", "incidencias")}` : ""})` }] : []),
       ],
       ruleIds: g.ruleIds,
       spotCheck: spotCheck(id + g.id, validity.confidence, this.bands.high),
@@ -499,7 +502,7 @@ export class CoordinatorUi {
   /** M1 per-test context: ACC state (X1, from the ledger) and change words (vs the previous version). */
   private readonly cycles = new Map<string, CycleCtx>();
   private async cycleCtx(test: TestRecord, cls: ClassificationRecord): Promise<CycleCtx> {
-    const acc = await this.core.accFor(test, cls.clashes.map((c) => c.id));
+    const acc = await this.core.accFor(test, cls.clashes);
     const ch = await this.core.changesFor(test, cls);
     const ctx: CycleCtx = {
       acc: acc.index,
@@ -546,7 +549,7 @@ export class CoordinatorUi {
     if (!key) return this.triageUncached(projectId, modelSetId, testKey);
     const test = await this.store.getTest(key);
     if (!test) return this.triageUncached(projectId, modelSetId, testKey);
-    const seg = (s: string) => s.replace(/[^A-Za-z0-9._-]/g, "_");
+    const seg = (s: string) => pathSegment(s);
     const same = (await this.store.listTests()).filter((t) => t.modelSetId === test.modelSetId).map((t) => ["tests", t.testKey] as const);
     const sig = [
       await this.store.signature([
@@ -597,7 +600,7 @@ export class CoordinatorUi {
     const decisions = (await this.store.listDecisions()).filter((d) => d.testId === test.testKey && d.targetType !== "issue").map((d) => this.decisionUi(d));
     let families: C.TriageFamily[] | undefined;
     if (cls.families) {
-      const views = familyViews(cls.families, cls.groups, await this.core.families.load(test.projectId, test.modelSetId));
+      const views = (await this.core.familyViewsFor(test.testKey)).views;
       const props = await this.familyProposals(test.testKey);
       this.familyClashIds.set(test.testKey, new Map(cls.groups.map((g) => [g.id, g.clashIds])));
       families = views.map((v) => this.familyUi(v, props, test.testKey));
@@ -717,7 +720,7 @@ export class CoordinatorUi {
 
   // ── decisions ────────────────────────────────────────────────────────────
 
-  async saveDecisions(input: C.Decision[], user: HumanUser): Promise<{ saved: string[] }> {
+  async saveDecisions(input: C.Decision[], user: HumanUser, opts: { source?: "question" } = {}): Promise<{ saved: string[] }> {
     const byTest = new Map<string, Awaited<ReturnType<CoordinatorUi["testContext"]>>>();
     const records: DecisionRecord[] = [];
     for (const d of input) {
@@ -737,6 +740,7 @@ export class CoordinatorUi {
         userName: user.name,
         batchId: undefined,
         receivedAt: nowIso(this.core.now()),
+        ...(opts.source ? { source: opts.source } : {}),
       });
     }
     const { saved, added } = await this.store.appendDecisions(records);
@@ -759,8 +763,8 @@ export class CoordinatorUi {
       const ctx = byTest.get(d.testId)!;
       const action = d.kind === "accept" ? "decision.accepted" : d.kind === "correct" ? "decision.corrected" : d.kind === "reject" ? "decision.rejected" : d.kind === "postpone" ? "decision.postponed" : d.kind === "undo" ? "decision.undone" : "decision.note";
       await this.store.audit({ actor, action, projectId: ctx.test.projectId, modelSetId: ctx.test.modelSetId, testId: ctx.test.testKey, accTestId: ctx.test.testId, targetIds: [d.targetId, d.proposalId], details: { decisionId: d.id, reasonCode: d.reasonCode ?? null, viewedInViewerMs: d.viewedInViewerMs } });
-      // Corrections and rejections feed the learning loop.
-      if ((d.kind === "correct" || d.kind === "reject") && d.targetType === "group") {
+      // Corrections and rejections feed the learning loop (never the ones derived from an agent question).
+      if ((d.kind === "correct" || d.kind === "reject") && d.targetType === "group" && d.source !== "question") {
         const vc = d.changes.find((c) => c.field === "validity");
         await this.core.recordFeedback(
           {
@@ -1829,12 +1833,12 @@ export class CoordinatorUi {
       const bad = spot.filter((g) => !v.groupIds.includes(g));
       if (bad.length) throw new CoordError("validation_error", `spotChecked fuera de la familia: ${bad.slice(0, 5).join(", ")}`);
       const need = this.spotCheckRequired(v);
-      if (spot.length < need) throw new CoordError("validation_error", `Abre al menos ${need} ubicación(es) antes de aprobar la familia (spotChecked).`);
+      if (spot.length < need) throw new CoordError("validation_error", `Abre al menos ${plural(need, "ubicación", "ubicaciones")} antes de aprobar la familia (spotChecked).`);
       changes = this.validityChanges(v, fields.validity);
       if (changes.length && !req.acknowledgeValidityChanges) {
         throw new CoordError(
           "conflict",
-          `${changes.length} ubicación(es) cambiarían de validez (${changes.slice(0, 5).map((c) => `${c.groupId}: ${c.from}→${c.to}`).join(", ")}${changes.length > 5 ? ", …" : ""}).`,
+          `${changes.length === 1 ? "1 ubicación cambiaría" : `${changes.length} ubicaciones cambiarían`} de validez (${changes.slice(0, 5).map((c) => `${c.groupId}: ${c.from}→${c.to}`).join(", ")}${changes.length > 5 ? ", …" : ""}).`,
           "Revisa la lista (POST /families/:id/decision-preview) y confirma con acknowledgeValidityChanges=true.",
         );
       }
@@ -1947,7 +1951,7 @@ export class CoordinatorUi {
     const version = v.decision!.version;
     await this.core.families.update(test.projectId, test.modelSetId, user, (st) => {
       const fs = st.families[v.id]!;
-      for (const g of ids) fs.confirmed.push({ groupId: g, version, by: user.name, at: nowIso(this.core.now()) });
+      for (const g of ids) fs.confirmed.push({ groupId: g, version, by: user.id, at: nowIso(this.core.now()), testKey: test.testKey });
     }, { action: "family.inherited_confirmed", testKey: test.testKey, targetIds: [v.id, ...ids.slice(0, 20)], details: { confirmed: ids.length, version } });
     return this.family(test.testKey, v.id);
   }
@@ -2054,46 +2058,52 @@ export class CoordinatorUi {
     const q = await this.core.questions.get(id);
     if (!q) throw new CoordError("not_found", `Pregunta ${id} no existe`);
     if (q.state !== "open") throw new CoordError("invalid_state", `La pregunta ${id} está ${q.state === "stale" ? "obsoleta (sus interferencias cambiaron)" : "respondida"}.`);
-    const answer = sanitizeModelText(body.answer, 1000).trim();
-    if (!answer) throw new CoordError("validation_error", "La respuesta está vacía.");
-    if (q.kind === "validity" && !body.validity) throw new CoordError("validation_error", "Una pregunta de validez requiere \"validity\".");
-    if (q.kind === "action" && !body.action) throw new CoordError("validation_error", "Una pregunta de acción requiere \"action\".");
+    // Review fix #6: only a chosen OPTION's structured fields decide; free text is stored and decides nothing.
+    const opt = body.optionIndex !== undefined ? q.options?.[body.optionIndex] : undefined;
+    if (body.optionIndex !== undefined && !opt) throw new CoordError("validation_error", `La opción ${body.optionIndex} no existe.`);
+    const free = body.answer ? sanitizeModelText(body.answer, 1000).trim() : "";
+    const answer = [opt?.label, free].filter(Boolean).join(" — ");
+    if (!answer) throw new CoordError("validation_error", "Elige una opción o escribe una respuesta.");
+    const decides = !!opt && ((q.kind === "validity" && !!opt.validity) || (q.kind === "action" && !!opt.action));
     const decisionIds: string[] = [];
-    if (q.kind !== "other") {
+    if (decides) {
       const { test, cls, byGroup } = await this.testContext(q.testKey);
+      const targets = q.groupIds.map((gid) => cls.groups.find((x) => x.id === gid)).filter((g): g is GroupRecord => !!g);
+      if (targets.length > 3 && body.confirmCount !== targets.length) {
+        throw new CoordError("conflict", `Esta respuesta decide ${targets.length} ubicaciones: confirma con confirmCount=${targets.length}.`);
+      }
       const now = nowIso(this.core.now());
       const decisions: C.Decision[] = [];
-      for (const gid of q.groupIds) {
-        const g = cls.groups.find((x) => x.id === gid);
-        if (!g) continue;
+      for (const g of targets) {
         const view = this.proposalView(g, test, cls, byGroup.get(g.id) ?? []);
         const base = { proposalId: view.id, targetType: "group" as const, targetId: g.id, testId: test.testKey, modelSetId: test.modelSetId, projectId: bareProjectId(test.projectId), viewedInViewerMs: 0, decidedAt: now, userId: user.id, userName: user.name };
         const did = `d-${q.id}-${g.id}`;
         const note = `Respuesta a ${q.id}: ${answer}`.slice(0, 1000);
         if (q.kind === "validity") {
-          const same = body.validity === view.fields.validity.value;
-          decisions.push({ ...base, id: did, kind: same ? "accept" : "correct", changes: same ? [] : [{ field: "validity", aiValue: view.fields.validity.value, humanValue: body.validity }], ...(same ? {} : { reasonCode: body.reasonCode ?? "R99", note }) });
-        } else if (body.action === "postpone") {
+          const same = opt!.validity === view.fields.validity.value;
+          decisions.push({ ...base, id: did, kind: same ? "accept" : "correct", changes: same ? [] : [{ field: "validity", aiValue: view.fields.validity.value, humanValue: opt!.validity }], ...(same ? {} : { reasonCode: body.reasonCode ?? "R99", note }) });
+        } else if (opt!.action === "postpone") {
           decisions.push({ ...base, id: did, kind: "postpone", changes: [], note });
         } else {
-          const want: C.ProposedAction = body.action === "create_issue" ? { createIssue: true, setStatus: null } : { createIssue: false, setStatus: body.action === "close" ? "closed" : "reviewed" };
+          const want: C.ProposedAction = opt!.action === "create_issue" ? { createIssue: true, setStatus: null } : { createIssue: false, setStatus: opt!.action === "close" ? "closed" : "reviewed" };
           const cur = view.fields.action.value;
           const same = cur.createIssue === want.createIssue && cur.setStatus === want.setStatus;
           if (!same && want.setStatus === "closed" && !body.reasonCode) throw new CoordError("validation_error", "Cerrar requiere reasonCode.");
           decisions.push({ ...base, id: did, kind: same ? "accept" : "correct", changes: same ? [] : [{ field: "action", aiValue: cur, humanValue: want }], ...(same ? {} : { reasonCode: body.reasonCode ?? "R99", note }) });
         }
       }
-      const r = await this.saveDecisions(decisions, user);
+      // Question-derived corrections are tagged and kept OUT of the learning loop (review fix #6).
+      const r = await this.saveDecisions(decisions, user, { source: "question" });
       decisionIds.push(...r.saved);
     }
     const updated = await this.core.questions.update(id, (x) => {
       x.state = "answered";
       x.answer = answer;
-      x.answeredBy = user.name;
+      x.answeredBy = user.id;
       x.answeredAt = nowIso(this.core.now());
       if (decisionIds.length) x.decisionIds = decisionIds;
     });
-    await this.store.audit({ actor: { type: "user", id: user.id, name: user.name }, action: "question.answered", projectId: q.projectId, modelSetId: q.modelSetId, testId: q.testKey, targetIds: [q.id, ...decisionIds.slice(0, 10)], details: { kind: q.kind, decisions: decisionIds.length, validity: body.validity ?? null, action: body.action ?? null } });
+    await this.store.audit({ actor: { type: "user", id: user.id, name: user.name }, action: "question.answered", projectId: q.projectId, modelSetId: q.modelSetId, testId: q.testKey, targetIds: [q.id, ...decisionIds.slice(0, 10)], details: { kind: q.kind, decisions: decisionIds.length, option: body.optionIndex ?? null, validity: opt?.validity ?? null, action: opt?.action ?? null } });
     return questionView(updated);
   }
 
@@ -2134,7 +2144,8 @@ export class CoordinatorUi {
     const covered = new Set<string>();
     if (!cls.families) return { items, covered };
     const st = await this.core.families.load(test.projectId, test.modelSetId);
-    const views = familyViews(cls.families, cls.groups, st);
+    const views = (await this.core.familyViewsFor(test.testKey)).views;
+    void st;
     const batches = (await this.store.listBatches()).filter((b) => b.modelSetId === test.modelSetId && b.state !== "discarded");
     const done = new Set<string>();
     const issuedFamilies = new Set<string>();
@@ -2153,7 +2164,9 @@ export class CoordinatorUi {
       const op = issue ? "clash.assign" : "clash.close";
       const inherited = v.instances.filter((i) => i.inheritance.state === "inherited");
       for (const i of inherited) covered.add(i.groupId);
-      const todo = inherited.filter((i) => !done.has(`${v.id}|${i.groupId}|${op}`));
+      // Review fix #1: a close never carries an instance whose CURRENT validity is real / needs_info.
+      const closable = (i: (typeof inherited)[number]) => issue || (i.validity !== "real" && i.validity !== "needs_info");
+      const todo = inherited.filter((i) => closable(i) && !done.has(`${v.id}|${i.groupId}|${op}`));
       if (!todo.length) continue;
       const changes = this.validityChanges(v, dec.validity).filter((c) => todo.some((t) => t.groupId === c.groupId));
       const common = {
@@ -2161,7 +2174,8 @@ export class CoordinatorUi {
         decisionIds: [`FD-${v.id}-v${dec.version}`],
         origin: "manual" as const,
         reviewer: dec.decidedBy,
-        viewedInViewer: dec.spotChecked.length > 0,
+        // The spot-check was made on the version the decision was taken on: never carried to another one.
+        viewedInViewer: dec.spotChecked.length > 0 && dec.testKey === test.testKey,
         familyId: v.id,
         familyDecisionVersion: dec.version,
         ...(changes.length ? { validityChanges: changes } : {}),
@@ -2202,7 +2216,8 @@ export class CoordinatorUi {
             const body: ClosedGroupCreate = {
               id: uuidFromHash(sha256(`${seed}|close`)),
               title: label.slice(0, 128),
-              description: `${v.title}. ${dec.solutionOption ?? ""} Decisión de familia v${dec.version} (${dec.decidedBy}).`.slice(0, 1024),
+              // No personal data in ACC bodies (review fix #3): the decider stays in the audit log only.
+              description: `${v.title}. Cerrada: ${dec.validity === "tolerated" ? "tolerancia aceptada" : dec.validity === "false_positive" ? "no es interferencia" : dec.validity}${v.parts.hostType && v.parts.problemType === "PT14" ? ` (${v.parts.hostType})` : ""}. Decisión de coordinación v${dec.version}.`.slice(0, 1024),
               reason: dec.action === "mark_reviewed" || dec.validity === "tolerated" ? "MINIMAL_OVERLAP" : this.closeReason(dec.validity, v.parts.problemType === "PT12" ? "duplicate" : "", undefined),
               clashes: chunk.map((c) => Number(c.id)),
             };

@@ -1,30 +1,48 @@
 /**
- * X3 helpers: what an option of a coordinator question means, so the answer
- * carries `validity` / `action` and the server records it as the decision.
- * Options are Spanish free text from the agent; unknown wording = answer only.
+ * X3 helpers. SECURITY (pilot-readiness review): the UI NEVER derives a
+ * decision from option or answer TEXT. A decision comes only from a
+ * structured option the server sent (`{label, validity?, action?}`); the UI
+ * sends the selected option's index/id and the server applies it. Free text
+ * is only an answer. Plain-string options (older servers) decide nothing.
  */
-import type { AgentQuestion, InheritedDecision, QuestionAnswerRequest, Validity } from "~/lib/api/types";
 import type { TFunction } from "~/i18n";
+import type { AgentQuestion, InheritedDecision, QuestionAnswerRequest, Validity } from "~/lib/api/types";
 import { VALIDITY_KEY } from "~/lib/labels";
 
-export function answerMeaning(kind: AgentQuestion["kind"], option: string): Pick<QuestionAnswerRequest, "validity" | "action"> {
-  const o = option.toLowerCase();
-  if (kind === "validity") {
-    if (/falso|no es (un )?problema|pasada prevista/.test(o)) return { validity: "false_positive" };
-    if (/tolera/.test(o)) return { validity: "tolerated" };
-    if (/información|info|no sé/.test(o)) return { validity: "needs_info" };
-    if (/real|válid|sí/.test(o)) return { validity: "real" };
-  }
-  if (kind === "action") {
-    if (/incidencia|issue/.test(o)) return { action: "create_issue" };
-    if (/cerrar|close/.test(o)) return { action: "close" };
-    if (/revisad|reviewed/.test(o)) return { action: "mark_reviewed" };
-    if (/posponer|reunión|postpone/.test(o)) return { action: "postpone" };
-  }
-  return {};
+/** A question option as the UI uses it (normalised from the wire). */
+export interface UiOption {
+  index: number;
+  label: string;
+  validity?: Validity;
+  action?: WireOption["action"];
+  /** True when choosing it decides the ubicaciones of the question (server-structured only). */
+  decides: boolean;
+}
+type WireOption = import("~/lib/api/types").QuestionOption;
+
+export function optionsOf(q: AgentQuestion): UiOption[] {
+  // Older servers sent plain strings: they decide nothing.
+  const raw = (q.options ?? []) as Array<WireOption | string>;
+  return raw.map((o, index) => (typeof o === "string" ? { index, label: o, decides: false } : { index, label: o.label, validity: o.validity, action: o.action, decides: !!(o.validity || o.action) }));
 }
 
-/** "Válida · Crear incidencia" style summary of an inherited decision. */
+/** Ubicaciones a deciding answer applies to ("Esta respuesta decidirá N ubicaciones"). */
+export function decidedCount(q: AgentQuestion): number {
+  return q.affectedGroups ?? q.groupIds.length;
+}
+
+/** Above this many ubicaciones, a deciding answer needs an explicit confirmation (sent as confirmCount). */
+export const CONFIRM_ABOVE = 3;
+
+/** Body of POST /questions/:id/answer: the option INDEX is the only way an answer decides; free text decides nothing. */
+export function answerBody(q: AgentQuestion, option: UiOption | null, freeText: string, confirmed: boolean): QuestionAnswerRequest {
+  if (!option) return { answer: freeText.trim() };
+  const body: QuestionAnswerRequest = { optionIndex: option.index };
+  if (option.decides && decidedCount(q) > CONFIRM_ABOVE && confirmed) body.confirmCount = decidedCount(q);
+  return body;
+}
+
+/** "Real · Crear incidencia" style summary of an inherited decision. */
 export function inheritedSummary(t: TFunction, inh: InheritedDecision): string {
   const parts: string[] = [];
   if (inh.validity) parts.push(t(VALIDITY_KEY[inh.validity as Validity]));
@@ -32,7 +50,8 @@ export function inheritedSummary(t: TFunction, inh: InheritedDecision): string {
   return parts.join(" · ");
 }
 
-/** "Heredada de v10 · decidida por ti / por el grupo / en ACC" */
+/** "Heredada de v10 · decidida por ti / por el grupo / en ACC" (or "Confirmar decisión heredada" when pending). */
 export function inheritedTooltip(t: TFunction, inh: InheritedDecision): string {
+  if (inh.needsConfirmation) return t("inherited.needsConfirmationTip", { version: inh.fromVersion, summary: inheritedSummary(t, inh) });
   return t("inherited.tooltip", { version: inh.fromVersion, who: t(`inherited.source.${inh.source}`) });
 }

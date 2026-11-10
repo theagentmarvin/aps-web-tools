@@ -127,7 +127,7 @@ export function printStatus(s: InstallStatus, io: Pick<SetupIO, "out">): void {
   for (const t of s.templates) io.out(`  ${t.target.padEnd(26)} ${t.state === "identical" ? "OK" : t.state === "differs" ? "difiere de la plantilla (personalizado)" : "FALTA"}`);
   if (s.staging) {
     const pending = s.staging.filter((x) => x.state !== "identical");
-    io.out(`  harness-staging/ → .claude/, CLAUDE.md ${pending.length ? `${pending.length} archivo(s) sin instalar` : "OK"}`);
+    io.out(`  harness-staging/ → .claude/, CLAUDE.md ${pending.length ? `${pending.length === 1 ? "1 archivo" : `${pending.length} archivos`} sin instalar` : "OK"}`);
   }
   io.out(`  .env.local                 ${!s.env.file ? "FALTA" : s.env.missing.length ? `faltan variables: ${s.env.missing.join(", ")}` : "OK (valores no mostrados)"}`);
   io.out(`  .coordinator/harness-dev   ${s.harnessDev ? "PRESENTE: modo desarrollo del harness activo (las guardas están relajadas)" : "no existe (OK)"}`);
@@ -211,7 +211,7 @@ export async function runSetup(deps: SetupDeps): Promise<number> {
         const dst = stagedTarget(root, f)!;
         io.out(unifiedDiff(existsSync(dst) ? readFileSync(dst, "utf8") : "", readFileSync(join(stagingDir, f), "utf8"), f, `harness-staging/${f}`));
       }
-      const typed = (await io.ask(`Se instalarán ${changes.length} archivo(s) en .claude/ y CLAUDE.md. Escribe INSTALAR para confirmar: `)).trim();
+      const typed = (await io.ask(`Se ${changes.length === 1 ? "instalará 1 archivo" : `instalarán ${changes.length} archivos`} en .claude/ y CLAUDE.md. Escribe INSTALAR para confirmar: `)).trim();
       if (typed !== "INSTALAR") io.out("Instalación del harness cancelada.");
       else {
         const hashes: Record<string, string> = {};

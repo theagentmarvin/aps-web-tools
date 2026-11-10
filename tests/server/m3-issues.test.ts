@@ -45,7 +45,7 @@ describe("F2 verdicts", () => {
     expect(v(I(3))).toMatchObject({ verdict: "resuelta", existing: 0, resolved: 2, checks: { displacement: "ok", modelAge: "ok", scope: "ok" }, discipline: "CLI" });
     expect(v(I(3)).groupIds.length).toBeGreaterThan(0); // the previous version's groups
     expect(v(I(4))).toMatchObject({ verdict: "no_verificable", checks: { displacement: "blocked" } });
-    expect(v(I(4)).reason).toMatch(/vuelven a chocar/);
+    expect(v(I(4)).reason).toMatch(/vuelven? a chocar/);
     expect(v(I(5))).toMatchObject({ verdict: "no_verificable", checks: { modelAge: "stale", displacement: "ok" }, discipline: "INC" });
     expect(v(I(5)).reason).toMatch(/INC no tiene una versión nueva/);
     expect(v(I(6))).toMatchObject({ verdict: "sigue_abierta", existing: 2, resolved: 0, stuckCycles: 2, stuck: true, priority: 1, overdue: true });
@@ -55,7 +55,7 @@ describe("F2 verdicts", () => {
     // evidence is a template, ≤ 400 chars, Spanish
     for (const c of c42.checks) {
       expect(c.evidence.length).toBeLessThanOrEqual(400);
-      expect(c.evidence).toMatch(/^v42: \d+ de \d+ interferencias siguen/);
+      expect(c.evidence).toMatch(/^v42: \d+ de \d+ interferencias? siguen?, \d+ resueltas?\. .*Estado ACC: (Abierta|Cerrada|En revisión)/);
     }
     // v41: everything still open (stuck history starts there)
     expect(c41.checks.find((c) => c.issueId === I(6))).toMatchObject({ verdict: "sigue_abierta", stuckCycles: 1, stuck: false });

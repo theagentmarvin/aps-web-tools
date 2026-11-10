@@ -32,6 +32,11 @@ const COLOR_A = "#0072B2";
 const COLOR_B = "#E69F00";
 const MAX_MARKERS = 60;
 
+/** On-site wording: "Penetración 56 mm" (positive) for a hard clash, "Separación 12 mm" for a clearance one. */
+function depthText(t: ReturnType<typeof useT>, mm: (v: number) => string, distanceMm: number): string {
+  return distanceMm <= 0 ? t("viewer.distance", { value: mm(Math.abs(distanceMm)) }) : t("viewer.separation", { value: mm(distanceMm) });
+}
+
 const pairKeyOf = (c: Clash) => (c.a.documentId <= c.b.documentId ? `${c.a.documentId},${c.b.documentId}` : `${c.b.documentId},${c.a.documentId}`);
 
 /**
@@ -306,7 +311,7 @@ function ViewerPlaceholder({ hasDocs, needsLogin, onLogin }: { hasDocs: boolean;
               </div>
             </div>
             <p className="text-center text-xs text-gray-600">
-              {t("viewer.distance", { value: fmt.mm(c.distanceMm) })} · {c.level}
+              {depthText(t, fmt.mm, c.distanceMm)} · {c.level}
               {!focus && members.length > 1 && ` · ${t("list.clashesCount", { count: members.length })}`}
             </p>
           </div>
@@ -389,7 +394,7 @@ function ClashLegend() {
         <span className="text-clash-b-ink">{t("viewer.legendB", { discipline: dl(c.b.discipline), element: c.b.name })}</span>
       </div>
       <div className="mt-0.5 text-gray-500">
-        {focus ? t("viewer.distance", { value: fmt.mm(c.distanceMm) }) : t("viewer.selectionSummary", { clashes: members.length, locations: new Set(members.map((m) => m.groupId)).size })}
+        {focus ? depthText(t, fmt.mm, c.distanceMm) : t("viewer.selectionSummary", { clashes: members.length, locations: new Set(members.map((m) => m.groupId)).size })}
         {!focus && members.length > MAX_MARKERS && <span className="ml-1">· {t("viewer.moreMarkers", { count: members.length - MAX_MARKERS })}</span>}
       </div>
     </div>

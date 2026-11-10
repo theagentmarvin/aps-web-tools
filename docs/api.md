@@ -225,6 +225,24 @@ There are 36 tools, with names and inputs as in `docs/ai/mcp-tool-contracts.ts`.
   - Per raw clash: `new`, `reappeared` (from the ledger), `changed` (|Δpenetration| > 10 mm or different element types), otherwise `unchanged`.
   - Per item: reappeared if any clash reappeared; new if every clash is new; changed if any clash is new or changed; otherwise unchanged.
 
+### Review fixes (M1–M4 pilot-readiness + security reviews)
+
+- **Family inheritance:** a family decision taken on another version is inherited silently only by an instance whose every clash still carries that family`s ledger reference unchanged (|Δpen| ≤ 10 mm, same types) and that the engine does not gate. Otherwise it is `inherited_pending` / `needsConfirmation`. Close items never carry `real` / `needs_info` instances, and the spot-check (`viewedInViewer`) is never carried across versions.
+- **ACC per version:** `entries[id].accByVersion[v]`; readers use only the shown version, and only when `accSync[v]` exists. Matching is on the engine unique clash (`ClashRecord.uniqueKey`): a unique clash is ACC-decided when any of its raw ids is. Unsynced versions show their issues as `no_verificable` ("ACC sin sincronizar"). The verdict history is written only for the newest cached, synced version.
+- **No personal data in ACC bodies** (close descriptions read "Decisión de coordinación vN").
+- **Agenda:** issue follow-ups come first and are never capped; they include `no_verificable` items when the problem moved or the model is stale, and carry `displayId`. Reminders include those too.
+- **Split groups** are re-titled from their own members.
+- **Questions:** options are structured `{label, validity?, action?}`. Only `optionIndex` decides; free text is stored only. At most 20 groups per question, and `confirmCount` is required when an option decides more than 3 groups. Decisions made this way are tagged `source: "question"` and kept out of the learning loop.
+- **`dueDateQuote`:** at least 10 characters, and it must contain the date (dd/mm[/yyyy], dd-mm-yyyy, yyyy-mm-dd, "15 de enero").
+- **Inherited references** must exist (decision not undone, or an approved family version).
+- **Other:**
+  - path segments refuse `..`, and query ids are strict;
+  - a ≥ 80 % loss of any document`s clashes counts as a mass resolution;
+  - `closedInAccWhileReal` flags groups ACC closed while the engine says real;
+  - caches are dropped on login and on any session change;
+  - notes store the author id only, and `list_meeting_notes` masks emails and phone numbers;
+  - notes and quotes follow merge aliases.
+
 ### M4: the meeting (F4)
 
 - **`GET /tests/:testId/agenda[?cap]`:** a server table, no LLM. Per responsible discipline, in fixed order: `regresion` (families with a reappeared instance) → `p1_pendiente` (P1 families still needing a human) → `incidencia` (issues `dice_resuelta`, stuck ≥ 2 or overdue) → `nuevo` (families with new pending instances) → `confirmar_resuelta` (resuelta verdicts without a decision). Each family or issue appears once. Cap 15 per discipline (`more` = "+N más"); one summary line per discipline from a template.

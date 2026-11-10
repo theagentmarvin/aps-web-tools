@@ -532,7 +532,8 @@ function commonClass(els: readonly ElementFacts[]): string | undefined {
   return s.size === 1 ? [...s][0] : undefined;
 }
 
-function groupTitle(rs: CompiledRuleSet, g: ClashGroup, ms: readonly ClassifiedClash[], options: GroupingOptions, hubEl?: ElementFacts): string {
+/** Spanish group title from its members (exported: groups split by family are re-titled with their own members). */
+export function groupTitle(rs: CompiledRuleSet, g: ClashGroup, ms: readonly ClassifiedClash[], options: GroupingOptions, hubEl?: ElementFacts): string {
   const n = ms.length;
   const level = g.levels.length === 1 ? g.levels[0]! : g.levels.length > 1 ? `${g.levels[0]} a ${g.levels[g.levels.length - 1]}` : "sin nivel";
   const first = ms[0]!;

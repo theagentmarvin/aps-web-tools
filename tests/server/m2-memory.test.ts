@@ -139,14 +139,14 @@ describe("X3 coordinator questions", () => {
     const g = tri.groups.find((x) => !x.acc && !x.inherited && x.validity === "real")!;
     await expect(coord.askCoordinator({ testKey: k42, groupIds: [g.id], question: "¿Ver https://evil.example.com?", kind: "other" })).rejects.toThrow();
     await expect(coord.askCoordinator({ testKey: k42, groupIds: ["G-0000000000"], question: "¿Es real esta interferencia?", kind: "validity" })).rejects.toThrow(/inexistentes/);
-    const q = await coord.askCoordinator({ testKey: k42, groupIds: [g.id], question: "¿El ducto pasa bajo la viga o la atraviesa?", options: ["Real", "Falso positivo"], kind: "validity" });
+    const q = await coord.askCoordinator({ testKey: k42, groupIds: [g.id], question: "¿El ducto pasa bajo la viga o la atraviesa?", options: [{ label: "Real", validity: "real" }, { label: "Falso positivo", validity: "false_positive" }], kind: "validity" });
     const t2 = await ui.triage(P, MODEL_SET_ID, k42);
     expect(t2.questions!.map((x) => x.id)).toContain(q.questionId);
     expect(t2.groups.find((x) => x.id === g.id)!.questionIds).toEqual([q.questionId]);
     expect((await ui.questionsOf(k42)).find((x) => x.id === q.questionId)!.state).toBe("open");
-    await expect(ui.answerQuestion(q.questionId, { answer: "Falso positivo" }, HUMAN)).rejects.toThrow(/validity/);
-    const a = await ui.answerQuestion(q.questionId, { answer: "Falso positivo", validity: "false_positive", reasonCode: "R01" }, HUMAN);
-    expect(a).toMatchObject({ state: "answered", answer: "Falso positivo", answeredBy: HUMAN.name });
+    await expect(ui.answerQuestion(q.questionId, { optionIndex: 4 }, HUMAN)).rejects.toThrow(/no existe/);
+    const a = await ui.answerQuestion(q.questionId, { optionIndex: 1, reasonCode: "R01" }, HUMAN);
+    expect(a).toMatchObject({ state: "answered", answer: "Falso positivo", answeredBy: HUMAN.id, affectedGroups: 1 });
     expect(a.decisionIds).toHaveLength(1);
     const d = (await ui.listDecisions({ testId: k42 })).items.find((x) => x.id === a.decisionIds![0])!;
     expect(d).toMatchObject({ kind: "correct", targetId: g.id, reasonCode: "R01" });
@@ -154,9 +154,9 @@ describe("X3 coordinator questions", () => {
     const t3 = await ui.triage(P, MODEL_SET_ID, k42);
     expect(t3.groups.find((x) => x.id === g.id)!.reviewState).toBe("decided");
     expect(t3.groups.find((x) => x.id === g.id)!.questionIds).toBeUndefined();
-    await expect(ui.answerQuestion(q.questionId, { answer: "otra", validity: "real" }, HUMAN)).rejects.toThrow(/respondida/);
+    await expect(ui.answerQuestion(q.questionId, { optionIndex: 0 }, HUMAN)).rejects.toThrow(/respondida/);
     // other: stored only
-    const q2 = await coord.askCoordinator({ testKey: k42, familyId: tri.families![0]!.id, question: "¿Qué detalle típico usan para estas pasadas?", kind: "other" });
+    const q2 = await coord.askCoordinator({ testKey: k42, familyId: tri.families!.find((f) => f.groupIds.length <= 20)!.id, question: "¿Qué detalle típico usan para estas pasadas?", kind: "other" });
     const a2 = await ui.answerQuestion(q2.questionId, { answer: "Camisa Ø+50 con sello" }, HUMAN);
     expect(a2.decisionIds).toBeUndefined();
     const list = await coord.listQuestions({ testKey: k42, limit: 50 });
@@ -177,7 +177,7 @@ describe("X3 coordinator questions", () => {
     expect(all.find((x) => x.id === q2.questionId)!.state).toBe("open");
     // the open one is carried to v42; the stale one is not offered for answering
     expect((await ui.questionsOf(k42)).map((x) => x.id)).toEqual([q2.questionId]);
-    await expect(ui.answerQuestion(q.questionId, { answer: "sí", validity: "real" }, HUMAN)).rejects.toThrow(/obsoleta/);
+    await expect(ui.answerQuestion(q.questionId, { answer: "sí" }, HUMAN)).rejects.toThrow(/obsoleta/);
   });
 });
 

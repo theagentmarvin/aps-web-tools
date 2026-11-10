@@ -39,12 +39,19 @@ const SUGGESTED: Record<IssueVerdict, ReasonCode> = {
 };
 const V_CODES: ReasonCode[] = ["V01", "V02", "V03", "V04", "V05"];
 
+/** ACC status in Spanish (Abierta, En revisión, Cerrada…); unknown values pass through. */
+export function accStatusLabel(t: ReturnType<typeof useT>, status: string): string {
+  return ["open", "pending", "in_review", "closed", "draft"].includes(status) ? t(`issues.status.${status}` as TKey) : status;
+}
+
 /** One verdict chip: Resuelta n/n · Avance n/m · Sigue abierta · Dice resuelta ✕ · No verificable (tooltip: reason). */
 export function VerdictChip({ check, large }: { check: IssueCheck; large?: boolean }) {
   const t = useT();
   const total = check.existing + check.resolved;
   const label =
-    check.verdict === "resuelta"
+    check.verdict === "no_verificable"
+      ? t(check.checks.displacement === "blocked" ? "verdict.desplazada" : check.checks.modelAge === "stale" ? "verdict.modelo_sin_actualizar" : check.checks.scope === "out_of_scope" ? "verdict.fuera_de_alcance" : "verdict.no_verificable")
+      : check.verdict === "resuelta"
       ? t("verdict.resuelta", { resolved: check.resolved, total })
       : check.verdict === "avance"
         ? t("verdict.avance", { resolved: check.resolved, total })
@@ -64,7 +71,7 @@ function DecisionMark({ check }: { check: IssueCheck }) {
         {check.decision.kind === "accept" ? "✓" : "✕"}
       </span>
     );
-  return <IconIssue size={13} label={t("issues.issueIcon", { status: check.accStatus })} className="shrink-0 text-brand" />;
+  return <IconIssue size={13} label={t("issues.issueIcon", { status: accStatusLabel(t, check.accStatus) })} className="shrink-0 text-brand" />;
 }
 
 /** Issue row in the tree: priority · verdict chip · (overdue / stuck as text) · counts · state icon. */
@@ -76,7 +83,7 @@ export const IssueRow = memo(function IssueRow({ row }: { row: Row }) {
   const open = useTriage(store, (s) => s.expanded.has(row.id));
   const c = useTriage(store, (s) => s.issueChecks.get(row.id));
   if (!c) return null;
-  const extra = [c.overdue ? t("issues.overdue") : "", c.stuckCycles >= 2 ? t("issues.stuck", { count: c.stuckCycles }) : ""].filter(Boolean).join(" · ");
+  const extra = [c.overdue && c.verdict !== "resuelta" ? t("issues.overdue") : "", c.stuckCycles >= 2 ? t("issues.stuck", { count: c.stuckCycles }) : ""].filter(Boolean).join(" · ");
   return (
     <div
       id={`row-${row.key}`}
@@ -181,16 +188,17 @@ export function VerificationSection({ check }: { check: IssueCheck }) {
   const toast = useToast();
   const { store } = useTriageContext();
   const version = useTriage(store, (s) => s.issueVersion ?? s.payload?.test.modelSetVersion);
+  const testDate = useTriage(store, (s) => s.payload?.test.completedOn);
   const decide = useIssueDecision();
   const { prefs, set } = useSectionPrefs();
   const open = prefs.verification !== false;
   return (
-    <Section id="verification" title={t("issues.sectionTitle", { version: version ?? "—" })} open={open} onToggle={() => set("verification", !open)}>
+    <Section id="verification" title={t("issues.sectionTitle", { date: testDate ? fmt.date(testDate) : `v${version ?? "—"}` })} open={open} onToggle={() => set("verification", !open)}>
       <div className="space-y-2 text-sm">
         <div className="flex flex-wrap items-center gap-2">
           <VerdictChip check={check} large />
           <span className="text-xs text-gray-600">{t("issues.counts", { existing: fmt.number(check.existing), resolved: fmt.number(check.resolved) })}</span>
-          {check.overdue && <span className="text-xs font-medium text-red-700">{t("issues.overdueDue", { date: check.dueDate ? fmt.date(check.dueDate) : "—" })}</span>}
+          {check.overdue && check.verdict !== "resuelta" && <span className="text-xs font-medium text-red-700">{t("issues.overdueDue", { date: check.dueDate ? fmt.date(check.dueDate) : "—" })}</span>}
           {check.stuckCycles >= 2 && <span className="text-xs font-medium text-red-700">{t("issues.stuck", { count: check.stuckCycles })}</span>}
         </div>
         <p className="text-xs text-gray-700">{check.reason}</p>
@@ -217,7 +225,7 @@ export function VerificationSection({ check }: { check: IssueCheck }) {
           <IconExternal size={12} />
           {/* The contract has no issue URL yet: show the ACC id (copyable) to find it in ACC. */}
           {t("issues.openInAcc")}: <span className="select-all font-mono">{check.displayId ? `#${check.displayId}` : check.issueId}</span>
-          <span className="text-gray-400">· {t("issues.accStatus", { status: check.accStatus })}</span>
+          <span className="text-gray-400">· {t("issues.accStatus", { status: accStatusLabel(t, check.accStatus) })}</span>
         </p>
         {check.decision ? (
           <div className="rounded border border-brand-muted/20 px-2 py-1.5 text-xs">

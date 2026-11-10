@@ -763,13 +763,21 @@ export class MockCoordinatorApi implements CoordinatorApi {
       const { project, modelSet } = this.locateTest(testId);
       const now = new Date().toISOString();
       const decisionIds: string[] = [];
-      if ((q.kind === "validity" && req.validity) || (q.kind === "action" && req.action)) {
+      // The decision comes ONLY from the structured option the coordinator picked (never from text).
+      const opt = req.optionIndex !== undefined ? q.options?.[req.optionIndex] : undefined;
+      if (req.optionIndex !== undefined && !opt) throw new ApiError("Opción inexistente.", 400, "validation");
+      if (!opt && !req.answer?.trim()) throw new ApiError("Elige una opción o escribe una respuesta.", 400, "validation");
+      const affected = q.affectedGroups ?? q.groupIds.length;
+      if (opt && (opt.validity || opt.action) && affected > 3 && req.confirmCount !== affected)
+        throw new ApiError(`Esta respuesta decide ${affected} ubicaciones: confírmalo.`, 409, "conflict", "confirm_count_required");
+      const meaning = { validity: opt?.validity, action: opt?.action, answer: opt ? opt.label : (req.answer ?? "") };
+      if ((q.kind === "validity" && meaning.validity) || (q.kind === "action" && meaning.action)) {
         const d = this.data(testId);
         for (const gid of q.groupIds) {
           const p = d.proposals.find((x) => x.targetId === gid);
           const changes: T.DecisionChange[] = [];
-          if (req.validity && p && p.fields.validity.value !== req.validity) changes.push({ field: "validity", aiValue: p.fields.validity.value, humanValue: req.validity });
-          const kind: T.DecisionKind = req.action === "postpone" ? "postpone" : changes.length ? "correct" : "accept";
+          if (meaning.validity && p && p.fields.validity.value !== meaning.validity) changes.push({ field: "validity", aiValue: p.fields.validity.value, humanValue: meaning.validity });
+          const kind: T.DecisionKind = meaning.action === "postpone" ? "postpone" : changes.length ? "correct" : "accept";
           const dec: T.Decision = {
             id: newId(),
             proposalId: p?.id ?? "",
@@ -781,7 +789,7 @@ export class MockCoordinatorApi implements CoordinatorApi {
             kind,
             changes,
             reasonCode: changes.length ? (req.reasonCode ?? "R99") : undefined,
-            note: `Respuesta a ${q.id}: ${req.answer}`,
+            note: `Respuesta a ${q.id}: ${meaning.answer}`,
             viewedInViewerMs: 0,
             decidedAt: now,
             userId: ME.id,
@@ -791,7 +799,7 @@ export class MockCoordinatorApi implements CoordinatorApi {
           decisionIds.push(dec.id);
         }
       }
-      Object.assign(q, { state: "answered", answer: req.answer, answeredBy: ME.name, answeredAt: now, decisionIds });
+      Object.assign(q, { state: "answered", answer: meaning.answer, answeredBy: ME.name, answeredAt: now, decisionIds });
       this.log({ actor: { type: "user", id: ME.id, name: ME.short }, action: "question.answered", projectId: project.id, targetIds: [q.id, ...q.groupIds], details: { kind: q.kind, decisions: decisionIds.length } });
       return clone(q);
     }

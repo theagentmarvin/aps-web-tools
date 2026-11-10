@@ -32,8 +32,11 @@ export interface LedgerEntry {
   states: Array<{ version: number; state: DiffState }>;
   /** Earlier MC ids of the same clash, when matched by pairKey. */
   previousIds?: string[];
-  /** ACC-decided state (X1, D8: ACC wins), as last read from ACC. */
-  acc?: LedgerAccState;
+  /**
+   * ACC-decided state (X1, D8: ACC wins) PER MODEL SET VERSION, as read for that version's test.
+   * Readers use only the version they show (re-reading an older version never changes a newer one).
+   */
+  accByVersion?: Record<string, LedgerAccState>;
   /**
    * F1 decision memory: the last HUMAN or FAMILY decision that covered this clash, with the
    * clash's geometry at that moment (inheritance needs it unchanged). Rule verdicts are never
@@ -153,7 +156,7 @@ function stripVersion(l: ClashLedger, version: number): void {
 export function updateLedger(ledger: ClashLedger, current: LedgerVersion, diff?: ClashDiff): ClashLedger {
   const l = clone(ledger);
   // ACC state is per clash id, not per version: keep it across a re-record (X1).
-  const accById = new Map(Object.values(l.entries).filter((e) => e.acc).map((e) => [e.id, e.acc!]));
+  const accById = new Map(Object.values(l.entries).filter((e) => e.accByVersion).map((e) => [e.id, e.accByVersion!]));
   const decisionById = new Map(Object.values(l.entries).filter((e) => e.decision).map((e) => [e.id, e.decision!]));
   stripVersion(l, current.version);
   const v = current.version;
@@ -193,7 +196,7 @@ export function updateLedger(ledger: ClashLedger, current: LedgerVersion, diff?:
   }
   for (const [id, acc] of accById) {
     const e = l.entries[id];
-    if (e && !e.acc) e.acc = acc;
+    if (e && !e.accByVersion) e.accByVersion = acc;
   }
   for (const [id, d] of decisionById) {
     const e = l.entries[id];
@@ -235,13 +238,13 @@ export function applyAccSnapshot(ledger: ClashLedger, snap: AccSnapshot, current
         const e = l.entries[id];
         if (!e) continue;
         seen.add(id);
-        e.acc = { status: g.kind, groupId: g.groupId, ...(g.issueId ? { issueId: g.issueId } : {}), ...(g.reason ? { reason: g.reason } : {}), ...(resolved ? { resolved: true } : {}), version: snap.version };
+        e.accByVersion = { ...(e.accByVersion ?? {}), [String(snap.version)]: { status: g.kind, groupId: g.groupId, ...(g.issueId ? { issueId: g.issueId } : {}), ...(g.reason ? { reason: g.reason } : {}), ...(resolved ? { resolved: true } : {}), version: snap.version } };
       }
     }
   }
   for (const id of currentIds) {
     const e = l.entries[id];
-    if (e?.acc && !seen.has(id)) delete e.acc;
+    if (e?.accByVersion?.[String(snap.version)] && !seen.has(id)) delete e.accByVersion[String(snap.version)];
   }
   const issues = new Set(snap.groups.filter((g) => g.kind === "assigned" && g.issueId).map((g) => g.issueId!));
   l.accSync = {
@@ -270,6 +273,11 @@ export function applyDecisionRefs(
     e.decision = ref;
   }
   return l;
+}
+
+/** ACC state of a ledger entry for one version (undefined when not synced / not in ACC). */
+export function accAt(e: LedgerEntry | undefined, version: number): LedgerAccState | undefined {
+  return e?.accByVersion?.[String(version)];
 }
 
 /** Ids that reappeared in `version` according to the recorded states. */

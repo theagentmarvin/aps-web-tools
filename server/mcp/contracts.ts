@@ -600,10 +600,23 @@ export const ListIssueChecksInput = z.object({
 export const AskCoordinatorInput = z.object({
   testKey: TestKey.optional(),
   familyId: z.string().regex(/^F-[0-9A-Za-z]{6,16}$/).optional(),
-  groupIds: z.array(z.string().regex(/^G-[0-9a-f]{6,16}$/)).max(200).optional(),
+  groupIds: z.array(z.string().regex(/^G-[0-9a-f]{6,16}$/)).max(20).optional().describe("≤ 20 groups (a family is expanded and counts too)"),
   clashIds: z.array(z.string().max(40)).max(500).optional(),
   question: z.string().min(5).max(300).describe("Spanish, one question, no URLs / @ / emails"),
-  options: z.array(z.string().min(1).max(80)).max(5).optional().describe("Up to 5 answer options shown as buttons"),
+  options: z
+    .array(
+      z.union([
+        z.string().min(1).max(80),
+        z.object({
+          label: z.string().min(1).max(80),
+          validity: z.enum(["real", "false_positive", "tolerated", "needs_info"]).optional(),
+          action: z.enum(["create_issue", "close", "mark_reviewed", "postpone"]).optional(),
+        }),
+      ]),
+    )
+    .max(5)
+    .optional()
+    .describe("Up to 5 options. Only an option's validity/action decides (validity / action questions); a plain string option only records the answer."),
   kind: z.enum(["validity", "action", "other"]).describe("validity/action answers become human decisions on the groups; other answers are stored for the next run"),
 });
 export const ListQuestionsInput = z.object({

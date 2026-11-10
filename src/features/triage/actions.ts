@@ -291,7 +291,8 @@ export function createActions(store: TriageStore, settings: Settings, t: TFuncti
       const { kind, id } = parseKey(key);
       const gid = kind === "group" ? id : (store.state.clashes.get(id)?.groupId ?? "");
       const inh = store.state.groups.get(gid)?.inherited;
-      if (!inh) return;
+      // A decision that needs confirmation is confirmed with a normal (guarded) accept, never kept blindly.
+      if (!inh || inh.needsConfirmation) return;
       store.decide([key], "accept", () => [], { note: t("inherited.keptNote", { version: inh.fromVersion }), label: t("inherited.kept"), advance });
       announce(t, t("inherited.kept"), store);
     },

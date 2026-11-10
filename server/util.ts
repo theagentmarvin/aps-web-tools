@@ -95,6 +95,11 @@ export type CoordErrorCode =
   | "rate_limited"
   | "internal";
 
+/** "1 ubicación" / "12 ubicaciones": count + the right Spanish form. */
+export function plural(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
 export class CoordError extends Error {
   constructor(
     readonly code: CoordErrorCode,

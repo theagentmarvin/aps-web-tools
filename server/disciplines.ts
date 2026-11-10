@@ -22,6 +22,7 @@ import { fileDiscipline } from "../core/enrich/element";
 import type { CompiledRuleSet } from "../core/rules/load";
 import { readJsonFile, writeJsonAtomic } from "./store/fs";
 import type { Store } from "./store";
+import { pathSegment } from "./store";
 import { bareProjectId, CoordError, nowIso, sha256 } from "./util";
 
 export const SIN = "SIN";
@@ -161,7 +162,7 @@ export class DisciplineStore {
   constructor(private readonly store: Store) {}
 
   path(projectId: string): string {
-    return this.store.path("projects", bareProjectId(projectId).replace(/[^A-Za-z0-9._-]/g, "_"), "disciplines.json");
+    return this.store.path("projects", pathSegment(bareProjectId(projectId), "projectId"), "disciplines.json");
   }
 
   async load(projectId: string): Promise<ProjectDisciplines> {

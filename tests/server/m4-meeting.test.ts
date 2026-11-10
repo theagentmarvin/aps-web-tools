@@ -26,7 +26,7 @@ describe("agenda", () => {
     const k42 = await ingest(coord, 42);
     const a = await coord.agendaFor(k42);
     expect(a).toMatchObject({ testId: k42, version: 42, baseVersion: 41, cap: 15 });
-    const order = ["regresion", "p1_pendiente", "incidencia", "nuevo", "confirmar_resuelta"];
+    const order = ["incidencia", "regresion", "p1_pendiente", "nuevo", "confirmar_resuelta"];
     const kinds = new Set<string>();
     const seen = new Set<string>();
     for (const d of a.disciplines) {
@@ -71,7 +71,7 @@ describe("meeting notes", () => {
     const k42 = await ingest(coord, 42);
     const fam = (await ui.families(k42)).families[0]!;
     const n1 = await coord.putMeetingNote(k42, "family", fam.id, "Se acordó revisar la pasada.", HUMAN);
-    expect(n1).toMatchObject({ revision: 1, author: HUMAN.name, targetType: "family", targetId: fam.id, version: 42 });
+    expect(n1).toMatchObject({ revision: 1, author: HUMAN.id, targetType: "family", targetId: fam.id, version: 42 });
     const n2 = await coord.putMeetingNote(k42, "family", fam.id, "Se acordó corregir para el 20-11-2026.\u0007", HUMAN);
     expect(n2.revision).toBe(2);
     expect(n2.text).toBe("Se acordó corregir para el 20-11-2026.");

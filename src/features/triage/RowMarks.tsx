@@ -6,7 +6,8 @@
  *   (grupo rows only) validez mixta > orientación por confirmar > Típico.
  * State icon precedence (one icon): your decision in this version (✓ ✎ ✕ ⏸)
  *   > open agent question ? > ACC (closed ⊘, assigned/mixed 🗎) > exception ⚑
- *   > inherited ↺ / ◌ > meeting note ✎n (M4) > pending ○.
+ *   > inherited needing confirmation ○ (amber, "Confirmar decisión heredada") > inherited ↺
+ *   > meeting note (M4) > pending ○.
  * Everything else (confidence, spot-check, agent-updated, no-viewer) lives in
  * the row tooltip or the panel; the spot-check guard still applies.
  */
@@ -66,14 +67,11 @@ export function RowStateIcon({
     return acc.status === "closed" ? <IconClosed size={13} label={tip} className="shrink-0 text-gray-500" /> : <IconIssue size={13} label={tip} className="shrink-0 text-brand" />;
   }
   if (inheritance?.state === "exception" || pendingException) return <IconFlag size={12} label={t("families.exception")} className="shrink-0 text-amber-700" />;
+  // Inherited but changed / reappeared / gated: PENDING (○ "Confirmar decisión heredada"), never shown as decided.
+  if (inherited?.needsConfirmation || inheritance?.state === "inherited_pending")
+    return <IconCircle size={13} label={inherited ? inheritedTooltip(t, inherited) : t("inherited.needsConfirmation")} className="shrink-0 text-amber-600" />;
   if (inherited) return <IconInherited size={13} label={inheritedTooltip(t, inherited)} className="shrink-0 text-gray-500" />;
   if (inheritance?.state === "inherited" || state === "inherited") return <IconInherited size={13} label={t("families.inherited")} className="shrink-0 text-gray-500" />;
-  if (inheritance?.state === "inherited_pending")
-    return (
-      <span title={t("families.inheritedPending")} className="shrink-0 text-xs text-gray-500">
-        ◌
-      </span>
-    );
   if (note) return <IconNote size={13} label={t("meeting.noteIcon", { note: note.slice(0, 120) })} className="shrink-0 text-violet-700" />;
   return <IconCircle size={13} label={t("decision.pending")} className="shrink-0 text-gray-400" />;
 }

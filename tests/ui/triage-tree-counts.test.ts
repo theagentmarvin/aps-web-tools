@@ -268,7 +268,9 @@ describe("lens Qué cambió", () => {
 describe("M2: inherited decisions and agent questions", () => {
   it("an open question brings its ubicación into Qué cambió even when unchanged; inherited unchanged items stay under sin cambios", () => {
     const { tree, list } = both(sandbox, q({ filters: { decision: [] }, lens: "cambios" }));
-    expect(tree.state.openQuestionByGroup.size).toBe(3);
+    // 3 questions; the action one decides 5 ubicaciones of a grupo (confirmation case).
+    expect(new Set(tree.state.openQuestionByGroup.values()).size).toBe(3);
+    expect(tree.state.openQuestionByGroup.size).toBeGreaterThan(3);
     const unchangedWithQuestion = [...tree.state.openQuestionByGroup.keys()].filter((g) => tree.state.groups.get(g)?.change === "unchanged");
     expect(unchangedWithQuestion.length).toBeGreaterThan(0);
     for (const g of tree.state.openQuestionByGroup.keys()) expect(tree.state.visibleByGroup.has(g)).toBe(true);

@@ -282,6 +282,8 @@ export interface ClashGroup {
   inherited?: InheritedDecision;
   /** M2 X3: open coordinator questions about this group. */
   questionIds?: string[];
+  /** Closed in ACC (D8: ACC wins) while the engine says `real`: shown once for confirmation, never re-proposed. */
+  closedInAccWhileReal?: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -393,13 +395,15 @@ export interface IssueGate {
 // saved viewer views (local only). No screenshots to ACC, no HTML/PNG pack.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Fixed order inside a discipline: regresion → p1_pendiente → incidencia → nuevo → confirmar_resuelta. */
+/** Fixed order inside a discipline: incidencia (follow-ups, never capped) → regresion → p1_pendiente → nuevo → confirmar_resuelta. */
 export type AgendaKind = "regresion" | "p1_pendiente" | "incidencia" | "nuevo" | "confirmar_resuelta";
 export interface AgendaItem {
   kind: AgendaKind;
   familyId?: string;
   groupIds?: string[];
   issueId?: string;
+  /** ACC issue number (#nnn) for issue items. */
+  displayId?: number;
   /** Spanish (family title, or the ACC issue title: render as text). */
   title: string;
   priority: Priority;
@@ -410,7 +414,7 @@ export interface AgendaItem {
 export interface AgendaDiscipline {
   discipline: string;
   items: AgendaItem[];
-  /** Items beyond the cap ("+N más"). */
+  /** Items beyond the cap ("+N más"). Issue follow-ups ("incidencia") come first and never count towards the cap. */
   more: number;
   /** Spanish, one line, from a template. */
   summary: string;
@@ -433,6 +437,7 @@ export interface MeetingNote {
   targetId: string;
   /** ≤ 2000 characters. */
   text: string;
+  /** User id of the author (no names are stored). */
   author: string;
   updatedAt: string;
   /** 1, 2, … (every save is a new revision; earlier ones are kept in history). */
@@ -461,8 +466,13 @@ export interface CoordinatorQuestion {
   clashIds: string[];
   /** Spanish, ≤ 300 characters. Agent text: render as text. */
   question: string;
-  /** ≤ 5 options; the UI shows them as buttons (free text is always allowed). */
-  options?: string[];
+  /**
+   * ≤ 5 structured options (the UI shows them as buttons). Only a chosen option's validity / action
+   * becomes a decision; free text is stored as the answer and decides nothing.
+   */
+  options?: QuestionOption[];
+  /** Groups an option would decide (≤ 20); > 3 requires confirmCount on the answer. */
+  affectedGroups: number;
   kind: "validity" | "action" | "other";
   state: "open" | "answered" | "stale";
   answer?: string;
@@ -475,16 +485,24 @@ export interface CoordinatorQuestion {
   /** Why it went stale (clashes changed in a newer version). */
   staleReason?: string;
 }
+export interface QuestionOption {
+  /** Spanish label shown on the button. */
+  label: string;
+  /** validity questions: what choosing it sets. */
+  validity?: Validity;
+  /** action questions: what choosing it does. */
+  action?: "create_issue" | "close" | "mark_reviewed" | "postpone";
+}
 /** POST /questions/:id/answer */
 export interface QuestionAnswerRequest {
-  /** The chosen option or free text (≤ 1000). */
-  answer: string;
-  /** validity questions: the validity the answer means. */
-  validity?: Validity;
-  /** action questions: the action the answer means. */
-  action?: "create_issue" | "close" | "mark_reviewed" | "postpone";
+  /** Index of the chosen option: the ONLY way an answer becomes a decision. */
+  optionIndex?: number;
+  /** Free text (≤ 1000): stored for the next agent run; decides nothing. Required when no option is chosen. */
+  answer?: string;
   /** Required for close / validity changes (R01–R13, V01–V05, R99 + note). */
   reasonCode?: ReasonCode;
+  /** Required when the option decides more than 3 groups: must equal affectedGroups. */
+  confirmCount?: number;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -11,6 +11,7 @@ import { useApi } from "~/lib/api";
 import { useToast } from "~/lib/components/Toast";
 import { useTriageContext } from "./actions";
 import { Section, useSectionPrefs } from "./detail-accordion";
+import { personalDataIn } from "./privacy";
 import { useTriage } from "./store";
 
 type ApsViewer = { getState?: (filter?: unknown) => unknown; restoreState?: (state: unknown, filter?: unknown, immediate?: boolean) => boolean };
@@ -35,6 +36,8 @@ export function MeetingNoteSection({ rowKey }: { rowKey: string }) {
   const familyId = store.viewFamilyOf(rowKey);
   const view = useTriage(store, (s) => (familyId ? s.savedViews.get(familyId) : undefined));
   const [text, setText] = useState(note?.text ?? "");
+  // Non-blocking: warn when the note looks like it carries personal data.
+  const privacy = personalDataIn(text);
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [savedAt, setSavedAt] = useState<string | undefined>(note?.updatedAt);
   const timer = useRef<number | null>(null);
@@ -88,8 +91,17 @@ export function MeetingNoteSection({ rowKey }: { rowKey: string }) {
         maxLength={2000}
         rows={4}
         placeholder={t("meeting.notePlaceholder")}
+        aria-describedby="meeting-note-hint"
         className="w-full rounded border border-brand-muted/30 px-2 py-1.5 text-sm focus:border-brand focus:outline-none"
       />
+      <p id="meeting-note-hint" className="mt-0.5 text-[11px] text-gray-500">
+        {t("meeting.privacyHint")}
+      </p>
+      {privacy && (
+        <p role="status" className="mt-0.5 text-[11px] text-amber-800">
+          {t(`meeting.privacyWarn.${privacy}`)}
+        </p>
+      )}
       <p className="mt-1 flex items-center justify-between text-[11px] text-gray-500" role="status">
         <span>
           {status === "saving"
@@ -158,7 +170,7 @@ export function PrintAgenda() {
     [familyId ? notes.get(`family:${familyId}`)?.text : undefined, ...(groupIds ?? []).map((g) => notes.get(`group:${g}`)?.text)].filter(Boolean).join(" · ");
   return (
     <div className="print-agenda" aria-hidden="true">
-      <h1 style={{ fontSize: 18, fontWeight: 600 }}>{t("meeting.printTitle", { project: payload.project.name, modelSet: payload.modelSet.name, version: payload.test.modelSetVersion })}</h1>
+      <h1 style={{ fontSize: 18, fontWeight: 600 }}>{t("meeting.printTitle", { project: payload.project.name, modelSet: payload.modelSet.name, date: fmt.date(payload.test.completedOn) })}</h1>
       <p style={{ fontSize: 11, color: "#555" }}>{t("meeting.printDate", { date: fmt.date(new Date().toISOString()) })}</p>
       {agenda.map((d) => (
         <section key={d.discipline} style={{ marginTop: 14, breakInside: "avoid-page" }}>

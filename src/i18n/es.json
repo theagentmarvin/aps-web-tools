@@ -130,7 +130,7 @@
     "analysisUpToDate": "Actualizado (v{version})",
     "analysisStale": "Desactualizado (v{version})",
     "analysisNone": "Sin analizar",
-    "reviewed": "{done} / {total} grupos revisados",
+    "reviewed": "{done} / {total} ubicaciones revisadas",
     "readyToApprove_one": "{count} decisión lista para aprobar",
     "readyToApprove_other": "{count} decisiones listas para aprobar",
     "openWorkspace": "Abrir coordinación",
@@ -273,9 +273,9 @@
     "short4": "P4"
   },
   "validity": {
-    "valid": "Válida",
+    "valid": "Real",
     "falsePositive": "Falso positivo",
-    "tolerable": "Tolerable",
+    "tolerable": "Tolerada",
     "duplicate": "Duplicada",
     "toConfirm": "Por confirmar",
     "needsInfo": "Requiere información"
@@ -410,7 +410,7 @@
     "changeReappeared": "Reapareció: estaba resuelta en una versión anterior",
     "prevDecision": "{decision} por {user}",
     "agentPrepared": "Preparado por el agente (desaparece cuando lo editas)",
-    "nowCount": "{count} interferencias ({added} nuevas)",
+    "nowCount": "{count} interferencias (+{added})",
     "changedOther": "Cambió respecto de v{version}: tipos de elemento o detalle distinto (ver Cambios)"
   },
   "issue": {
@@ -454,12 +454,13 @@
     "placeholderMock": "Modo demostración: no hay sesión de Autodesk ni modelos cargados. Toda la evidencia necesaria para decidir está en el panel de detalle.",
     "placeholderNoModels": "Esta prueba no tiene modelos con vista 3D disponibles.",
     "placeholderSelect": "Selecciona un grupo, una ubicación o una interferencia en la lista.",
-    "distance": "Distancia {value}",
+    "distance": "Penetración {value}",
     "clashPoint": "Punto de choque",
     "needsLogin": "Conecta tu cuenta de Autodesk para ver los modelos en 3D (solo lectura).",
     "connect": "Conectar visor 3D",
     "moreMarkers": "+{count} más sin marcador",
-    "selectionSummary": "{clashes} interferencias · {locations} ubicaciones"
+    "selectionSummary": "{clashes} interferencias · {locations} ubicaciones",
+    "separation": "Separación {value}"
   },
   "reasons": {
     "title": "¿Por qué corriges la propuesta?",
@@ -1102,7 +1103,6 @@
     "approve": "Aprobar grupo",
     "reapprove": "Nueva versión",
     "blastRadius": "Afecta {clashes} interferencias en {instances} ubicaciones",
-    "spotCheckNeeded": "Abre al menos {required} ubicación(es) antes de aprobar (llevas {done}).",
     "evidence": "Penetración {min}–{max} mm",
     "mixedToday": "Validez mixta hoy: {parts}",
     "instancesTitle": "Ubicaciones ({count})",
@@ -1152,7 +1152,12 @@
     "changeNew": "{count} nuevas",
     "changeChanged": "{count} cambiaron",
     "changeReappeared": "{count} reaparecieron",
-    "changeUnchanged": "{count} sin cambios"
+    "changeUnchanged": "{count} sin cambios",
+    "spotCheckNeeded_one": "Abre al menos {count} ubicación antes de aprobar (llevas {done}).",
+    "spotCheckNeeded_other": "Abre al menos {count} ubicaciones antes de aprobar (llevas {done}).",
+    "solutionLower": "Bajar el ducto ~{mm} mm (verificar altura de cielo)",
+    "pendingConfirmTitle": "{count} ubicaciones con decisión heredada por confirmar",
+    "pendingConfirmBody": "Cambiaron, reaparecieron o tienen motivos de revisión: quedan pendientes y se confirman una por una."
   },
   "change": {
     "new": "Nuevo",
@@ -1161,7 +1166,8 @@
   },
   "acc": {
     "closedTip": "Cerrada en ACC · motivo: {reason}",
-    "assignedTip": "Incidencia en ACC: {ids} · {existing} siguen · {resolved} resueltas"
+    "assignedTip": "Incidencia en ACC: {ids} · {existing} siguen · {resolved} resueltas",
+    "closedWhileReal": "Cerrada en ACC ({reason}) pero el motor la ve real: confirmar."
   },
   "lens": {
     "label": "Lentes",
@@ -1217,7 +1223,11 @@
     "kept": "Decisión mantenida",
     "keptNote": "Mantiene la decisión heredada de v{version}",
     "before": "Antes decidiste: {summary}",
-    "beforeChanged": "Antes decidiste (v{version}): {summary} · cambió: {what}"
+    "beforeChanged": "Antes decidiste (v{version}): {summary} · cambió: {what}",
+    "needsConfirmation": "Confirmar decisión heredada",
+    "needsConfirmationTip": "Confirmar decisión heredada de v{version} ({summary}): cambió desde entonces",
+    "confirmTitle": "Confirmar decisión heredada de v{version}",
+    "confirm": "Confirmar"
   },
   "questions": {
     "title": "Pregunta del agente",
@@ -1228,14 +1238,24 @@
     "answered": "Respuesta registrada",
     "answeredDecision": "Respuesta registrada como decisión",
     "stale": "Ya no aplica: {reason}",
-    "answeredBy": "Respondida por {user}: {answer}"
+    "answeredBy": "Respondida por {user}: {answer}",
+    "willDecide_one": "Esta respuesta decidirá {count} ubicación.",
+    "willDecide_other": "Esta respuesta decidirá {count} ubicaciones.",
+    "optionDecides": "Elegir esta opción decide {count} ubicaciones",
+    "optionAnswerOnly": "Solo queda como respuesta; no decide nada",
+    "confirmText": "«{option}» decidirá {count} ubicaciones. ¿Confirmas?",
+    "confirm": "Confirmar ({count})",
+    "freeTextHint": "El texto libre queda como respuesta para el agente; no decide nada."
   },
   "verdict": {
     "resuelta": "Resuelta {resolved}/{total}",
     "avance": "Avance {resolved}/{total}",
     "sigue_abierta": "Sigue abierta",
-    "dice_resuelta": "Dice resuelta ✕",
-    "no_verificable": "No verificable"
+    "dice_resuelta": "Cerrada en ACC, sigue en modelo",
+    "no_verificable": "No verificable",
+    "desplazada": "Se desplazó",
+    "modelo_sin_actualizar": "Modelo sin actualizar",
+    "fuera_de_alcance": "Fuera de alcance"
   },
   "issues": {
     "summary_one": "{count} incidencia · {resolved} resueltas · {says} dicen resuelta",
@@ -1243,7 +1263,7 @@
     "disciplineNode": "{discipline}",
     "nodeCounts_one": "{count} incidencia · {existing} interf. siguen",
     "nodeCounts_other": "{count} incidencias · {existing} interf. siguen",
-    "rowCounts": "{existing} siguen · {resolved} resueltas",
+    "rowCounts": "siguen {existing} · resueltas {resolved}",
     "overdue": "vencida",
     "overdueDue": "Vencida ({date})",
     "stuck": "sin avance {count} ciclos",
@@ -1255,8 +1275,8 @@
     "copyFailed": "No se pudo copiar al portapapeles",
     "copy": "Copiar",
     "evidenceCopied": "Evidencia copiada",
-    "sectionTitle": "Verificación en v{version}",
-    "counts": "{existing} siguen · {resolved} resueltas",
+    "sectionTitle": "Verificación del {date}",
+    "counts": "siguen {existing} · resueltas {resolved}",
     "checksLabel": "Comprobaciones",
     "check": {
       "displacement": "Desplazamiento",
@@ -1272,7 +1292,7 @@
     },
     "evidence": "Evidencia",
     "openInAcc": "Abrir en ACC",
-    "accStatus": "estado ACC: {status}",
+    "accStatus": "estado en ACC: {status}",
     "moveReminder": "Muévela a «En revisión» en ACC (sin escritura automática hasta M5).",
     "acceptResuelta": "Aceptar: lista para mover",
     "acceptMeeting": "Aceptar: a la reunión",
@@ -1285,7 +1305,14 @@
     "locations": "Ubicaciones ({count})",
     "reminderTitle": "Recordatorio para la especialidad",
     "noReminder": "Sin recordatorio para esta especialidad.",
-    "disciplineNodeTip": "Responsable {discipline}: seguimiento de sus incidencias"
+    "disciplineNodeTip": "Responsable {discipline}: seguimiento de sus incidencias",
+    "status": {
+      "open": "Abierta",
+      "pending": "Pendiente",
+      "in_review": "En revisión",
+      "closed": "Cerrada",
+      "draft": "Borrador"
+    }
   },
   "meeting": {
     "kind": {
@@ -1295,13 +1322,13 @@
       "nuevo": "Nuevo",
       "confirmar_resuelta": "Confirmar resuelta"
     },
-    "summary_one": "{count} tema · {disciplines} disciplinas",
-    "summary_other": "{count} temas · {disciplines} disciplinas",
-    "nodeCounts_one": "{count} tema",
-    "nodeCounts_other": "{count} temas",
+    "summary_one": "{count} punto · {disciplines} disciplinas",
+    "summary_other": "{count} puntos · {disciplines} disciplinas",
+    "nodeCounts_one": "{count} punto",
+    "nodeCounts_other": "{count} puntos",
     "more": "+{count} más",
     "noteTitle": "Nota de reunión",
-    "notePlaceholder": "Qué se acordó, quién y para cuándo… (se guarda solo)",
+    "notePlaceholder": "Qué se acordó, qué disciplina o empresa y para cuándo… (se guarda solo)",
     "noteHint": "Tecla N para escribir. Las decisiones se toman en «Aprobar grupo».",
     "saving": "Guardando…",
     "savedAt": "Guardado {time}",
@@ -1315,8 +1342,14 @@
     "noViewer": "El visor 3D no está disponible",
     "viewSavedToast": "Vista guardada para la reunión",
     "print": "Imprimir agenda",
-    "printTitle": "Agenda de coordinación · {project} · {modelSet} · v{version}",
+    "printTitle": "Coordinación del {date} · {project} · {modelSet}",
     "printDate": "Fecha: {date}",
-    "printNote": "Nota: {note}"
+    "printNote": "Nota: {note}",
+    "privacyHint": "Sin nombres ni correos: usa disciplinas o empresas.",
+    "privacyWarn": {
+      "email": "Parece un correo electrónico: usa la disciplina o la empresa en su lugar.",
+      "phone": "Parece un número de teléfono: no guardes datos personales en la nota.",
+      "name": "Parece un nombre de persona: usa la disciplina o la empresa en su lugar."
+    }
   }
 }

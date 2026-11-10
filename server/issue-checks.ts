@@ -13,16 +13,24 @@
  *   .coordinator/issue-checks/<projectId>/<modelSetId>.json
  *     { verdicts: { [version]: { [issueId]: verdict } }, decisions: { [version]: { [issueId]: {...} } } }
  */
+import { plural } from "./util";
 import type * as C from "./api/contract";
-import type { ClashLedger } from "../core/ingest/ledger";
+import { accAt, type ClashLedger } from "../core/ingest/ledger";
 import { pairKeyTokens } from "../core/ingest/pair-key";
 import type { ClashDiff } from "../core/types";
 import { sanitizeModelText } from "./sanitize";
 import type { SourceIssue } from "./source/types";
 import type { Store } from "./store";
+import { pathSegment } from "./store";
 import { readJsonFile, writeJsonAtomic } from "./store/fs";
 import type { ClashRecord, ClassificationRecord, GroupRecord, TestRecord } from "./store/types";
 import { bareProjectId } from "./util";
+
+/** ACC issue status in Spanish for server text (raw value when unknown). */
+export function accStatusEs(status: string): string {
+  const m: Record<string, string> = { open: "Abierta", in_review: "En revisión", answered: "En revisión", closed: "Cerrada", draft: "Borrador", pending: "Pendiente", completed: "Completada", in_progress: "En curso", not_approved: "No aprobada", in_dispute: "En disputa", void: "Anulada" };
+  return m[status.toLowerCase()] ?? status;
+}
 
 /** ACC statuses meaning "the discipline says it is fixed". */
 export const SAYS_RESOLVED = new Set(["closed", "completed", "in_review", "answered", "work_completed", "ready_to_inspect"]);
@@ -41,6 +49,10 @@ export interface IssueCheckInput {
   issues: ReadonlyMap<string, SourceIssue>;
   /** today, YYYY-MM-DD */
   today: string;
+  /** The version whose ACC state is read (this test's version when synced). */
+  accVersion: number;
+  /** false = ACC was not read for this version: every check is no_verificable. */
+  synced: boolean;
 }
 
 interface AccGroupAgg {
@@ -62,10 +74,10 @@ function dominant(xs: readonly string[]): string | undefined {
 }
 
 /** Assigned ACC groups with an issue, aggregated per issue, from the ledger (X1). */
-export function accIssueGroups(ledger: ClashLedger | undefined, currentIds: ReadonlySet<string>): AccGroupAgg[] {
+export function accIssueGroups(ledger: ClashLedger | undefined, currentIds: ReadonlySet<string>, version: number): AccGroupAgg[] {
   const byIssue = new Map<string, AccGroupAgg>();
   for (const e of Object.values(ledger?.entries ?? {})) {
-    const a = e.acc;
+    const a = accAt(e, version);
     if (!a || a.status !== "assigned" || !a.issueId) continue;
     const agg = byIssue.get(a.issueId) ?? { issueId: a.issueId, groupIds: [], existing: [], resolved: [] };
     if (!agg.groupIds.includes(a.groupId)) agg.groupIds.push(a.groupId);
@@ -86,7 +98,7 @@ export function computeIssueChecks(input: IssueCheckInput, history: Record<strin
   const deleted = new Set(input.diff?.element_deleted ?? []);
   const outOfScope = new Set(input.diff?.out_of_scope ?? []);
   const out: C.IssueCheck[] = [];
-  for (const agg of accIssueGroups(input.ledger, curIds)) {
+  for (const agg of accIssueGroups(input.ledger, curIds, input.accVersion)) {
     const issue = input.issues.get(agg.issueId);
     const status = (issue?.status ?? "desconocido").toLowerCase();
     const members = [...agg.existing, ...agg.resolved].map((id) => clashById.get(id)).filter((c): c is ClashRecord => !!c);
@@ -134,14 +146,17 @@ export function computeIssueChecks(input: IssueCheckInput, history: Record<strin
     const resolved = agg.resolved.length;
     let verdict: C.IssueVerdict;
     let reason: string;
-    if (SAYS_RESOLVED.has(status) && existing > 0) {
+    if (!input.synced) {
+      verdict = "no_verificable";
+      reason = `ACC sin sincronizar para v${test.modelSetVersion}: vuelve a ingerir esta versión.`;
+    } else if (SAYS_RESOLVED.has(status) && existing > 0) {
       verdict = "dice_resuelta";
-      reason = `ACC la marca "${status}" pero siguen ${existing} interferencias.`;
+      reason = `ACC la marca "${accStatusEs(status)}" pero ${existing === 1 ? "sigue 1 interferencia" : `siguen ${existing} interferencias`}.`;
     } else if (existing === 0) {
       const why: string[] = [];
       if (scope === "out_of_scope") why.push("un documento cambió de alcance");
       if (anyDeleted) why.push("se eliminó un elemento (no es una corrección verificable)");
-      if (displacement === "blocked") why.push(`${moved.length} elemento(s) del conjunto resuelto vuelven a chocar en esta corrida (el problema pudo moverse)`);
+      if (displacement === "blocked") why.push(`${moved.length === 1 ? "1 elemento del conjunto resuelto vuelve" : `${moved.length} elementos del conjunto resuelto vuelven`} a chocar en esta corrida (el problema pudo moverse)`);
       if (modelAge === "stale") why.push(`el modelo de ${discipline} no tiene una versión nueva desde que se creó la incidencia`);
       if (modelAge === "unknown") why.push(`no se puede comprobar que el modelo de ${discipline} se haya actualizado`);
       if (why.length) {
@@ -149,14 +164,14 @@ export function computeIssueChecks(input: IssueCheckInput, history: Record<strin
         reason = `No verificable: ${why.join("; ")}.`;
       } else {
         verdict = "resuelta";
-        reason = `Las ${resolved} interferencias se resolvieron y el modelo de ${discipline} se actualizó.`;
+        reason = `${resolved === 1 ? "La interferencia se resolvió" : `Las ${resolved} interferencias se resolvieron`} y el modelo de ${discipline} se actualizó.`;
       }
     } else if (resolved > 0) {
       verdict = "avance";
       reason = `Avance: quedan ${existing} de ${existing + resolved}.`;
     } else {
       verdict = "sigue_abierta";
-      reason = `Sigue abierta: ${existing} interferencias sin cambios a favor.`;
+      reason = `Sigue abierta: ${plural(existing, "interferencia", "interferencias")} sin cambios a favor.`;
     }
 
     // Stuck cycles (P1 issues that keep being "sigue_abierta").
@@ -169,7 +184,7 @@ export function computeIssueChecks(input: IssueCheckInput, history: Record<strin
     const overdue = !!issue?.dueDate && issue.dueDate.slice(0, 10) < input.today && !CLOSED.has(status);
     const ageText = modelAge === "ok" ? "actualizado" : modelAge === "stale" ? "sin versión nueva" : "sin dato";
     const evidence = sanitizeModelText(
-      `v${test.modelSetVersion}: ${existing} de ${existing + resolved} interferencias siguen, ${resolved} resueltas. Modelo ${discipline}: ${ageText}. Desplazamiento: ${displacement === "ok" ? "sin choques nuevos de los elementos resueltos" : `${moved.length} elemento(s) resuelto(s) vuelven a chocar`}. Alcance: ${scope === "ok" ? "sin cambios" : "cambió"}. Estado ACC: ${status}${issue?.dueDate ? `, vence ${issue.dueDate.slice(0, 10)}` : ""}.`,
+      `v${test.modelSetVersion}: ${existing} de ${existing + resolved} ${existing + resolved === 1 ? "interferencia" : "interferencias"} ${existing === 1 ? "sigue" : "siguen"}, ${plural(resolved, "resuelta", "resueltas")}. Modelo ${discipline}: ${ageText}. Desplazamiento: ${displacement === "ok" ? "sin choques nuevos de los elementos resueltos" : moved.length === 1 ? "1 elemento resuelto vuelve a chocar" : `${moved.length} elementos resueltos vuelven a chocar`}. Alcance: ${scope === "ok" ? "sin cambios" : "cambió"}. Estado ACC: ${accStatusEs(status)}${issue?.dueDate ? `, vence ${issue.dueDate.slice(0, 10)}` : ""}.`,
       400,
     );
     out.push({
@@ -203,7 +218,8 @@ export function computeIssueChecks(input: IssueCheckInput, history: Record<strin
 export function buildReminders(checks: readonly C.IssueCheck[], version: number, today: string): C.IssueReminder[] {
   const byDisc = new Map<string, C.IssueCheck[]>();
   for (const c of checks) {
-    if (c.verdict === "resuelta" || c.verdict === "no_verificable") continue;
+    // "No verificable" stays out unless it carries a meeting reason (the problem moved / the model is stale).
+    if (c.verdict === "resuelta" || (c.verdict === "no_verificable" && c.checks.displacement !== "blocked" && c.checks.modelAge !== "stale")) continue;
     byDisc.set(c.discipline, [...(byDisc.get(c.discipline) ?? []), c]);
   }
   const ref = (c: C.IssueCheck) => `#${c.displayId ?? c.issueId.slice(0, 8)}`;
@@ -214,19 +230,21 @@ export function buildReminders(checks: readonly C.IssueCheck[], version: number,
     const overdue = cs.filter((c) => c.overdue && c.verdict !== "dice_resuelta");
     const open = cs.filter((c) => c.verdict === "sigue_abierta" && !c.overdue);
     const prog = cs.filter((c) => c.verdict === "avance" && !c.overdue);
+    const unverified = cs.filter((c) => c.verdict === "no_verificable" && !c.overdue);
     const parts = [
       `Recordatorio ${disc} — coordinación v${version} (${today})`,
-      `Incidencias pendientes: ${cs.length} (${cs.filter((c) => c.overdue).length} vencidas, ${dice.length} marcadas resueltas con interferencias vigentes).`,
-      ...(dice.length ? ["Marcadas resueltas, pero el modelo aún muestra la interferencia:", ...dice.map((c) => line(c, ` — ${c.existing} vigentes`))] : []),
-      ...(overdue.length ? ["Vencidas:", ...overdue.map((c) => line(c, ` — vencía ${c.dueDate ?? "?"}, ${c.existing} vigentes`))] : []),
-      ...(open.length ? ["Sin avance:", ...open.map((c) => line(c, ` — ${c.existing} vigentes${c.stuck ? `, ${c.stuckCycles} ciclos` : ""}`))] : []),
+      `Incidencias pendientes: ${cs.length} (${plural(cs.filter((c) => c.overdue).length, "vencida", "vencidas")}, ${plural(dice.length, "marcada resuelta", "marcadas resueltas")} con interferencias vigentes).`,
+      ...(dice.length ? ["Marcadas resueltas, pero el modelo aún muestra la interferencia:", ...dice.map((c) => line(c, ` — ${plural(c.existing, "vigente", "vigentes")}`))] : []),
+      ...(overdue.length ? ["Vencidas:", ...overdue.map((c) => line(c, ` — vencía ${c.dueDate ?? "?"}, ${plural(c.existing, "vigente", "vigentes")}`))] : []),
+      ...(open.length ? ["Sin avance:", ...open.map((c) => line(c, ` — ${plural(c.existing, "vigente", "vigentes")}${c.stuck ? `, ${c.stuckCycles} ciclos` : ""}`))] : []),
       ...(prog.length ? ["Con avance:", ...prog.map((c) => line(c, ` — quedan ${c.existing} de ${c.existing + c.resolved}`))] : []),
+      ...(unverified.length ? ["Por confirmar:", ...unverified.map((c) => line(c, c.checks.displacement === "blocked" ? " — el problema se movió: un elemento corregido vuelve a chocar" : " — el modelo responsable no tiene versión nueva"))] : []),
       "Por favor publiquen el modelo corregido y actualicen el estado en ACC antes de la próxima corrida.",
     ];
     out.push({
       discipline: disc,
       text: parts.join("\n"),
-      issueIds: [...dice, ...overdue, ...open, ...prog].map((c) => c.issueId),
+      issueIds: [...dice, ...overdue, ...open, ...prog, ...unverified].map((c) => c.issueId),
       counts: { total: cs.length, overdue: cs.filter((c) => c.overdue).length, diceResuelta: dice.length, sigueAbierta: cs.filter((c) => c.verdict === "sigue_abierta").length, avance: cs.filter((c) => c.verdict === "avance").length },
     });
   }
@@ -254,7 +272,7 @@ export class IssueCheckStore {
   constructor(private readonly store: Store) {}
 
   path(projectId: string, modelSetId: string): string {
-    const seg = (s: string) => s.replace(/[^A-Za-z0-9._-]/g, "_");
+    const seg = (s: string) => pathSegment(s);
     return this.store.path("issue-checks", seg(bareProjectId(projectId)), `${seg(modelSetId)}.json`);
   }
 

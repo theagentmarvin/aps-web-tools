@@ -19,9 +19,10 @@ import type { DiffableClash } from "../core/ingest/diff";
 import type { ClashDiff } from "../core/types";
 import { readJsonFile, writeJsonAtomic } from "./store/fs";
 import type { Store } from "./store";
+import { pathSegment } from "./store";
 import { bareProjectId } from "./util";
 
-const seg = (s: string) => s.replace(/[^A-Za-z0-9._-]/g, "_");
+const seg = (s: string) => pathSegment(s);
 
 export class LedgerService {
   constructor(

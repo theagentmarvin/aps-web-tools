@@ -39,7 +39,7 @@ import {
 
 import { writeQuery, type Evaluated } from "./filters";
 import { clashChange, groupChange } from "./change";
-import { answerMeaning, inheritedSummary } from "./questions";
+import { CONFIRM_ABOVE, answerBody, decidedCount, inheritedSummary, optionsOf, type UiOption } from "./questions";
 import { ChangeChip } from "./RowMarks";
 import { oneLine, summarizePair, type PairSummary, type SideFacts } from "./pair-summary";
 import { parseKey, useTriage } from "./store";
@@ -234,8 +234,13 @@ function InstancePanel() {
         {lens === "reunion" && <MeetingNoteSection key={cursorKey} rowKey={cursorKey} />}
         {/* Lens "Incidencias": the verification of this ubicación's issue opens first. */}
         {lens === "incidencias" && issue && <VerificationSection check={issue} />}
+        {e.s.group?.closedInAccWhileReal && (
+          <p role="note" className="mx-4 mt-3 rounded border border-amber-300 bg-amber-50 px-2 py-1 text-xs text-amber-900">
+            ⚠ {t("acc.closedWhileReal", { reason: e.s.group.acc?.closedReason ?? "—" })}
+          </p>
+        )}
         <QuestionCallout groupId={groupId} />
-        {!decision && e.s.group?.inherited && groupChange(e.s.group) === "unchanged" && <InheritedCallout targetKey={cursorKey} inherited={e.s.group.inherited} />}
+        {!decision && e.s.group?.inherited && (groupChange(e.s.group) === "unchanged" || e.s.group.inherited.needsConfirmation) && <InheritedCallout targetKey={cursorKey} inherited={e.s.group.inherited} />}
         <ChangeLine e={e} members={members} />
         <ProposalBlock e={e} proposal={proposal} decisionChanges={decision?.kind === "correct" ? decision.changes : []} reasonCode={decision?.reasonCode} calibration={calibration} onSeeReasoning={openReasoning} />
 
@@ -302,7 +307,11 @@ function InstancePanel() {
   );
 }
 
-/** X3 callout at the top of the panel: the question, its options (or free text), answered state. */
+/**
+ * X3 callout at the top of the panel. A decision comes only from a STRUCTURED
+ * option sent by the server (never from text); free text is only an answer.
+ * "Esta respuesta decidirá N ubicaciones"; above 3 an explicit confirmation.
+ */
 function QuestionCallout({ groupId }: { groupId: string }) {
   const t = useT();
   const api = useApi();
@@ -314,13 +323,16 @@ function QuestionCallout({ groupId }: { groupId: string }) {
   });
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState<UiOption | null>(null);
   if (!q) return null;
-  async function answer(value: string) {
-    if (!q || !value.trim()) return;
+  const options = optionsOf(q);
+  const n = decidedCount(q);
+  const anyDecides = options.some((o) => o.decides);
+  async function send(option: UiOption | null, confirmed: boolean) {
+    if (!q || (!option && !text.trim())) return;
     setBusy(true);
     try {
-      const meaning = answerMeaning(q.kind, value);
-      const res = await api.answerQuestion(q.id, { answer: value.trim(), ...meaning });
+      const res = await api.answerQuestion(q.id, answerBody(q, option, text, confirmed));
       store.applyAnswer(q.id, res);
       if (res.decisionIds?.length) {
         const page = await api.listDecisions({ testId: store.state.payload?.test.id, limit: 200 });
@@ -328,11 +340,16 @@ function QuestionCallout({ groupId }: { groupId: string }) {
       }
       toast.show(res.decisionIds?.length ? t("questions.answeredDecision") : t("questions.answered"));
       setText("");
+      setPending(null);
     } catch (err) {
       toast.show(err instanceof Error ? err.message : String(err), { tone: "error" });
     } finally {
       setBusy(false);
     }
+  }
+  function choose(o: UiOption) {
+    if (o.decides && n > CONFIRM_ABOVE) setPending(o);
+    else void send(o, false);
   }
   return (
     <section aria-labelledby={`q-${q.id}`} className="mx-4 mt-3 rounded-lg border border-violet-300 bg-violet-50 p-3 text-sm">
@@ -345,23 +362,46 @@ function QuestionCallout({ groupId }: { groupId: string }) {
       </p>
       {q.state === "open" ? (
         <>
-          {!!q.options?.length && (
+          {anyDecides && <p className="mt-1 text-xs font-medium text-violet-900">{t("questions.willDecide", { count: n })}</p>}
+          {!!options.length && !pending && (
             <div className="mt-2 flex flex-wrap gap-1.5">
-              {q.options.map((o) => (
-                <button key={o} type="button" disabled={busy} onClick={() => void answer(o)} className="rounded border border-violet-300 bg-white px-2 py-1 text-xs text-violet-900 hover:border-violet-500 disabled:opacity-50">
-                  {o}
+              {options.map((o) => (
+                <button
+                  key={o.index}
+                  type="button"
+                  disabled={busy}
+                  onClick={() => choose(o)}
+                  title={o.decides ? t("questions.optionDecides", { count: n }) : t("questions.optionAnswerOnly")}
+                  className="rounded border border-violet-300 bg-white px-2 py-1 text-xs text-violet-900 hover:border-violet-500 disabled:opacity-50"
+                >
+                  {o.label}
                 </button>
               ))}
+            </div>
+          )}
+          {pending && (
+            <div role="alertdialog" aria-labelledby={`qc-${q.id}`} className="mt-2 rounded border border-amber-300 bg-amber-50 p-2 text-xs">
+              <p id={`qc-${q.id}`} className="font-medium text-amber-900">
+                {t("questions.confirmText", { option: pending.label, count: n })}
+              </p>
+              <div className="mt-1.5 flex gap-1.5">
+                <button type="button" disabled={busy} onClick={() => void send(pending, true)} className="rounded bg-brand px-2 py-1 text-white disabled:opacity-50">
+                  {t("questions.confirm", { count: n })}
+                </button>
+                <button type="button" onClick={() => setPending(null)} className="rounded border border-brand-muted/30 px-2 py-1 text-gray-700">
+                  {t("common.cancel")}
+                </button>
+              </div>
             </div>
           )}
           <form
             className="mt-2 flex gap-1.5"
             onSubmit={(ev) => {
               ev.preventDefault();
-              void answer(text);
+              void send(null, false);
             }}
           >
-            <input value={text} onChange={(ev) => setText(ev.target.value)} placeholder={q.options?.length ? t("questions.otherOption") : t("questions.placeholder")} aria-label={t("questions.placeholder")} maxLength={1000} className="min-w-0 flex-1 rounded border border-violet-200 px-2 py-1 text-xs" />
+            <input value={text} onChange={(ev) => setText(ev.target.value)} placeholder={options.length ? t("questions.otherOption") : t("questions.placeholder")} aria-label={t("questions.placeholder")} title={t("questions.freeTextHint")} maxLength={1000} className="min-w-0 flex-1 rounded border border-violet-200 px-2 py-1 text-xs" />
             <button type="submit" disabled={busy || !text.trim()} className="rounded bg-violet-700 px-2 py-1 text-xs text-white disabled:opacity-50">
               {t("questions.send")}
             </button>
@@ -382,15 +422,22 @@ function InheritedCallout({ targetKey, inherited }: { targetKey: string; inherit
   const { store, actions } = useTriageContext();
   return (
     <section aria-labelledby="inh-title" className="mx-4 mt-3 rounded-lg border border-gray-300 bg-gray-50 p-3 text-sm">
-      <h3 id="inh-title" className="mb-1 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-600">
+      <h3 id="inh-title" className={`mb-1 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide ${inherited.needsConfirmation ? "text-amber-800" : "text-gray-600"}`}>
         <IconInherited size={13} />
-        {t("inherited.title", { version: inherited.fromVersion })}
+        {inherited.needsConfirmation ? t("inherited.confirmTitle", { version: inherited.fromVersion }) : t("inherited.title", { version: inherited.fromVersion })}
       </h3>
       <p className="text-gray-900">{t("inherited.body", { summary: inheritedSummary(t, inherited), who: t(`inherited.source.${inherited.source}`), by: inherited.decidedBy ? ` (${inherited.decidedBy})` : "" })}</p>
       <div className="mt-2 flex gap-1.5">
-        <button type="button" onClick={() => actions.keepInherited(targetKey)} className="flex items-center gap-1 rounded bg-brand px-2 py-1 text-xs font-medium text-white hover:bg-brand-light">
-          {t("inherited.keep")} <kbd className="rounded border border-white/40 px-1 font-mono text-[10px]">⏎</kbd>
-        </button>
+        {inherited.needsConfirmation ? (
+          // Changed / reappeared / gated: a normal, guarded accept (dwell guard and spot-check apply).
+          <button type="button" onClick={() => actions.accept(targetKey)} className="flex items-center gap-1 rounded bg-brand px-2 py-1 text-xs font-medium text-white hover:bg-brand-light">
+            {t("inherited.confirm")} <kbd className="rounded border border-white/40 px-1 font-mono text-[10px]">A</kbd>
+          </button>
+        ) : (
+          <button type="button" onClick={() => actions.keepInherited(targetKey)} className="flex items-center gap-1 rounded bg-brand px-2 py-1 text-xs font-medium text-white hover:bg-brand-light">
+            {t("inherited.keep")} <kbd className="rounded border border-white/40 px-1 font-mono text-[10px]">⏎</kbd>
+          </button>
+        )}
         <button type="button" onClick={() => store.setEditing(true)} className="flex items-center gap-1 rounded border border-brand-muted/30 px-2 py-1 text-xs text-gray-700 hover:border-brand-light/40">
           {t("inherited.review")} <Kbd>E</Kbd>
         </button>

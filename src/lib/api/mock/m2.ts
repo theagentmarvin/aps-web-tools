@@ -33,31 +33,53 @@ export function applyM2(test: TestRun, groups: FamilyGroup[], firstTest: boolean
         decidedAt: at,
         decidedBy: source === "human" ? "Camila Rojas" : undefined,
         ref: source === "family" ? `${g.familyId ?? "F-?"} v1` : source === "acc" ? `ACC-${g.id}` : `D-${g.id}`,
+        // Pilot fix: a decision carried onto changed / reappeared clashes is only a proposal to confirm.
+        ...(changedWithDecision ? { needsConfirmation: true } : {}),
       };
     }
   });
 
   const pick = (pred: (g: FamilyGroup) => boolean, skip = 0) => groups.filter(pred)[skip];
   const qUnchanged = pick((g) => g.change === "unchanged" && !g.inherited && g.validity === "needs_info") ?? pick((g) => g.change === "unchanged" && !g.inherited);
-  const qChanged = pick((g) => g.change === "changed" && !g.inherited && g !== qUnchanged);
+  // The action question sits in a grupo with ≥ 5 ubicaciones, so answering it needs an explicit confirmation (> 3).
+  const famSize = (g: FamilyGroup) => groups.filter((x) => x.familyId && x.familyId === g.familyId).length;
+  const qChanged = pick((g) => g.change === "changed" && !g.inherited && g !== qUnchanged && famSize(g) >= 5) ?? pick((g) => g.change === "changed" && !g.inherited && g !== qUnchanged);
   const qOther = pick((g) => g.change === "new" && g !== qUnchanged && g !== qChanged, 2);
   const now = new Date(Date.now() - 3600_000).toISOString();
   const questions: AgentQuestion[] = [];
-  const add = (g: FamilyGroup | undefined, q: Omit<AgentQuestion, "id" | "testKey" | "version" | "groupIds" | "clashIds" | "state" | "createdBy" | "createdAt">) => {
+  type QuestionInput = Omit<AgentQuestion, "id" | "testKey" | "version" | "groupIds" | "clashIds" | "state" | "createdBy" | "createdAt" | "affectedGroups"> & { groupIds?: string[] };
+  const add = (g: FamilyGroup | undefined, input: QuestionInput) => {
+    const { groupIds, ...q } = input;
     if (!g) return;
     const id = `Q-${String(questions.length + 1).padStart(3, "0")}`;
-    questions.push({ id, testKey: test.id, version: test.modelSetVersion, familyId: g.familyId, groupIds: [g.id], clashIds: g.clashIds.slice(0, 5), state: "open", createdBy: "agent", createdAt: now, ...q });
+    const ids = groupIds ?? [g.id];
+    // Structured options (pilot fix): the server says what each option decides; the UI never parses text.
+    questions.push({ id, testKey: test.id, version: test.modelSetVersion, familyId: g.familyId, groupIds: ids, clashIds: g.clashIds.slice(0, 5), state: "open", createdBy: "agent", createdAt: now, affectedGroups: ids.length, ...q });
+    for (const gid of ids.slice(1)) {
+      const other = groups.find((x) => x.id === gid);
+      if (other) other.questionIds = [...(other.questionIds ?? []), id];
+    }
     g.questionIds = [...(g.questionIds ?? []), id];
   };
   add(qUnchanged, {
     kind: "validity",
     question: "No hay propiedades suficientes para saber si el ducto pasa por una pasada prevista. ¿Es una interferencia real?",
-    options: ["Sí, es real", "No, hay pasada prevista (falso positivo)", "Tolerable en obra"],
+    options: [
+      { label: "Sí, es real", validity: "real" },
+      { label: "No, hay pasada prevista (falso positivo)", validity: "false_positive" },
+      { label: "Tolerable en obra", validity: "tolerated" },
+    ],
   });
   add(qChanged, {
     kind: "action",
     question: "La penetración subió desde la versión anterior. ¿Creo una incidencia o lo dejo como revisado?",
-    options: ["Crear incidencia", "Marcar revisada", "Posponer a la reunión"],
+    options: [
+      { label: "Crear incidencia", action: "create_issue" },
+      { label: "Marcar revisada", action: "mark_reviewed" },
+      { label: "Posponer a la reunión", action: "postpone" },
+    ],
+    // Decides 5 ubicaciones of the same grupo: needs an explicit confirmation (confirmCount).
+    groupIds: qChanged && qChanged.familyId ? [qChanged, ...groups.filter((x) => x.familyId === qChanged.familyId && x.id !== qChanged.id)].slice(0, 5).map((x) => x.id) : undefined,
   });
   add(qOther, {
     kind: "other",

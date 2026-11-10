@@ -166,6 +166,8 @@ export interface ClashRecord {
   delta: Delta;
   previousDistanceMm?: number;
   pairKey?: string;
+  /** Engine G0 key of the unique (physical) clash: raw copies of one clash share it. */
+  uniqueKey?: string;
   familyId?: string;
   problemType?: string;
   signature?: string;
@@ -356,6 +358,8 @@ export type ReasonCode = (typeof REASON_CODES)[number];
 export interface DecisionRecord {
   id: string;
   proposalId: string;
+  /** "question": made by answering an agent question (excluded from the learning loop). */
+  source?: "question";
   /** "issue" (M3): a decision on an issue verdict (targetId = ACC issue id); never sent as a triage Decision. */
   targetType: "group" | "clash" | "issue";
   targetId: string;

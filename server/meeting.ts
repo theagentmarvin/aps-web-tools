@@ -4,9 +4,11 @@
  *
  *   .coordinator/meeting/<projectId>/<modelSetId>.json   { notes: MeetingNote[], views: SavedViewerView[] }
  */
+import { plural } from "./util";
 import type * as C from "./api/contract";
 import type { FamilyView } from "./families";
 import type { Store } from "./store";
+import { pathSegment } from "./store";
 import { readJsonFile, writeJsonAtomic } from "./store/fs";
 import type { GroupRecord } from "./store/types";
 import { bareProjectId, CoordError } from "./util";
@@ -24,7 +26,7 @@ export class MeetingStore {
   constructor(private readonly store: Store) {}
 
   path(projectId: string, modelSetId: string): string {
-    const seg = (s: string) => s.replace(/[^A-Za-z0-9._-]/g, "_");
+    const seg = (s: string) => pathSegment(s);
     return this.store.path("meeting", seg(bareProjectId(projectId)), `${seg(modelSetId)}.json`);
   }
 
@@ -48,6 +50,40 @@ export function cleanNote(text: string): string {
   const t = text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "").trim();
   if (t.length > NOTE_MAX) throw new CoordError("validation_error", `La nota supera ${NOTE_MAX} caracteres.`);
   return t;
+}
+
+const MONTHS: Record<string, number> = { enero: 1, febrero: 2, marzo: 3, abril: 4, mayo: 5, junio: 6, julio: 7, agosto: 8, septiembre: 9, setiembre: 9, octubre: 10, noviembre: 11, diciembre: 12 };
+
+/**
+ * Dates written in a quote (dd/mm[/yyyy], dd-mm[-yyyy], dd.mm.yyyy, yyyy-mm-dd, "15 de enero [de 2027]").
+ * Review fix #7: a proposed dueDate must be one of them (year compared only when written).
+ */
+export function datesInQuote(quote: string): Array<{ y?: number; m: number; d: number }> {
+  const out: Array<{ y?: number; m: number; d: number }> = [];
+  const s = quote.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  for (const m of s.matchAll(/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/g)) out.push({ y: +m[1]!, m: +m[2]!, d: +m[3]! });
+  for (const m of s.matchAll(/\b(\d{1,2})[/.-](\d{1,2})(?:[/.-](\d{2,4}))?\b/g)) {
+    if (/^\d{4}$/.test(m[1]!)) continue;
+    const y = m[3] ? (m[3].length === 2 ? 2000 + +m[3] : +m[3]) : undefined;
+    out.push({ ...(y ? { y } : {}), m: +m[2]!, d: +m[1]! });
+  }
+  for (const m of s.matchAll(/\b(\d{1,2})\s+de\s+([a-z]+)(?:\s+(?:de(?:l)?\s+)?(\d{4}))?/g)) {
+    const mo = MONTHS[m[2]!];
+    if (mo) out.push({ ...(m[3] ? { y: +m[3] } : {}), m: mo, d: +m[1]! });
+  }
+  return out.filter((x) => x.m >= 1 && x.m <= 12 && x.d >= 1 && x.d <= 31);
+}
+
+export function quoteContainsDate(quote: string, isoDate: string): boolean {
+  const [y, m, d] = isoDate.split("-").map(Number);
+  return datesInQuote(quote).some((x) => x.m === m && x.d === d && (x.y === undefined || x.y === y));
+}
+
+/** Emails and phone numbers masked (agent-facing copies of human notes). Review fix #14. */
+export function redactContacts(text: string): string {
+  return text
+    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "[correo]")
+    .replace(/(?:\+?\d[\d\s().-]{7,}\d)/g, (m) => (m.replace(/\D/g, "").length >= 8 ? "[teléfono]" : m));
 }
 
 export interface AgendaInput {
@@ -92,7 +128,7 @@ export function buildAgenda(input: AgendaInput): C.AgendaPayload {
     const gs = members(f).filter((g) => input.change(g) === "reappeared");
     if (!gs.length) continue;
     used.add(f.id);
-    bucket(disc(f)).regresion.push(famItem(f, "regresion", gs, `Reapareció en v${input.version}: ${gs.length} ubicación(es).`));
+    bucket(disc(f)).regresion.push(famItem(f, "regresion", gs, `Reapareció en v${input.version}: ${plural(gs.length, "ubicación", "ubicaciones")}.`));
   }
   // 2. P1 families still pending.
   for (const f of fams) {
@@ -100,14 +136,21 @@ export function buildAgenda(input: AgendaInput): C.AgendaPayload {
     const gs = members(f).filter((g) => g.band === 1 && input.needsHuman(g));
     if (!gs.length) continue;
     used.add(f.id);
-    bucket(disc(f)).p1_pendiente.push(famItem(f, "p1_pendiente", gs, `P1 sin decidir: ${gs.length} ubicación(es).`));
+    bucket(disc(f)).p1_pendiente.push(famItem(f, "p1_pendiente", gs, `P1 sin decidir: ${plural(gs.length, "ubicación", "ubicaciones")}.`));
   }
-  // 3. Issues: says resolved but clashes remain, stuck P1, overdue.
+  // 3. Issue follow-ups (listed FIRST per discipline, never counted in the cap; review fix #4):
+  //    says resolved while clashes remain, stuck P1, overdue, and "no verificable" with a meeting reason.
   for (const c of input.issues) {
-    const why = c.verdict === "dice_resuelta" ? `ACC la marca resuelta y siguen ${c.existing} interferencias.` : c.stuck ? `P1 sin avance hace ${c.stuckCycles} ciclos.` : c.overdue && c.verdict !== "resuelta" ? `Vencida (${c.dueDate ?? "?"}), quedan ${c.existing}.` : undefined;
+    const why =
+      c.verdict === "dice_resuelta" ? `ACC la marca resuelta y ${c.existing === 1 ? "sigue 1 interferencia" : `siguen ${c.existing} interferencias`}.`
+      : c.stuck ? `P1 sin avance hace ${c.stuckCycles} ciclos.`
+      : c.overdue && c.verdict !== "resuelta" ? `Vencida (${c.dueDate ?? "?"}), quedan ${c.existing}.`
+      : c.verdict === "no_verificable" && c.checks.displacement === "blocked" ? "El problema se movió: un elemento corregido vuelve a chocar."
+      : c.verdict === "no_verificable" && c.checks.modelAge === "stale" ? `Modelo de ${c.discipline} sin versión nueva: confirmar la solución.`
+      : undefined;
     if (!why) continue;
     used.add(`issue:${c.issueId}`);
-    bucket(c.discipline).incidencia.push({ kind: "incidencia", ...(c.familyId ? { familyId: c.familyId } : {}), groupIds: c.groupIds, issueId: c.issueId, title: c.title, priority: c.priority ?? 2, reason: why, counts: { clashes: c.existing + c.resolved, existing: c.existing, resolved: c.resolved } });
+    bucket(c.discipline).incidencia.push({ kind: "incidencia", ...(c.familyId ? { familyId: c.familyId } : {}), groupIds: c.groupIds, issueId: c.issueId, ...(c.displayId !== undefined ? { displayId: c.displayId } : {}), title: c.title, priority: c.priority ?? 2, reason: why, counts: { clashes: c.existing + c.resolved, existing: c.existing, resolved: c.resolved } });
   }
   // 4. New grupos (Qué cambió) still pending.
   for (const f of fams) {
@@ -115,22 +158,23 @@ export function buildAgenda(input: AgendaInput): C.AgendaPayload {
     const gs = members(f).filter((g) => input.change(g) === "new" && input.needsHuman(g));
     if (!gs.length) continue;
     used.add(f.id);
-    bucket(disc(f)).nuevo.push(famItem(f, "nuevo", gs, `Nueva: ${gs.length} ubicación(es).`));
+    bucket(disc(f)).nuevo.push(famItem(f, "nuevo", gs, `Nueva: ${plural(gs.length, "ubicación", "ubicaciones")}.`));
   }
   // 5. Resolved verdicts to confirm (F2).
   for (const c of input.issues) {
     if (c.verdict !== "resuelta" || c.decision || used.has(`issue:${c.issueId}`)) continue;
-    bucket(c.discipline).confirmar_resuelta.push({ kind: "confirmar_resuelta", ...(c.familyId ? { familyId: c.familyId } : {}), groupIds: c.groupIds, issueId: c.issueId, title: c.title, priority: c.priority ?? 3, reason: "Resuelta en el modelo: confirmar y mover en ACC.", counts: { clashes: c.resolved, existing: 0, resolved: c.resolved } });
+    bucket(c.discipline).confirmar_resuelta.push({ kind: "confirmar_resuelta", ...(c.familyId ? { familyId: c.familyId } : {}), groupIds: c.groupIds, issueId: c.issueId, ...(c.displayId !== undefined ? { displayId: c.displayId } : {}), title: c.title, priority: c.priority ?? 3, reason: "Resuelta en el modelo: confirmar y mover en ACC.", counts: { clashes: c.resolved, existing: 0, resolved: c.resolved } });
   }
 
-  const order: C.AgendaKind[] = ["regresion", "p1_pendiente", "incidencia", "nuevo", "confirmar_resuelta"];
+  const order: C.AgendaKind[] = ["regresion", "p1_pendiente", "nuevo", "confirmar_resuelta"];
   const sortItems = (xs: C.AgendaItem[]) => xs.sort((a, b) => a.priority - b.priority || b.counts.clashes - a.counts.clashes || a.title.localeCompare(b.title));
   const disciplines: C.AgendaDiscipline[] = [...byDisc].map(([discipline, b]) => {
+    const follow = sortItems(b.incidencia);
     const all = order.flatMap((k) => sortItems(b[k]));
     const n = (k: C.AgendaKind) => b[k].length;
     return {
       discipline,
-      items: all.slice(0, cap),
+      items: [...follow, ...all.slice(0, cap)],
       more: Math.max(0, all.length - cap),
       // Only what is there, singular/plural right: "ALC: 6 P1 pendientes, 1 reaparecida."
       summary: `${discipline}: ${

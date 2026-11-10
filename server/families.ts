@@ -16,6 +16,7 @@ import type { ClashGroup as EngineGroup } from "../core/group";
 import { sha1 } from "../core/util/sha1";
 import { sanitizeModelText } from "./sanitize";
 import type { Store } from "./store";
+import { pathSegment } from "./store";
 import { readJsonFile, writeJsonAtomic } from "./store/fs";
 import type { ClashRecord, FamilyAction, FamilyRecord, GroupRecord, Validity } from "./store/types";
 import { bareProjectId, CoordError, nowIso, sha256 } from "./util";
@@ -31,6 +32,8 @@ export interface AttachInput {
   originFile: (side: ClassifiedClash["left"]) => string;
   /** Representative of a member set (same order as the engine). */
   representativeOf: (members: readonly ClassifiedClash[]) => ClassifiedClash | undefined;
+  /** Title of a split part from its own members (the counts in the parent title would be wrong). */
+  retitle?: (eg: EngineGroup, members: readonly ClassifiedClash[]) => string;
 }
 
 function dominant<T extends string>(values: readonly T[]): T | undefined {
@@ -93,7 +96,18 @@ export function attachFamilies(input: AttachInput): {
         id,
         clashIds,
         ...(rep ? { rationale: sanitizeModelText(rep.classification.rationale, 400) } : {}),
-        ...(i === 0 ? {} : { title: sanitizeModelText(`${familyTitle(f.parts, sizes)} — ${levels[0] ?? "sin nivel"}`, 160) }),
+        // Review fix #5: every part of a split group gets a title built from ITS members (counts included).
+        title: (() => {
+          const ms = ks.map((k) => classifiedByKey.get(k)).filter((c): c is ClassifiedClash => !!c);
+          if (eg && input.retitle) {
+            try {
+              return sanitizeModelText(input.retitle({ ...eg, id, memberKeys: [...ks], mcClashIds: clashIds, levels }, ms), 160);
+            } catch {
+              /* fall through */
+            }
+          }
+          return sanitizeModelText(`${familyTitle(f.parts, sizes)} — ${levels[0] ?? "sin nivel"}`, 160);
+        })(),
         levels: i === 0 ? g.levels.filter((l) => levels.includes(l)).concat(levels.filter((l) => !g.levels.includes(l))) : levels,
         maxPenetrationMm: pens.length ? Math.max(...pens) : 0,
         minPenetrationMm: pens.length ? Math.min(...pens) : 0,
@@ -251,7 +265,7 @@ export interface FamilyState {
   versions: FamilyDecisionVersion[];
   exceptions: FamilyException[];
   /** Inherited instances a human confirmed (groupIds), per decision version. */
-  confirmed: Array<{ groupId: string; version: number; by: string; at: string }>;
+  confirmed: Array<{ groupId: string; version: number; by: string; at: string; testKey?: string }>;
 }
 
 export interface ModelSetFamilies {
@@ -269,7 +283,7 @@ export class FamilyDecisionStore {
   constructor(private readonly store: Store) {}
 
   path(projectId: string, modelSetId: string): string {
-    const safe = (s: string) => s.replace(/[^A-Za-z0-9._-]/g, "_");
+    const safe = (s: string) => pathSegment(s);
     return this.store.path("projects", safe(bareProjectId(projectId)), "model-sets", safe(modelSetId), "families.json");
   }
 
@@ -354,7 +368,19 @@ export interface FamilyView extends Omit<FamilyRecord, "groupIds"> {
 }
 
 /** Families of one test with merges, detaches, decisions and inheritance applied. */
-export function familyViews(families: readonly FamilyRecord[], groups: readonly GroupRecord[], st: ModelSetFamilies): FamilyView[] {
+export interface FamilyViewContext {
+  /** The test being shown. */
+  testKey: string;
+  /**
+   * A family decision taken on ANOTHER version is inherited by an instance only when this returns
+   * true: every clash still carries that family's decision reference, unchanged (|Δpen| ≤ 10 mm,
+   * same element types), and the engine does not gate the group (needs_review). Otherwise the
+   * instance is "inherited_pending" (a human confirms it). Review fix #1.
+   */
+  stable: (groupId: string, familyId: string) => boolean;
+}
+
+export function familyViews(families: readonly FamilyRecord[], groups: readonly GroupRecord[], st: ModelSetFamilies, ctx?: FamilyViewContext): FamilyView[] {
   const gById = new Map(groups.map((g) => [g.id, g]));
   // Re-key: alias merges and detached instances.
   const members = new Map<string, { base: FamilyRecord; ids: Set<string>; mergedFrom: Set<string> }>();
@@ -389,15 +415,18 @@ export function familyViews(families: readonly FamilyRecord[], groups: readonly 
     const dec = currentDecision(fs);
     const approved = dec?.status === "approved" ? dec : undefined;
     const exByGroup = new Map((fs?.exceptions ?? []).map((e) => [e.groupId, e]));
-    const confirmed = new Set((fs?.confirmed ?? []).filter((c) => approved && c.version <= approved.version).map((c) => c.groupId));
-    const covered = new Set(approved ? fs!.versions.filter((v) => v.status === "approved").flatMap((v) => v.coveredGroupIds) : []);
+    // Confirmations count for the version they were made on (legacy entries without testKey: as before).
+    const confirmed = new Set((fs?.confirmed ?? []).filter((c) => approved && c.version <= approved.version && (!ctx || !c.testKey || c.testKey === ctx.testKey)).map((c) => c.groupId));
+    // "covered" means decided only on the version the decision was taken on.
+    const sameVersion = !ctx || !approved || approved.testKey === ctx.testKey;
+    const covered = new Set(approved ? fs!.versions.filter((v) => v.status === "approved" && (!ctx || v.testKey === ctx.testKey)).flatMap((v) => v.coveredGroupIds) : []);
     const instances: FamilyInstanceView[] = gs.map((g) => {
       const ex = exByGroup.get(g.id);
       let inh: FamilyInstanceView["inheritance"];
       if (st.detached[g.id]) inh = { state: "detached" };
       else if (ex) inh = { state: "exception", exceptionReason: ex.reason, ...(ex.decisionVersion !== undefined && approved && approved.version > ex.decisionVersion ? { familyChanged: true } : {}), ...(approved ? { decisionVersion: approved.version } : {}) };
       else if (!approved) inh = { state: "none" };
-      else if (covered.has(g.id) || confirmed.has(g.id)) inh = { state: "inherited", decisionVersion: approved.version };
+      else if (covered.has(g.id) || confirmed.has(g.id) || (!sameVersion && ctx!.stable(g.id, id))) inh = { state: "inherited", decisionVersion: approved.version };
       else inh = { state: "inherited_pending", decisionVersion: approved.version };
       return {
         groupId: g.id,

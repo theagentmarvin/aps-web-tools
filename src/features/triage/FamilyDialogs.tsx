@@ -76,6 +76,8 @@ export function FamilyApproveDialog({ familyId }: { familyId: string }) {
   // Instances to acknowledge: union of the server preview and the local check.
   const changeIds = new Set([...impact.validityChanges.map((g) => g.id), ...(preview?.validityChanges.map((v) => v.groupId) ?? [])]);
   const changeRows = [...changeIds].map((id) => store.state.groups.get(id)).filter((g): g is NonNullable<typeof g> => !!g);
+  // Instances inherited but changed / reappeared / gated: they stay pending until confirmed one by one.
+  const pendingConfirm = impact.pendingConfirm;
   const close = () => store.setDialog(null);
   const spotOk = impact.spotDone.length >= impact.spotRequired;
   const missingReason = impact.excepted.filter((x) => !x.reason.trim());
@@ -149,6 +151,19 @@ export function FamilyApproveDialog({ familyId }: { familyId: string }) {
           </fieldset>
         )}
 
+        {pendingConfirm.length > 0 && (
+          <div className="rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
+            <p className="font-semibold">{t("families.pendingConfirmTitle", { count: pendingConfirm.length })}</p>
+            <p>{t("families.pendingConfirmBody")}</p>
+            <ul className="mt-1 max-h-32 list-disc overflow-y-auto pl-4">
+              {pendingConfirm.map((g) => (
+                <li key={g.id} className="truncate" title={g.title}>
+                  {instanceLabel(g)} · {g.title}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         {impact.protectedReal.length > 0 && (
           <div className="rounded border border-red-200 bg-red-50 p-2 text-xs text-red-900">
             <p className="font-semibold">{t("families.protectedRealTitle", { count: impact.protectedReal.length })}</p>
@@ -157,7 +172,7 @@ export function FamilyApproveDialog({ familyId }: { familyId: string }) {
         )}
 
         {preview && <p className="text-xs text-gray-600">{t("families.previewIssues", { count: preview.issues })}</p>}
-        {!spotOk && <p className="text-xs text-amber-800">{t("families.spotCheckNeeded", { done: impact.spotDone.length, required: impact.spotRequired })}</p>}
+        {!spotOk && <p className="text-xs text-amber-800">{t("families.spotCheckNeeded", { count: impact.spotRequired, done: impact.spotDone.length })}</p>}
         {missingReason.length > 0 && <p className="text-xs text-amber-800">{t("families.exceptionReasonMissing", { count: missingReason.length })}</p>}
         {impact.applied.length === 0 && <p className="text-xs text-amber-800">{t("families.nothingToApply")}</p>}
         <p className="text-[11px] text-gray-500">{t("families.approveFootnote")}</p>

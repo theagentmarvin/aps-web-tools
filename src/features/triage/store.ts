@@ -116,7 +116,7 @@ export interface ListSummary {
   changed?: number;
   /** Lens "Incidencias": "N incidencias · M resueltas · K dicen resuelta". */
   issues?: { total: number; resolved: number; saysResolved: number };
-  /** Lens "Reunión": "N temas · M disciplinas". */
+  /** Lens "Reunión": "N puntos · M disciplinas". */
   meeting?: { topics: number; disciplines: number };
 }
 
@@ -759,14 +759,14 @@ export class TriageStore {
           const key = `i:${item.issueId}`;
           if (used.has(key)) continue;
           used.add(key);
-          agendaReason.set(key, item.reason);
+          agendaReason.set(key, agendaLine(item));
           rows.push({ key, kind: "issue", id: item.issueId, groupId: "", nested: false, depth: 1, parent: k1 });
           if (s.expanded.has(item.issueId)) for (const g of gids) pushGroup(g, 2, key);
         } else if (item.familyId && s.families.has(item.familyId)) {
           const key = `f:${item.familyId}`;
           if (used.has(key)) continue;
           used.add(key);
-          agendaReason.set(key, item.reason);
+          agendaReason.set(key, agendaLine(item));
           const vis = gids.filter((g) => s.visibleByGroup.has(g));
           familyStats.set(item.familyId, {
             instanceCount: vis.length,
@@ -780,7 +780,7 @@ export class TriageStore {
           if (s.expanded.has(item.familyId)) for (const g of vis) pushGroup(g, 2, key);
         } else {
           for (const g of gids) {
-            agendaReason.set(rowKey("group", g), item.reason);
+            agendaReason.set(rowKey("group", g), agendaLine(item));
             pushGroup(g, 1, k1);
           }
         }
@@ -1604,6 +1604,11 @@ function levelsOf(f: TriageFamily, items: Evaluated[]): number {
   const set = new Set<string>();
   for (const e of items) for (const l of byId.get(e.s.id) ?? [e.s.group?.location?.level ?? ""]) if (l) set.add(l);
   return set.size;
+}
+
+/** Agenda reason line, led by the ACC number for issue follow-ups ("#106 · …"). */
+function agendaLine(item: AgendaItem): string {
+  return item.displayId ? `#${item.displayId} · ${item.reason}` : item.reason;
 }
 
 function openQuestions(questions: Map<string, AgentQuestion>, groups: Iterable<FamilyGroup>): Map<string, string> {

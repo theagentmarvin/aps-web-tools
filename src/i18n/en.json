@@ -130,7 +130,7 @@
     "analysisUpToDate": "Up to date (v{version})",
     "analysisStale": "Out of date (v{version})",
     "analysisNone": "Not analyzed",
-    "reviewed": "{done} / {total} groups reviewed",
+    "reviewed": "{done} / {total} locations reviewed",
     "readyToApprove_one": "{count} decision ready to approve",
     "readyToApprove_other": "{count} decisions ready to approve",
     "openWorkspace": "Open coordination",
@@ -273,9 +273,9 @@
     "short4": "P4"
   },
   "validity": {
-    "valid": "Valid",
+    "valid": "Real",
     "falsePositive": "False positive",
-    "tolerable": "Tolerable",
+    "tolerable": "Tolerated",
     "duplicate": "Duplicate",
     "toConfirm": "To confirm",
     "needsInfo": "Needs information"
@@ -410,7 +410,7 @@
     "changeReappeared": "Reappeared: it had been resolved in an earlier version",
     "prevDecision": "{decision} by {user}",
     "agentPrepared": "Prepared by the agent (goes away when you edit it)",
-    "nowCount": "{count} clashes ({added} new)",
+    "nowCount": "{count} clashes (+{added})",
     "changedOther": "Changed since v{version}: element types or details differ (see Changes)"
   },
   "issue": {
@@ -454,12 +454,13 @@
     "placeholderMock": "Demo mode: no Autodesk session or models loaded. All evidence needed to decide is in the detail panel.",
     "placeholderNoModels": "This test has no models with an available 3D view.",
     "placeholderSelect": "Select a group, a location or a clash in the list.",
-    "distance": "Distance {value}",
+    "distance": "Penetration {value}",
     "clashPoint": "Clash point",
     "needsLogin": "Connect your Autodesk account to see the models in 3D (read-only).",
     "connect": "Connect 3D viewer",
     "moreMarkers": "+{count} more without a marker",
-    "selectionSummary": "{clashes} clashes · {locations} locations"
+    "selectionSummary": "{clashes} clashes · {locations} locations",
+    "separation": "Separation {value}"
   },
   "reasons": {
     "title": "Why are you correcting the proposal?",
@@ -1102,7 +1103,6 @@
     "approve": "Approve group",
     "reapprove": "New version",
     "blastRadius": "Affects {clashes} clashes in {locations} locations",
-    "spotCheckNeeded": "Open at least {required} location(s) before approving ({done} so far).",
     "evidence": "Penetration {min}–{max} mm",
     "mixedToday": "Mixed validity today: {parts}",
     "instancesTitle": "Locations ({count})",
@@ -1110,7 +1110,7 @@
     "visited": "Opened",
     "issueTitle": "Issue preview",
     "splitIssues": "Split into one issue per location",
-    "issueCountFamily": "One issue for the group ({clashes} clashes), locations grouped by level.",
+    "issueCountFamily": "One issue for the group ({clashes} clashes), locations topiced by level.",
     "issueCountSplit": "{count} issues, one per location, tagged with the group code.",
     "charCount": "{count} / 1000 characters",
     "signatureTitle": "Group signature",
@@ -1152,7 +1152,12 @@
     "changeNew": "{count} new",
     "changeChanged": "{count} changed",
     "changeReappeared": "{count} reappeared",
-    "changeUnchanged": "{count} unchanged"
+    "changeUnchanged": "{count} unchanged",
+    "spotCheckNeeded_one": "Open at least {count} location before approving ({done} so far).",
+    "spotCheckNeeded_other": "Open at least {count} locations before approving ({done} so far).",
+    "solutionLower": "Lower the duct ~{mm} mm (check ceiling height)",
+    "pendingConfirmTitle": "{count} locations with an inherited decision to confirm",
+    "pendingConfirmBody": "They changed, reappeared or have review reasons: they stay pending and are confirmed one by one."
   },
   "change": {
     "new": "New",
@@ -1161,7 +1166,8 @@
   },
   "acc": {
     "closedTip": "Closed in ACC · reason: {reason}",
-    "assignedTip": "ACC issue: {ids} · {existing} still clash · {resolved} resolved"
+    "assignedTip": "ACC issue: {ids} · {existing} still clash · {resolved} resolved",
+    "closedWhileReal": "Closed in ACC ({reason}) but the engine sees it as real: confirm."
   },
   "lens": {
     "label": "Lenses",
@@ -1217,7 +1223,11 @@
     "kept": "Decision kept",
     "keptNote": "Keeps the decision inherited from v{version}",
     "before": "Before you decided: {summary}",
-    "beforeChanged": "You decided (v{version}): {summary} · changed: {what}"
+    "beforeChanged": "You decided (v{version}): {summary} · changed: {what}",
+    "needsConfirmation": "Confirm inherited decision",
+    "needsConfirmationTip": "Confirm the decision inherited from v{version} ({summary}): it changed since",
+    "confirmTitle": "Confirm the decision inherited from v{version}",
+    "confirm": "Confirm"
   },
   "questions": {
     "title": "Agent question",
@@ -1228,14 +1238,24 @@
     "answered": "Answer recorded",
     "answeredDecision": "Answer recorded as a decision",
     "stale": "No longer applies: {reason}",
-    "answeredBy": "Answered by {user}: {answer}"
+    "answeredBy": "Answered by {user}: {answer}",
+    "willDecide_one": "This answer will decide {count} location.",
+    "willDecide_other": "This answer will decide {count} locations.",
+    "optionDecides": "Choosing this option decides {count} locations",
+    "optionAnswerOnly": "Kept as an answer only; it decides nothing",
+    "confirmText": "\"{option}\" will decide {count} locations. Confirm?",
+    "confirm": "Confirm ({count})",
+    "freeTextHint": "Free text is kept as an answer for the agent; it decides nothing."
   },
   "verdict": {
     "resuelta": "Resolved {resolved}/{total}",
     "avance": "Progress {resolved}/{total}",
     "sigue_abierta": "Still open",
-    "dice_resuelta": "Says resolved ✕",
-    "no_verificable": "Not verifiable"
+    "dice_resuelta": "Closed in ACC, still in the model",
+    "no_verificable": "Not verifiable",
+    "desplazada": "Moved",
+    "modelo_sin_actualizar": "Model not updated",
+    "fuera_de_alcance": "Out of scope"
   },
   "issues": {
     "summary_one": "{count} issue · {resolved} resolved · {says} say resolved",
@@ -1243,7 +1263,7 @@
     "disciplineNode": "{discipline}",
     "nodeCounts_one": "{count} issue · {existing} clashes remain",
     "nodeCounts_other": "{count} issues · {existing} clashes remain",
-    "rowCounts": "{existing} remain · {resolved} resolved",
+    "rowCounts": "remaining {existing} · resolved {resolved}",
     "overdue": "overdue",
     "overdueDue": "Overdue ({date})",
     "stuck": "no progress {count} cycles",
@@ -1255,8 +1275,8 @@
     "copyFailed": "Could not copy to the clipboard",
     "copy": "Copy",
     "evidenceCopied": "Evidence copied",
-    "sectionTitle": "Verification in v{version}",
-    "counts": "{existing} remain · {resolved} resolved",
+    "sectionTitle": "Verification of {date}",
+    "counts": "remaining {existing} · resolved {resolved}",
     "checksLabel": "Checks",
     "check": {
       "displacement": "Displacement",
@@ -1285,7 +1305,14 @@
     "locations": "Locations ({count})",
     "reminderTitle": "Reminder for the discipline",
     "noReminder": "No reminder for this discipline.",
-    "disciplineNodeTip": "Responsible {discipline}: follow-up of its issues"
+    "disciplineNodeTip": "Responsible {discipline}: follow-up of its issues",
+    "status": {
+      "open": "Open",
+      "pending": "Pending",
+      "in_review": "In review",
+      "closed": "Closed",
+      "draft": "Draft"
+    }
   },
   "meeting": {
     "kind": {
@@ -1295,13 +1322,13 @@
       "nuevo": "New",
       "confirmar_resuelta": "Confirm resolved"
     },
-    "summary_one": "{count} topic · {disciplines} disciplines",
-    "summary_other": "{count} topics · {disciplines} disciplines",
-    "nodeCounts_one": "{count} topic",
-    "nodeCounts_other": "{count} topics",
+    "summary_one": "{count} point · {disciplines} disciplines",
+    "summary_other": "{count} points · {disciplines} disciplines",
+    "nodeCounts_one": "{count} point",
+    "nodeCounts_other": "{count} points",
     "more": "+{count} more",
     "noteTitle": "Meeting note",
-    "notePlaceholder": "What was agreed, who and by when… (saves automatically)",
+    "notePlaceholder": "What was agreed, which discipline or company, and by when… (saves automatically)",
     "noteHint": "Press N to write. Decisions are taken in \"Approve group\".",
     "saving": "Saving…",
     "savedAt": "Saved {time}",
@@ -1315,8 +1342,14 @@
     "noViewer": "The 3D viewer is not available",
     "viewSavedToast": "View saved for the meeting",
     "print": "Print agenda",
-    "printTitle": "Coordination agenda · {project} · {modelSet} · v{version}",
+    "printTitle": "Coordination of {date} · {project} · {modelSet}",
     "printDate": "Date: {date}",
-    "printNote": "Note: {note}"
+    "printNote": "Note: {note}",
+    "privacyHint": "No names or emails: use disciplines or companies.",
+    "privacyWarn": {
+      "email": "Looks like an email address: use the discipline or company instead.",
+      "phone": "Looks like a phone number: do not keep personal data in the note.",
+      "name": "Looks like a person's name: use the discipline or company instead."
+    }
   }
 }

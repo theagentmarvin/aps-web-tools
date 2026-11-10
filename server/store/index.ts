@@ -52,6 +52,14 @@ function safe(id: string, what: string): string {
   return id;
 }
 
+/**
+ * A path segment from an external id (project, model set): unsafe characters become "_", and the
+ * result must still be a safe id (no "..", no leading dot / separator). Review fix #9.
+ */
+export function pathSegment(id: string, what = "id"): string {
+  return safe(String(id).replace(/[^A-Za-z0-9._-]/g, "_"), what);
+}
+
 export const GENESIS_HASH = "0".repeat(64);
 
 export interface StoreOptions {

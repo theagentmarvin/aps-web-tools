@@ -2,7 +2,7 @@
  * M1 cycle helpers (docs/PLAN-core-features-simplified.md §3): ACC state per item (X1),
  * scope guard (X6) and the "Qué cambió" change word (F1 support). Pure functions.
  */
-import type { ClashLedger, LedgerAccState } from "../core/ingest/ledger";
+import { accAt, type ClashLedger, type LedgerAccState } from "../core/ingest/ledger";
 import type { ClashDiff, ModelDocument, NormalizedClash } from "../core/types";
 import type * as C from "./api/contract";
 import type { ClashRecord } from "./store/types";
@@ -15,6 +15,8 @@ import type { ClashRecord } from "./store/types";
  */
 export const MASS_RESOLUTION_MIN = 50;
 export const MASS_RESOLUTION_SHARE = 0.3;
+/** Any document losing at least this share at once (with ≥ 2 clashes gone) is flagged too. */
+export const MASS_RESOLUTION_ANY = 0.8;
 
 export interface ScopeResult {
   changes: C.ScopeChange[];
@@ -78,7 +80,9 @@ export function detectScopeChanges(
     }
   }
   for (const [docId, x] of [...per].sort((a, b) => a[0] - b[0])) {
-    if (affected.has(docId) || x.total < MASS_RESOLUTION_MIN || x.gone / x.total <= MASS_RESOLUTION_SHARE) continue;
+    // > 30 % for documents with ≥ 50 clashes; ≥ 80 % for any size (review fix #10).
+    const share = x.total ? x.gone / x.total : 0;
+    if (affected.has(docId) || !((x.total >= MASS_RESOLUTION_MIN && share > MASS_RESOLUTION_SHARE) || (x.gone >= 2 && share >= MASS_RESOLUTION_ANY))) continue;
     const d = prev.documents.find((y) => y.id === docId);
     const nd = d ? next.documents.find((y) => lin(y) === lin(d) && y.viewableName === d.viewableName) ?? next.documents.find((y) => lin(y) === lin(d)) : undefined;
     changes.push({
@@ -104,20 +108,36 @@ export function outOfScopePredicate(affectedPrevDocs: ReadonlySet<number>): (c: 
 
 export type AccIndex = ReadonlyMap<string, LedgerAccState>;
 
-export function accIndexOf(ledger: ClashLedger | undefined, clashIds: Iterable<string>): Map<string, LedgerAccState> {
+/**
+ * ACC state per raw clash of ONE version. Matching is on the UNIQUE clash (element pair): linked
+ * models publish each physical clash several times, ACC usually holds one of the raw ids, and the
+ * whole unique clash is ACC-decided when any of its raw ids is (BIM review #2).
+ */
+export function accIndexOf(ledger: ClashLedger | undefined, clashes: Iterable<{ id: string; pairKey?: string; uniqueKey?: string }>, version: number): Map<string, LedgerAccState> {
   const out = new Map<string, LedgerAccState>();
-  if (!ledger) return out;
-  for (const id of clashIds) {
-    const a = ledger.entries[id]?.acc;
-    if (a && !a.resolved) out.set(id, a);
+  if (!ledger || !ledger.accSync?.[String(version)]) return out;
+  const list = [...clashes];
+  const byKey = new Map<string, LedgerAccState>();
+  for (const c of list) {
+    const a = accAt(ledger.entries[c.id], version);
+    if (a && !a.resolved) byKey.set(c.uniqueKey ?? c.pairKey ?? c.id, byKey.get(c.uniqueKey ?? c.pairKey ?? c.id) ?? a);
+  }
+  for (const c of list) {
+    const a = accAt(ledger.entries[c.id], version);
+    const u = byKey.get(c.uniqueKey ?? c.pairKey ?? c.id);
+    if (a && !a.resolved) out.set(c.id, a);
+    else if (u) out.set(c.id, u);
   }
   return out;
 }
 
 /** Resolved clash count per ACC group id (from the ledger). */
-export function accResolvedByGroup(ledger: ClashLedger | undefined): Map<string, number> {
+export function accResolvedByGroup(ledger: ClashLedger | undefined, version: number): Map<string, number> {
   const out = new Map<string, number>();
-  for (const e of Object.values(ledger?.entries ?? {})) if (e.acc?.resolved) out.set(e.acc.groupId, (out.get(e.acc.groupId) ?? 0) + 1);
+  for (const e of Object.values(ledger?.entries ?? {})) {
+    const a = accAt(e, version);
+    if (a?.resolved) out.set(a.groupId, (out.get(a.groupId) ?? 0) + 1);
+  }
   return out;
 }
 

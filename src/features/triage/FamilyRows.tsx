@@ -240,6 +240,6 @@ export function InheritanceMark({ group }: { group: FamilyGroup }) {
   const st = group.inheritance?.state;
   if (st === "exception" || pendingException) return <IconFlag size={12} label={t("families.exception")} className="shrink-0 text-amber-700" />;
   if (st === "inherited") return <IconInherited size={12} label={t("families.inherited")} className="shrink-0 text-green-700" />;
-  if (st === "inherited_pending") return <span title={t("families.inheritedPending")} className="shrink-0 text-xs text-gray-500">◌</span>;
+  if (st === "inherited_pending" || group.inherited?.needsConfirmation) return <span title={t("inherited.needsConfirmation")} className="shrink-0 text-xs text-amber-600">○</span>;
   return null;
 }

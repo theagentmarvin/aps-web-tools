@@ -37,7 +37,7 @@ export function useTriageHotkeys(opts: { onSend: () => void }) {
       run: () => {
         const k = current();
         const g = k?.startsWith("g:") ? store.state.groups.get(k.slice(2)) : undefined;
-        if (k && g?.inherited && groupChange(g) === "unchanged" && !store.state.latest.has(g.id)) return actions.keepInherited(k);
+        if (k && g?.inherited && !g.inherited.needsConfirmation && groupChange(g) === "unchanged" && !store.state.latest.has(g.id)) return actions.keepInherited(k);
         store.expandCurrent();
       },
     },

@@ -288,8 +288,15 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
     res.setHeader("Set-Cookie", `coord_csrf=${csrfToken}; Path=/api/coord; SameSite=Strict; HttpOnly`);
     return { token: csrfToken };
   });
+  let lastSession = "";
   add("GET", "/auth/status", async () => {
     const s = await coord.source.authStatus();
+    // Session changed (login / logout / refresh elsewhere): drop the cached ACC reads (review fix #12).
+    const sk = `${s.loggedIn}:${s.expiresAt ?? ""}`;
+    if (sk !== lastSession) {
+      if (lastSession) ui.invalidateCaches();
+      lastSession = sk;
+    }
     const u = s.loggedIn ? await ui.me().catch(() => undefined) : undefined;
     return { loggedIn: s.loggedIn, dataSource: coord.source.kind, ...(u ? { user: u } : {}), ...(s.expiresAt ? { expiresAt: s.expiresAt } : {}), ...(s.scopes ? { scopes: s.scopes } : {}), ...(s.needsReauth ? { needsReauth: true } : {}), loginInProgress };
   });
@@ -301,6 +308,7 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
       // Web login returns to the app page it started from. Only a same-site relative path is
       // accepted (no open redirect); the origin is the request's validated Origin header.
       const { returnTo } = LoginSchema.parse(body ?? {});
+      ui.invalidateCaches();
       const origin = String(req.headers.origin ?? "");
       const redirectTo = returnTo && origin ? `${origin}${returnTo}` : undefined;
       const auth = apsAuth();
@@ -463,7 +471,8 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
       ),
     true,
   );
-  add("GET", "/issue-checks/gate", async ({ query }) => ui.issueGate(z.string().min(1).max(80).parse(query.get("projectId")), z.string().min(1).max(80).parse(query.get("modelSetId"))));
+  const QueryId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/).refine((s) => !s.includes(".."), "id inválido");
+  add("GET", "/issue-checks/gate", async ({ query }) => ui.issueGate(QueryId.parse(query.get("projectId")), QueryId.parse(query.get("modelSetId"))));
 
   // ── X3 coordinator questions ───────────────────────────────────────────
   add("GET", "/tests/:testId/questions", async ({ params }) => ui.questionsOf(params.testId));
@@ -474,10 +483,10 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
       ui.answerQuestion(
         params.questionId,
         z.strictObject({
-          answer: z.string().min(1).max(1000),
-          validity: z.enum(["real", "false_positive", "tolerated", "needs_info"]).optional(),
-          action: z.enum(["create_issue", "close", "mark_reviewed", "postpone"]).optional(),
+          optionIndex: z.number().int().min(0).max(4).optional(),
+          answer: z.string().max(1000).optional(),
           reasonCode: z.enum(REASON_CODES).optional(),
+          confirmCount: z.number().int().min(0).max(50).optional(),
         }).parse(body),
         await user(),
       ),

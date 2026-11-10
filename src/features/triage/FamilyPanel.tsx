@@ -43,6 +43,8 @@ export interface FamilyImpact {
   protectedReal: FamilyGroup[];
   /** Instances whose current validity differs from the family decision (mixed-validity guard). */
   validityChanges: FamilyGroup[];
+  /** Inherited but changed / reappeared / gated: they stay pending, confirmed one by one (not in the blast radius). */
+  pendingConfirm: FamilyGroup[];
   affectedClashes: number;
   spotRequired: number;
   spotDone: string[];
@@ -56,10 +58,11 @@ export function familyImpact(store: TriageStore, f: TriageFamily, draft: FamilyD
   const instances = f.groupIds.map((id) => s.groups.get(id)).filter((g): g is FamilyGroup => !!g);
   const exc = s.familyExceptions.get(f.id) ?? new Map<string, string>();
   const closing = isClosingAction(draft.action);
-  const out: FamilyImpact = { instances, applied: [], excepted: [], protectedReal: [], validityChanges: [], affectedClashes: 0, spotRequired: 1, spotDone: [] };
+  const out: FamilyImpact = { instances, applied: [], excepted: [], protectedReal: [], validityChanges: [], pendingConfirm: [], affectedClashes: 0, spotRequired: 1, spotDone: [] };
   for (const g of instances) {
     if (exc.has(g.id)) out.excepted.push({ g, reason: exc.get(g.id) ?? "" });
     else if (closing && g.validity === "real") out.protectedReal.push(g);
+    else if (g.inheritance?.state === "inherited_pending" || g.inherited?.needsConfirmation) out.pendingConfirm.push(g);
     else {
       out.applied.push(g);
       out.affectedClashes += clashCount(g);
@@ -70,6 +73,12 @@ export function familyImpact(store: TriageStore, f: TriageFamily, draft: FamilyD
   const visited = s.familyVisits.get(f.id) ?? new Set<string>();
   out.spotDone = f.groupIds.filter((id) => visited.has(id));
   return out;
+}
+
+/** Show catalogue options with the number the crew needs ("Bajar el ducto ~81 mm …"), not the formula. */
+export function optionLabel(t: ReturnType<typeof useT>, option: string, f: TriageFamily): string {
+  if (/^Bajar penetraci[oó]n \+ 25 mm/i.test(option)) return t("families.solutionLower", { mm: Math.round(f.evidence.penetrationMm.max + 25) });
+  return option;
 }
 
 export function instanceLabel(g: FamilyGroup): string {
@@ -241,7 +250,7 @@ function FamilyProposal({ f, draft, options, impact }: { f: TriageFamily; draft:
               <option value="">{t("families.solutionNone")}</option>
               {options.map((o) => (
                 <option key={o} value={o}>
-                  {o}
+                  {optionLabel(t, o, f)}
                 </option>
               ))}
             </select>
@@ -270,11 +279,11 @@ function FamilyProposal({ f, draft, options, impact }: { f: TriageFamily; draft:
             {row(
               t("families.solution"),
               draft.solutionOption ? (
-                draft.solutionOption
+                optionLabel(t, draft.solutionOption, f)
               ) : (
                 <ol className="list-decimal space-y-0.5 pl-4 text-xs text-gray-700">
                   {options.map((o) => (
-                    <li key={o}>{o}</li>
+                    <li key={o}>{optionLabel(t, o, f)}</li>
                   ))}
                 </ol>
               ),
@@ -304,7 +313,7 @@ function FamilyProposal({ f, draft, options, impact }: { f: TriageFamily; draft:
           </p>
           {!spotOk && (
             <p className="mt-0.5 text-[11px] text-amber-800">
-              {t("families.spotCheckNeeded", { done: impact.spotDone.length, required: impact.spotRequired })}
+              {t("families.spotCheckNeeded", { count: impact.spotRequired, done: impact.spotDone.length })}
             </p>
           )}
           {hint && (

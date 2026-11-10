@@ -244,9 +244,9 @@ Contract: `GET /tests/:t/agenda` (AgendaPayload: `cap`; per discipline `items` +
 
 - **Lens.**
   - The tab is enabled when there is an agenda; its count is the number of topics.
-  - Tree: discipline (server order, "N temas · +N más") → agenda items in server order. Each item reuses the existing rows: an issue row when the item has an issue check, otherwise a grupo row, otherwise ubicación rows. Rows expand to ubicaciones and clashes as before.
+  - Tree: discipline (server order, "N puntos · +N más") → agenda items in server order. Each item reuses the existing rows: an issue row when the item has an issue check, otherwise a grupo row, otherwise ubicación rows. Rows expand to ubicaciones and clashes as before.
   - A row that appears twice is shown once.
-  - The summary line reads "N temas · M disciplinas" in both views. In Interferencias the rows are the clashes of the agenda ubicaciones.
+  - The summary line reads "N puntos · M disciplinas" (agenda points) in both views. In Interferencias the rows are the clashes of the agenda ubicaciones.
 - **Nota de reunión.**
   - Opened first in the panel for grupo, ubicación and issue rows, showing "En agenda: {reason}" and a textarea.
   - **N** focuses it from anywhere in the lens (outside the lens, N still opens the decision note).
@@ -257,3 +257,34 @@ Contract: `GET /tests/:t/agenda` (AgendaPayload: `cap`; per discipline `items` +
 - **Guardar vista** (viewer toolbar, this lens only): `viewer.getState({ viewport: true })` → PUT. Selecting a row whose grupo has a saved view restores the camera (`restoreState` with only the viewport filter). The panel shows "Vista guardada hh:mm" or "Sin vista guardada".
 - **Imprimir agenda** (summary line, this lens): `window.print()` with `body[data-print=agenda]` and `@media print` rules in `src/app.css`. Only the print-only agenda prints: by discipline, with item titles, kinds, reasons and notes; no viewer. There is no HTML exporter.
 - **URLs:** an issue row writes `?incidencia=`, which is restored once the issue checks load.
+
+## Pilot-readiness fixes, UI side (2026-11-10)
+
+Source: `docs/domain/pilot-readiness-review.md`.
+
+- **Questions (security).**
+  - All text-to-decision parsing is removed: the old regex read "No, no es falso positivo: es real" as false_positive.
+  - Options are structured `{label, validity?, action?}` from the server. The UI sends only `optionIndex` (plus `confirmCount`); free text is sent as `answer` and decides nothing. Plain-string options from older servers decide nothing.
+  - The callout says "Esta respuesta decidirá N ubicaciones" (N = `affectedGroups`). Above 3, choosing an option opens an explicit "¿Confirmas?" step that sends `confirmCount = N`.
+  - Tests in `tests/ui/pilot-safety.test.ts`.
+- **Agenda.** Issue follow-ups come first in each discipline and are never under "+N más" (server order and cap). The ACC number leads the item ("#106 · …"), and issue rows show `#nnn`.
+- **Notes.**
+  - The placeholder no longer asks "quién": "qué disciplina o empresa". A fixed hint reads "Sin nombres ni correos: usa disciplinas o empresas."
+  - A non-blocking inline warning appears for emails, phone numbers and "Nombre Apellido" patterns (`src/features/triage/privacy.ts`, with an allow-list of disciplines and model words).
+- **Inheritance.**
+  - An inherited decision with `needsConfirmation` (or an instance `inherited_pending`) is PENDING: an amber ○ "Confirmar decisión heredada", never ↺ or decided.
+  - The panel shows "Confirmar decisión heredada de vNN" with **Confirmar (A)**, a normal accept with the dwell guard. Enter / Mantener only keeps decisions that need no confirmation.
+  - The "Aprobar grupo" dialog lists these ubicaciones and leaves them out of the blast radius.
+- **ACC closed while real:** `closedInAccWhileReal` shows "⚠ Cerrada en ACC ({motivo}) pero el motor la ve real: confirmar." in the panel.
+- **Wording (BIM review).**
+  - **Naming stays "grupo / grupos"** (product owner decision: two options only, individual clashes and grupos). The BIM reviewer suggested "tema"; it was applied and then reverted. The toggle reads "Grupos | Interferencias", and the panel, dialogs ("Aprobar grupo"), toasts, shortcut help and summary lines ("10 grupos · 51 ubicaciones · 432 interferencias (334 nuevas)") use "grupo". The Reunión agenda counts **puntos** ("N puntos · M disciplinas").
+  - Válida / Tolerable → **Real / Tolerada**.
+  - "Distancia −56 mm" → **"Penetración 56 mm"**; clearance clashes show "Separación".
+  - "Bajar penetración + 25 mm …" → **"Bajar el ducto ~N mm (verificar altura de cielo)"**, with N from the family's max penetration.
+  - "Dice resuelta ✕" → **"Cerrada en ACC, sigue en modelo"**.
+  - "No verificable" → **"Se desplazó" / "Modelo sin actualizar" / "Fuera de alcance"**, from the checks.
+  - Raw ACC statuses are translated (Abierta, En revisión, Cerrada…).
+  - "vencida" is never shown on a resuelta.
+  - "Verificación del {fecha}" and the printed "Coordinación del {fecha}" replace version numbers.
+  - Plural fixes: "Abre al menos N ubicaciones", "siguen N · resueltas M", "(+N)".
+- **Not changed here (server text):** the agenda reasons ("ubicación(es)") and the evidence template ("Estado ACC: open").

@@ -39,6 +39,11 @@ export function applyM1(test: TestRun, groups: FamilyGroup[], clashes: Clash[], 
       g.acc = { status: "assigned", issueIds: [id], existing: g.clashIds.length - Math.max(0, resolved), resolved: Math.max(0, resolved) };
       assigned++;
       issues.add(id);
+    } else if (!firstTest && g.validity === "real" && i % 29 === 3) {
+      // D8 vs invariant 1: closed in ACC while the engine says real → shown once for confirmation.
+      g.acc = { status: "closed", issueIds: [], existing: g.clashIds.length, resolved: 0, closedReason: "VALID_INTERFACE" };
+      g.closedInAccWhileReal = true;
+      closed++;
     } else if (!firstTest && g.validity === "false_positive" && i % 5 === 0) {
       g.acc = { status: "closed", issueIds: [], existing: g.clashIds.length, resolved: 0, closedReason: "NOT_AN_ISSUE" };
       closed++;
