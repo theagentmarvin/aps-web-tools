@@ -479,13 +479,13 @@ export interface ProposalCreatedOutput {
   batchId?: string;                    // open draft batch (lote) the proposal was added to
   reviewUrl: string;                   // web UI deep link, e.g. http://localhost:5173/aprobaciones/L-2026-11-05-01
 }
-export type ProposalKind = "classification" | "group_action" | "issue_draft" | "status_change" | "rule_change" | "discipline_mapping" | "family_decision";
+export type ProposalKind = "classification" | "group_action" | "issue_draft" | "status_change" | "rule_change" | "discipline_mapping" | "family_decision" | "family_exception";
 export type ProposalStatus = "draft" | "pending_review" | "approved" | "rejected" | "withdrawn" | "applied" | "failed";
 
 export const ListProposalsInput = z.object({
   testKey: TestKey.optional(),
   status: z.array(z.enum(["draft", "pending_review", "pending", "approved", "rejected", "withdrawn", "superseded", "applying", "applied", "failed"])).optional(),
-  kind: z.array(z.enum(["classification", "group_action", "issue_draft", "issue", "status_change", "rule_change", "discipline_mapping", "family_decision"])).optional(),
+  kind: z.array(z.enum(["classification", "group_action", "issue_draft", "issue", "status_change", "rule_change", "discipline_mapping", "family_decision", "family_exception"])).optional(),
   ids: z.array(ProposalId).max(50).optional(),
   createdBy: z.enum(["agent", "coordinator", "any"]).default("any"),
   limit: Limit(25, 50),
@@ -729,6 +729,67 @@ export interface ApplyApprovedProposalsOutput {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 9. Parity reads (docs/ai/agent-human-parity.md §4): what the human sees in the UI, read-only.
+//    No signatures, nonces, tokens, request bodies, user names or emails. Main agent / chat only:
+//    subagents never get the batch tools.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const BatchStateZ = z.enum(["draft", "ready", "approved", "applied", "partial", "discarded"]);
+export const ListBatchesInput = z.object({
+  projectId: z.string().max(80).optional().describe("Defaults to the active project"),
+  state: z.array(BatchStateZ).optional(),
+  limit: Limit(10, 25),
+  cursor: Cursor,
+});
+/** Table rows: batchId, testKey, state, modelSetVersion, latestVersion, stale, items, excluded, byOp{assign,close,local}, clashes, conflicts, lastPreflightAt, approvedAt, appliedAt, createdAt. */
+export const GetBatchInput = z.object({ batchId: BatchId, limit: Limit(50, 100), cursor: Cursor });
+export interface GetBatchOutput {
+  batchId: string; testKey: string; projectId: string; modelSetId: string; state: z.infer<typeof BatchStateZ>;
+  modelSetVersion: number; latestVersion: number | null;
+  /** Built on an older model-set version (switch point for WS-A batchRebaseInfo: server/agent-reads.ts stalenessOf). */
+  stale: boolean; staleReason?: string;
+  counts: { items: number; excluded: number; byOp: { assign: number; close: number; local: number }; clashes: number; conflicts: number; applied: number; failed: number };
+  preflight: { at: string; conflicts: number } | null;
+  approval: { approvedAt: string; expiresAt: string; valid: boolean; reason?: string } | null;
+  applyStatus: { issues: { done: number; total: number }; closes: { done: number; total: number }; failures: number };
+  items: Table;       // itemId, op, operation, groupId, familyId, label (Untrusted), clashes, proposalIds, origin, excluded, conflict (Untrusted), result
+  nextStep: string;
+}
+export const ListDecisionsInput = z.object({
+  testKey: TestKey.optional().describe("Defaults to the active test (unless projectId is given)"),
+  projectId: z.string().max(80).optional(),
+  since: z.string().max(40).optional().describe("ISO date/time; decisions at or after it"),
+  kind: z.array(z.enum(["accept", "correct", "reject", "postpone", "note", "undo"])).optional(),
+  targetType: z.array(z.enum(["group", "clash", "issue"])).optional(),
+  groupId: GroupId.optional(),
+  limit: Limit(25, 50),
+  cursor: Cursor,
+});
+/** Rows: decisionId, at, kind, targetType, targetId, testKey, proposalId, fields[{field,to}], reasonCode, bulkSize, undone, source, note (Untrusted). Never user names. */
+export const GetAgendaInput = z.object({ testKey: TestKey.optional(), cap: z.number().int().min(1).max(200).optional().describe("Items per discipline before '+N más'") });
+export const ListRemindersInput = z.object({ testKey: TestKey.optional(), discipline: z.array(DisciplineCode).max(30).optional() });
+
+/** PROPOSAL only — a human applies it with the family's exception route (FamilyPanel › ubicaciones). */
+export const ProposeFamilyExceptionInput = z.object({
+  testKey: TestKey.optional(),
+  familyId: FamilyId,
+  groupId: z.string().regex(/^G-[0-9a-f]{6,16}$/).describe("Instance (ubicación) of the family"),
+  fields: z
+    .object({
+      validity: Validity.optional(),
+      action: z.enum(["create_issue", "close", "mark_reviewed", "hygiene_issue", "escalate"]).optional(),
+      responsibleDiscipline: z.string().min(2).max(6).optional(),
+      secondaryDiscipline: z.string().min(2).max(6).optional(),
+      solutionOption: z.string().max(300).optional(),
+      issueMode: z.enum(["family", "per_instance"]).optional(),
+    })
+    .strict(),
+  reason: z.string().min(1).max(300).describe("Spanish, why this instance differs (shown to the human as the exception reason)"),
+  rationale: z.string().max(1500),
+});
+// output: ProposalCreatedOutput with kind "family_exception"
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Registry: name, schema, annotations, minimum autonomy level
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -814,6 +875,18 @@ export const TOOLS: ToolSpec[] = [
     description: "Render a report file from cached data; numbers come from the server, the agent supplies only the narrative." },
   { family: "apply", name: "apply_approved_proposals", title: "Apply an approved batch to ACC", minLevel: 1, annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true }, input: ApplyApprovedProposalsInput,
     description: "Apply ONE batch (lote) that a HUMAN approved in the web UI. Refuses without a valid approval. dryRun defaults to true. Main agent only." },
+  { family: "batch", name: "list_batches", title: "List approval batches", minLevel: 0, annotations: RO_LOCAL, input: ListBatchesInput,
+    description: "Approval batches (lotes) of a project: state, items per ACC operation, exclusions, conflicts, last preflight, approval/apply times and a stale flag (built on an older model-set version). Read-only; never signatures, nonces or names. Main agent / chat only." },
+  { family: "batch", name: "get_batch", title: "Get approval batch", minLevel: 0, annotations: RO_LOCAL, input: GetBatchInput,
+    description: "One batch: counts, items (op, group/family, clashes, proposals, excluded, conflict, result), last preflight, approval validity and apply status. Read-only: approving, excluding, returning, discarding stay human in the UI." },
+  { family: "learning", name: "list_decisions", title: "List human decisions", minLevel: 0, annotations: RO_LOCAL, input: ListDecisionsInput,
+    description: "Human decision history (accept, correct, reject, postpone, note, undo) per group/clash/issue with the fields changed, reason code, bulk size and undone flag. No person names; notes are untrusted text." },
+  { family: "analysis", name: "get_agenda", title: "Get meeting agenda", minLevel: 0, annotations: RO_LOCAL, input: GetAgendaInput,
+    description: "Meeting agenda per responsible discipline (regressions, pending P1, issue follow-ups, new, to confirm resolved) computed by the server, same as the UI's Reunión lens. Titles are untrusted." },
+  { family: "analysis", name: "list_reminders", title: "List discipline reminders", minLevel: 0, annotations: RO_LOCAL, input: ListRemindersInput,
+    description: "Per-discipline issue reminders (server template and counts) as in the UI; lines include ACC titles (untrusted). Read-only: the agent never sends them." },
+  { family: "proposal", name: "propose_family_exception", title: "Propose family exception", minLevel: 1, annotations: LOCAL_WRITE, input: ProposeFamilyExceptionInput,
+    description: "Suggest that ONE instance (group) of a family keeps different fields than the family decision, with a reason. Proposal only: a human accepts it in the family panel. Refused for closing a group that is real/needs_info." },
 ];
 
 /** Tools subagents must never get (also enforced by hooks). */

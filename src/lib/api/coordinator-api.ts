@@ -148,8 +148,8 @@ export interface CoordinatorApi {
   cancelChat(chatId: string): Promise<void>;
   /** Claude Code installed / signed in (checked before the first message; no email). */
   getChatStatus(): Promise<ChatStatus>;
-  /** Human-only: apply a regroup proposal (after an explicit confirmation). PROVISIONAL route. */
-  applyRegroup(proposalId: string): Promise<unknown>;
+  /** Human-only: apply (default) or reject a regroup proposal after an explicit confirmation. POST /proposals/:id/regroup. */
+  applyRegroup(proposalId: string, testId: string, decision?: "apply" | "reject"): Promise<unknown>;
   /** X3: answer a coordinator question; validity/action answers create the decision server-side. */
   answerQuestion(questionId: string, req: QuestionAnswerRequest): Promise<AgentQuestion>;
   /** Instance exception (mandatory reason) or its removal. PROVISIONAL route (§5.3). */

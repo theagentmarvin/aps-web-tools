@@ -622,7 +622,8 @@ function ProposalCard({ proposal }: { proposal: ChatProposal }) {
     if (proposal.kind === "regroup") {
       if (state !== "confirm") return setState("confirm");
       try {
-        await api.applyRegroup(proposal.id);
+        if (!testId) return setState("open");
+        await api.applyRegroup(proposal.id, testId, "apply");
         setState("applied");
         toast.show(t("chat.regroupApplied"));
       } catch (err) {

@@ -5,15 +5,15 @@
  */
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { readFileSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { ChatEvent } from "../../server/api/contract";
 import { createCoordApi } from "../../server/api/router";
-import { loadChatAgent } from "../../server/chat/agent";
-import { childEnv, claudeArgs, createdId, mcpConfigJson, resolveClaudeBin } from "../../server/chat/bridge";
+import { loadChatAgent, parseAgentFile } from "../../server/chat/agent";
+import { CHAT_READ_TOOLS, chatAllowedTools, childEnv, claudeArgs, createdId, mcpConfigJson, resolveClaudeBin } from "../../server/chat/bridge";
 import { chatPrompt, contextBlock, selectionContext } from "../../server/chat/context";
 import { ChatService } from "../../server/chat/service";
 import type { Coordinator } from "../../server/coordinator";
@@ -98,6 +98,24 @@ describe("chat bridge (pure)", () => {
     const resumed = claudeArgs({ agent, mcpConfig: "{}", sessionId: "s", resume: true });
     expect(argOf(resumed, "--resume")).toBe("s");
     expect(resumed).not.toContain("--session-id");
+  });
+
+  it("chat read tools: server list matches the staged front matter; batch tools never reach subagents", () => {
+    const staged = parseAgentFile(readFileSync(join(ROOT, "harness-staging", ".claude", "agents", "coordinador-chat.md"), "utf8"), "staged");
+    // Every server-side pre-approved read is in the agent's own tools: line (parity audit §3.3).
+    expect(CHAT_READ_TOOLS.filter((t) => !staged.tools.includes(t))).toEqual([]);
+    for (const t of ["get_session_status", "list_meeting_notes", "diff_test_versions", "list_disciplines", "get_model_hygiene_stats", "list_batches", "get_batch", "list_decisions", "get_agenda", "list_reminders"]) expect(CHAT_READ_TOOLS).toContain(`mcp__coord__${t}`);
+    const allowed = chatAllowedTools(staged);
+    expect(allowed).not.toContain("mcp__coord__apply_approved_proposals");
+    expect(allowed).not.toContain("mcp__coord__ingest_clash_test");
+    expect(allowed.every((t) => t.startsWith("mcp__coord__"))).toBe(true);
+    // Subagents (installed and staged) never get batch tools.
+    for (const dir of [join(ROOT, ".claude", "agents"), join(ROOT, "harness-staging", ".claude", "agents")]) {
+      for (const f of existsSync(dir) ? readdirSync(dir).filter((x) => x.endsWith(".md") && x !== "coordinador-chat.md") : []) {
+        const def = parseAgentFile(readFileSync(join(dir, f), "utf8"), "staged");
+        expect(def.tools.filter((t) => /list_batches|get_batch|apply_approved_proposals/.test(t)), f).toEqual([]);
+      }
+    }
   });
 
   it("extracts created ids only from creating tools' envelopes", () => {

@@ -826,9 +826,9 @@ export class MockCoordinatorApi implements CoordinatorApi {
     const flag = MOCK_CHAT_FLAG;
     return { installed: flag !== "no_claude", loggedIn: flag !== "no_login" && flag !== "no_claude", version: "2.1.267 (mock)" };
   }
-  async applyRegroup(proposalId: string): Promise<unknown> {
+  async applyRegroup(proposalId: string, testId: string, decision: "apply" | "reject" = "apply"): Promise<unknown> {
     await delay(200);
-    this.log({ actor: { type: "user", id: ME.id, name: ME.short }, action: "regroup.applied", projectId: "", targetIds: [proposalId], details: {} });
+    this.log({ actor: { type: "user", id: ME.id, name: ME.short }, action: decision === "apply" ? "regroup.applied" : "regroup.rejected", projectId: "", targetIds: [proposalId], details: { testId } });
     return { ok: true, proposalId };
   }
 

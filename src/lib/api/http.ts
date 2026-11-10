@@ -250,17 +250,6 @@ export class HttpCoordinatorApi implements CoordinatorApi {
       },
       ...(req.newSession ? { newSession: true } : {}),
     };
-    // Earlier draft (POST /chat): focus {familyId?, groupId?, clashId?}, chatId "C" + 12 hex.
-    const legacy = {
-      testKey: req.testId,
-      ...(req.chatId && /^C[0-9a-f]{12}$/.test(req.chatId) && !req.newSession ? { chatId: req.chatId } : {}),
-      message: req.message,
-      context: {
-        lens: req.context.lens,
-        focus: f ? (f.kind === "family" ? { familyId: f.id } : f.kind === "group" ? { groupId: f.id } : f.kind === "clash" ? { clashId: f.id } : undefined) : undefined,
-        selection: wire.context.selection,
-      },
-    };
     let res: Response;
     try {
       const start = await fetch(`${BASE}/chat/messages`, {
@@ -275,15 +264,6 @@ export class HttpCoordinatorApi implements CoordinatorApi {
         this.chatMessageId = messageId;
         onEvent({ type: "status", text: "phase:starting", chatId: sessionId });
         res = await fetch(`${BASE}/chat/${enc(messageId)}/events`, { headers: { Accept: "text/event-stream" }, credentials: "same-origin", signal });
-      } else if (start.status === 404) {
-        // Earlier contract draft: POST /chat streams directly.
-        res = await fetch(`${BASE}/chat`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Accept: "text/event-stream", "X-Coord-CSRF": await this.token() },
-          body: JSON.stringify(legacy),
-          credentials: "same-origin",
-          signal,
-        });
       } else res = start;
     } catch (err) {
       if ((err as Error).name === "AbortError") return;
@@ -319,15 +299,9 @@ export class HttpCoordinatorApi implements CoordinatorApi {
     }
   }
   async getChat(testId: string, chatId?: string): Promise<T.ChatHistory> {
-    // GET /chat/history?testKey (final contract); earlier draft: GET /chat/:chatId.
+    // GET /chat/history?testKey (the only history route; the earlier GET /chat/:chatId draft never shipped).
     type Wire = { sessionId?: string; chatId?: string; testKey?: string; messages: Array<{ role: string; text: string; at: string; proposalIds?: string[]; questionIds?: string[]; costUsd?: number; cost?: number; durationMs?: number }> };
-    let s: Wire;
-    try {
-      s = await this.get<Wire>(`/chat/history?testKey=${enc(testId)}`);
-    } catch (err) {
-      if (!chatId) throw err;
-      s = await this.get<Wire>(`/chat/${enc(chatId)}`);
-    }
+    const s = await this.get<Wire>(`/chat/history?testKey=${enc(testId)}`);
     return {
       chatId: s.sessionId ?? s.chatId ?? chatId ?? "",
       testId: s.testKey ?? testId,
@@ -342,20 +316,17 @@ export class HttpCoordinatorApi implements CoordinatorApi {
       })),
     };
   }
-  async cancelChat(chatId: string) {
+  async cancelChat(_chatId: string) {
+    // The server cancels a running turn by its message id: POST /chat/:messageId/cancel (human-only).
     const messageId = this.chatMessageId;
-    try {
-      if (!messageId) throw new Error("no message");
-      await this.req<unknown>("DELETE", `/chat/${enc(messageId)}`);
-    } catch {
-      await this.req<unknown>("DELETE", `/chat/${enc(chatId)}/run`);
-    }
+    if (!messageId) return;
+    await this.req<unknown>("POST", `/chat/${enc(messageId)}/cancel`);
   }
   getChatStatus() {
     return this.get<T.ChatStatus>("/chat/status");
   }
-  applyRegroup(proposalId: string) {
-    return this.req<unknown>("POST", `/proposals/${enc(proposalId)}/regroup/apply`, {});
+  applyRegroup(proposalId: string, testId: string, decision: "apply" | "reject" = "apply") {
+    return this.req<unknown>("POST", `/proposals/${enc(proposalId)}/regroup`, { testId, decision });
   }
   getAgenda(testId: string) {
     return this.get<T.AgendaPayload>(`/tests/${enc(testId)}/agenda`);
@@ -403,7 +374,7 @@ export class HttpCoordinatorApi implements CoordinatorApi {
   }
   setFamilyException(familyId: string, req: T.FamilyExceptionRequest) {
     if (req.remove) return this.req<unknown>("DELETE", `/families/${enc(familyId)}/exceptions/${enc(req.groupId)}?testId=${enc(req.testId)}`);
-    return this.req<unknown>("POST", `/families/${enc(familyId)}/exceptions`, { testId: req.testId, groupId: req.groupId, fields: req.fields ?? {}, reason: req.reason });
+    return this.req<unknown>("POST", `/families/${enc(familyId)}/exceptions`, { testId: req.testId, groupId: req.groupId, fields: req.fields ?? {}, reason: req.reason, ...(req.proposalId ? { proposalId: req.proposalId } : {}) });
   }
   getTriage(projectId: string, modelSetId: string, testId?: string) {
     return this.get<T.TriagePayloadWithFamilies>(`/triage/${enc(projectId)}/${enc(modelSetId)}`, { test: testId });

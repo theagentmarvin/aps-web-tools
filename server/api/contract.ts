@@ -654,6 +654,8 @@ export interface TriageFamily {
   instances: FamilyInstance[];
   /** Agent suggestions (propose_family_decision) waiting for a human. */
   pendingProposals: Array<{ id: string; createdAt: string; rationale: string; payload: Record<string, unknown> }>;
+  /** Agent instance-exception suggestions (propose_family_exception) waiting for a human; absent when none. */
+  pendingExceptions?: Array<{ id: string; createdAt: string; groupId: string; reason: string; rationale: string; fields: Partial<FamilyDecisionFields> }>;
   /** Aggregated ACC state of the family's instances. */
   acc?: AccState;
   /** Instances per change word. */

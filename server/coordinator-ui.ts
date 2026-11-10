@@ -1723,6 +1723,7 @@ export class CoordinatorUi {
 
   private familyUi(v: FamilyView, proposals: readonly ProposalRecord[], testKey?: string): C.TriageFamily {
     const pending = proposals.filter((p) => p.payload.kind === "family_decision" && p.payload.familyId === v.id && PENDING.has(p.state));
+    const pendingExc = proposals.filter((p) => p.payload.kind === "family_exception" && (p.payload.familyId === v.id || v.mergedFrom.includes(p.payload.familyId)) && PENDING.has(p.state));
     const c = testKey ? this.cycles.get(testKey) : undefined;
     const clsOf = c ? this.familyClashIds.get(testKey!) : undefined;
     let extra: Partial<C.TriageFamily> = {};
@@ -1742,11 +1743,14 @@ export class CoordinatorUi {
       ...(v as unknown as Omit<C.TriageFamily, "pendingProposals">),
       ...extra,
       pendingProposals: pending.map((p) => ({ id: p.id, createdAt: p.createdAt, rationale: p.rationale, payload: p.payload as unknown as Record<string, unknown> })),
+      ...(pendingExc.length
+        ? { pendingExceptions: pendingExc.map((p) => { const pl = p.payload as Extract<ProposalRecord["payload"], { kind: "family_exception" }>; return { id: p.id, createdAt: p.createdAt, groupId: pl.groupId, reason: pl.reason, rationale: p.rationale, fields: pl.fields as Partial<C.FamilyDecisionFields> }; }) }
+        : {}),
     };
   }
 
   private async familyProposals(testKey: string): Promise<ProposalRecord[]> {
-    return this.store.listProposals((p) => p.kind === "family_decision" && p.testKey === testKey);
+    return this.store.listProposals((p) => (p.kind === "family_decision" || p.kind === "family_exception") && p.testKey === testKey);
   }
 
   /** groupId → raw clash ids, per test (families projection). */
@@ -1897,10 +1901,15 @@ export class CoordinatorUi {
     return this.family(test.testKey, v.id);
   }
 
-  async addFamilyException(familyId: string, body: { testId: string; groupId: string; fields: Partial<C.FamilyDecisionFields>; reason: string }, user: HumanUser): Promise<C.TriageFamily> {
+  async addFamilyException(familyId: string, body: { testId: string; groupId: string; fields: Partial<C.FamilyDecisionFields>; reason: string; proposalId?: string }, user: HumanUser): Promise<C.TriageFamily> {
     const { test, views } = await this.core.familyViewsFor(body.testId);
     const v = assertFamilyInTest(views, familyId);
     if (!v.groupIds.includes(body.groupId)) throw new CoordError("not_found", `La ubicación ${body.groupId} no pertenece a ${v.id}`);
+    // Accepting an agent suggestion (propose_family_exception): it must be pending and about this instance.
+    const prop = body.proposalId ? await this.store.getProposal(body.proposalId) : undefined;
+    if (body.proposalId && (!prop || prop.payload.kind !== "family_exception" || prop.payload.groupId !== body.groupId || !(prop.payload.familyId === v.id || v.mergedFrom.includes(prop.payload.familyId)))) throw new CoordError("not_found", `Propuesta ${body.proposalId} no es una excepción de ${body.groupId} en ${v.id}`);
+    if (prop && !PENDING.has(prop.state)) throw new CoordError("invalid_state", `La propuesta ${prop.id} ya está ${prop.state}`);
+    if (prop && (body.fields.action === "close" || body.fields.action === "mark_reviewed") && v.instances.some((i) => i.groupId === body.groupId && (i.validity === "real" || i.validity === "needs_info"))) throw new CoordError("validation_error", "La ubicación es 'real' o 'needs_info': no se cierra.");
     const reason = sanitizeModelText(body.reason, 300).trim();
     if (!reason) throw new CoordError("validation_error", "La excepción requiere un motivo.");
     const rs = loadRules();
@@ -1924,8 +1933,12 @@ export class CoordinatorUi {
         const cur = fs.versions.filter((x) => x.status === "approved").pop();
         fs.exceptions.push({ groupId: body.groupId, fields, reason, by: user.name, at: nowIso(this.core.now()), ...(cur ? { decisionVersion: cur.version } : {}) });
       },
-      { action: "family.exception", testKey: test.testKey, targetIds: [v.id, body.groupId], details: { reason: reason.slice(0, 80), validity: fields.validity ?? null, action: fields.action ?? null } },
+      { action: "family.exception", testKey: test.testKey, targetIds: [v.id, body.groupId], details: { reason: reason.slice(0, 80), validity: fields.validity ?? null, action: fields.action ?? null, ...(prop ? { proposalId: prop.id } : {}) } },
     );
+    if (prop) {
+      await this.store.transitionProposal(prop.id, "approved", user.name);
+      await this.store.transitionProposal(prop.id, "applied", user.name, "excepción de familia registrada (local)");
+    }
     return this.family(test.testKey, v.id);
   }
 

@@ -438,7 +438,7 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
   add(
     "POST",
     "/families/:familyId/exceptions",
-    async ({ params, body, user }) => ui.addFamilyException(params.familyId, z.strictObject({ testId: TestIdZ, groupId: GroupIdZ, fields: DecisionFieldsZ.omit({ typicalDetail: true }), reason: z.string().min(1).max(300) }).parse(body), await user()),
+    async ({ params, body, user }) => ui.addFamilyException(params.familyId, z.strictObject({ testId: TestIdZ, groupId: GroupIdZ, fields: DecisionFieldsZ.omit({ typicalDetail: true }), reason: z.string().min(1).max(300), proposalId: z.string().max(40).optional() }).parse(body), await user()),
     true,
   );
   add("DELETE", "/families/:familyId/exceptions/:groupId", async ({ params, query, user }) => ui.removeFamilyException(params.familyId, TestIdZ.parse(query.get("testId")), params.groupId, await user()), true);

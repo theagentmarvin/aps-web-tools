@@ -1985,6 +1985,64 @@ export class Coordinator {
     return { proposalId: p.id, kind: p.kind, status: p.state, risk: p.risk, affectedClashes: p.affectedClashes, conflictsWith: [], reviewUrl: this.reviewUrl(p.id), note: "Pendiente de aprobación humana en la UI (familias)." };
   }
 
+  /**
+   * PROPOSAL only: one instance (group) of a family keeps different fields than the family decision.
+   * A human applies it with POST /families/:id/exceptions + proposalId. Never a closure of a group
+   * that is (or was decided) real / needs_info, whatever the proposal claims (rule 3).
+   */
+  async proposeFamilyException(
+    input: { testKey?: string; familyId: string; groupId: string; fields: { validity?: Validity; action?: "create_issue" | "close" | "mark_reviewed" | "hygiene_issue" | "escalate"; responsibleDiscipline?: string; secondaryDiscipline?: string; solutionOption?: string; issueMode?: "family" | "per_instance" }; reason: string; rationale: string },
+    caller: CallerContext = { actor: AGENT_ACTOR },
+  ) {
+    this.requireLevel(1, "propose_family_exception");
+    this.checkTexts({ reason: input.reason, rationale: input.rationale, solutionOption: input.fields.solutionOption });
+    const fields = input.fields;
+    if (!Object.values(fields).some((v) => v !== undefined)) throw new CoordError("validation_error", "Indica al menos un campo de la excepción (validez, acción, responsable, solución o modo de incidencia).");
+    const { test, cls, views } = await this.familyViewsFor(input.testKey);
+    const f = views.find((x) => x.id === input.familyId || x.mergedFrom.includes(input.familyId));
+    if (!f) throw new CoordError("not_found", `Familia ${input.familyId} no existe en ${test.testKey}`, "Usa list_families.");
+    const inst = f.instances.find((i) => i.groupId === input.groupId);
+    if (!inst) throw new CoordError("not_found", `La ubicación ${input.groupId} no pertenece a ${f.id}`, "Usa get_family para ver sus ubicaciones.");
+    const blocked = new Set<string>(["real", "needs_info"]);
+    if (fields.action === "close" || fields.action === "mark_reviewed") {
+      const engine = cls.groups.find((g) => g.id === input.groupId)?.validity;
+      const human = (await this.effectiveDecisions(test.testKey)).get(input.groupId)?.changes.find((c) => c.field === "validity")?.humanValue;
+      const seen = [fields.validity, inst.validity, engine, typeof human === "string" ? human : undefined].filter((v): v is string => !!v);
+      if (seen.some((v) => blocked.has(v))) throw new CoordError("validation_error", "La ubicación es (o fue decidida) 'real' o 'needs_info': no se cierra. Usa create_issue, escalate o ask_coordinator.");
+    }
+    const pending = await this.store.listProposals((p) => p.payload.kind === "family_exception" && p.payload.familyId === f.id && p.payload.groupId === input.groupId && (p.state === "draft" || p.state === "pending_review"));
+    if (pending.length) throw new CoordError("conflict", `Ya hay una excepción pendiente para ${input.groupId} (${pending[0]!.id}).`, "Retírala con withdraw_proposal antes de proponer otra.");
+    const p = await this.store.createProposal({
+      kind: "family_exception",
+      projectId: test.projectId,
+      testKey: test.testKey,
+      createdBy: caller.actor,
+      target: { groupIds: [input.groupId], clashIds: [] },
+      payload: {
+        kind: "family_exception",
+        familyId: f.id,
+        groupId: input.groupId,
+        modelSetId: test.modelSetId,
+        fields: {
+          ...(fields.validity ? { validity: fields.validity } : {}),
+          ...(fields.action ? { action: fields.action } : {}),
+          ...(fields.responsibleDiscipline ? { responsibleDiscipline: inCode(fields.responsibleDiscipline) } : {}),
+          ...(fields.secondaryDiscipline ? { secondaryDiscipline: inCode(fields.secondaryDiscipline) } : {}),
+          ...(fields.solutionOption ? { solutionOption: fields.solutionOption } : {}),
+          ...(fields.issueMode ? { issueMode: fields.issueMode } : {}),
+        },
+        reason: input.reason.trim(),
+      },
+      rationale: input.rationale,
+      evidence: [],
+      confidence: "media",
+      risk: fields.validity && fields.validity !== inst.validity ? "high" : "medium",
+      affectedClashes: inst.rawClashCount,
+    });
+    await this.store.audit({ actor: caller.actor, action: "family.exception_suggested", projectId: test.projectId, modelSetId: test.modelSetId, testId: test.testKey, targetIds: [p.id, f.id, input.groupId], details: { validity: fields.validity ?? null, action: fields.action ?? null } });
+    return { proposalId: p.id, kind: p.kind, status: p.state, risk: p.risk, affectedClashes: p.affectedClashes, conflictsWith: [], reviewUrl: this.reviewUrl(p.id), note: "Pendiente de aprobación humana en la UI (familia › ubicaciones)." };
+  }
+
   /** Read-only: the project's discipline mappings and how each document of a cached test resolved. */
   async listDisciplines(input: { testKey?: string }) {
     const ctx = await this.store.getContext();
@@ -2982,6 +3040,7 @@ export function proposalSummary(p: ProposalRecord): string {
     case "family_decision": return `familia ${pl.familyId}: ${pl.validity} / ${pl.action}${pl.responsibleDiscipline ? ` → ${pl.responsibleDiscipline}` : ""}`;
     case "discipline_mapping": return `disciplina ${pl.discipline} → ${pl.fileName ?? pl.rule?.value ?? pl.lineageUrn ?? "?"}${pl.rule ? ` (regla ${pl.rule.match} "${pl.rule.value}")` : ""}`;
     case "engine_batch": return `motor: ${pl.groups.length} grupos ${pl.op === "status_change" ? "cerrables" : "reales"}`;
+    case "family_exception": return `excepción ${pl.groupId} en ${pl.familyId}: ${[pl.fields.validity, pl.fields.action, pl.fields.responsibleDiscipline].filter(Boolean).join(" / ") || "campos"}`;
   }
 }
 

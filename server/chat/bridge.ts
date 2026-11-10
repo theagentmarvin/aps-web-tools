@@ -19,7 +19,16 @@ export const SIGTERM_GRACE_MS = 5_000;
 /** Tools the chat agent may never use (defence in depth: also absent from the agent's list). */
 export const CHAT_DISALLOWED = ["mcp__coord__apply_approved_proposals", "mcp__coord__ingest_clash_test", "mcp__coord__run_classification", "Bash", "PowerShell", "Edit", "Write", "Read", "WebFetch", "WebSearch", "Agent", "Task", "Skill"];
 /** Tool results that create something the human decides (cards). */
-const CREATING = new Set(["propose_family_decision", "propose_classification", "propose_group_action", "propose_status_change", "draft_issue", "ask_coordinator", "propose_discipline_mapping"]);
+const CREATING = new Set(["propose_family_decision", "propose_classification", "propose_group_action", "propose_status_change", "draft_issue", "ask_coordinator", "propose_discipline_mapping", "propose_family_exception"]);
+/**
+ * Read-only coord tools the chat agent is pre-approved for (docs/ai/agent-human-parity.md §3.3).
+ * Must stay a subset of the agent's front-matter `tools:` (tests/server/chat.test.ts checks it).
+ * Batch reads are for the main agent and the chat only, never for subagents; no batch write exists.
+ */
+export const CHAT_READ_TOOLS = [
+  "get_selection_context", "get_group", "get_family", "list_groups", "list_families", "list_clashes", "get_element_properties", "summarize_clashes", "list_proposals", "list_questions", "list_issue_checks",
+  "get_session_status", "list_meeting_notes", "diff_test_versions", "list_disciplines", "get_model_hygiene_stats", "list_batches", "get_batch", "list_decisions", "get_agenda", "list_reminders",
+].map((t) => `mcp__coord__${t}`);
 
 export interface ResolvedBin {
   command: string;
@@ -90,7 +99,7 @@ export function claudeArgs(opts: { agent: ChatAgentDef; mcpConfig: string; sessi
     "--tools",
     "",
     "--allowedTools",
-    opts.agent.tools.filter((t) => t.startsWith("mcp__coord__")).join(","),
+    chatAllowedTools(opts.agent).join(","),
     "--disallowedTools",
     [...new Set([...CHAT_DISALLOWED, ...opts.agent.disallowedTools])].join(","),
     "--permission-mode",
@@ -157,6 +166,12 @@ function resultText(content: unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) return content.map((c) => (c && typeof c === "object" && "text" in c ? String((c as { text: unknown }).text) : "")).join("");
   return "";
+}
+
+/** Pre-approved coord tools: the agent's own list plus {@link CHAT_READ_TOOLS}, never a disallowed one. */
+export function chatAllowedTools(agent: Pick<ChatAgentDef, "tools" | "disallowedTools">): string[] {
+  const deny = new Set([...CHAT_DISALLOWED, ...agent.disallowedTools]);
+  return [...new Set([...agent.tools.filter((t) => t.startsWith("mcp__coord__")), ...CHAT_READ_TOOLS])].filter((t) => !deny.has(t));
 }
 
 /** Created proposal / question id from a tool result envelope ({ok, data:{proposalId|questionId}}). */

@@ -250,6 +250,8 @@ export interface FamilyExceptionRequest {
   fields?: Partial<WireDecisionFields>;
   /** true = remove the exception. */
   remove?: boolean;
+  /** Agent proposal (propose_family_exception) this exception accepts. */
+  proposalId?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

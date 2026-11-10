@@ -237,8 +237,8 @@ export interface ClassificationRecord {
 
 // ── Proposals ──────────────────────────────────────────────────────────────
 
-export type ProposalKind = "classification" | "group_action" | "issue_draft" | "status_change" | "rule_change" | "discipline_mapping" | "family_decision";
-export const PROPOSAL_KINDS: readonly ProposalKind[] = ["classification", "group_action", "issue_draft", "status_change", "rule_change", "discipline_mapping", "family_decision"];
+export type ProposalKind = "classification" | "group_action" | "issue_draft" | "status_change" | "rule_change" | "discipline_mapping" | "family_decision" | "family_exception";
+export const PROPOSAL_KINDS: readonly ProposalKind[] = ["classification", "group_action", "issue_draft", "status_change", "rule_change", "discipline_mapping", "family_decision", "family_exception"];
 export type ProposalState = "draft" | "pending_review" | "approved" | "rejected" | "withdrawn" | "applied" | "failed";
 export const PROPOSAL_STATES: readonly ProposalState[] = ["draft", "pending_review", "approved", "rejected", "withdrawn", "applied", "failed"];
 export type Risk = "low" | "medium" | "high";
@@ -324,6 +324,15 @@ export type ProposalPayload =
       /** Engine auto-accepted groups: closable → status_change closed; real → classification. */
       op: "status_change" | "classification";
       groups: Array<{ groupId: string; validity: Validity; confidence: number; clashes: number }>;
+    }
+  | {
+      /** Agent suggestion only: one instance keeps other fields than its family (applied by a human). */
+      kind: "family_exception";
+      familyId: string;
+      groupId: string;
+      modelSetId: string;
+      fields: { validity?: Validity; action?: FamilyAction; responsibleDiscipline?: string; secondaryDiscipline?: string; solutionOption?: string; issueMode?: "family" | "per_instance" };
+      reason: string;
     };
 
 export interface ProposalRecord {

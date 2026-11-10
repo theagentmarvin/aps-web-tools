@@ -8,6 +8,8 @@
  */
 import { useState } from "react";
 import { useI18n, useT, type TKey } from "~/i18n";
+import { useApi } from "~/lib/api";
+import { useToast } from "~/lib/components/Toast";
 import type { FamilyAction, FamilyGroup, TriageFamily, Validity } from "~/lib/api/types";
 import { categoryTitle } from "~/lib/category-names";
 import { PriorityChip, ValidityBadge } from "~/lib/components/badges";
@@ -421,10 +423,42 @@ function InstancesTable({ f }: { f: TriageFamily }) {
                 className={`mt-1 w-full rounded border px-1.5 py-0.5 text-xs ${exc?.get(g.id) ? "border-brand-muted/30" : "border-amber-400"}`}
               />
             )}
+            {!isExc && f.pendingExceptions?.filter((p) => p.groupId === g.id).slice(0, 1).map((p) => <AgentException key={p.id} f={f} p={p} />)}
           </li>
         );
       })}
     </ul>
+  );
+}
+
+/** Agent suggestion (propose_family_exception): the human accepts it here; the server marks the proposal applied. */
+function AgentException({ f, p }: { f: TriageFamily; p: NonNullable<TriageFamily["pendingExceptions"]>[number] }) {
+  const t = useT();
+  const api = useApi();
+  const toast = useToast();
+  const { store } = useTriageContext();
+  const [busy, setBusy] = useState(false);
+  const testId = store.state.payload?.test.id ?? "";
+  async function accept() {
+    if (!testId || busy) return;
+    setBusy(true);
+    try {
+      await api.setFamilyException(f.id, { testId, groupId: p.groupId, reason: p.reason, fields: p.fields, proposalId: p.id });
+      store.applyFamilies(await api.getFamilies(testId));
+      toast.show(t("families.agentExceptionAccepted"));
+    } catch (err) {
+      toast.show(err instanceof Error ? err.message : String(err), { tone: "error" });
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="mt-1 flex min-w-0 items-center gap-1.5 rounded border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-[11px] text-violet-900" title={p.rationale}>
+      <span className="min-w-0 flex-1 truncate">{t("families.agentException", { reason: p.reason })}</span>
+      <button type="button" disabled={busy || !testId} onClick={() => void accept()} className="shrink-0 rounded bg-violet-600 px-1.5 text-[11px] font-medium text-white hover:bg-violet-700 disabled:opacity-50">
+        {t("families.agentExceptionAccept")}
+      </button>
+    </div>
   );
 }
 

@@ -8,6 +8,7 @@
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { applyApproved, type ApplyResult } from "../approval";
+import { getAgendaForAgent, getBatchForAgent, listBatchesForAgent, listDecisionsForAgent, listRemindersForAgent } from "../agent-reads";
 import { AGENT_ACTOR, CHAT_AGENT_ACTOR, SERVER_VERSION, type Coordinator } from "../coordinator";
 import { selectionContext } from "../chat/context";
 import type { Actor } from "../store/types";
@@ -70,6 +71,12 @@ export function toolHandlers(coord: Coordinator, actor: Actor = AGENT_ACTOR): Re
     propose_discipline_mapping: async (a) => coord.proposeDisciplineMapping(a as never, ctx),
     generate_report: async (a) => coord.generateReport(a as never, ctx),
     apply_approved_proposals: async (a) => applyTool(coord, a as { batchId: string; dryRun?: boolean }),
+    list_batches: async (a) => listBatchesForAgent(coord, a as never),
+    get_batch: async (a) => getBatchForAgent(coord, a as never),
+    list_decisions: async (a) => listDecisionsForAgent(coord, a as never),
+    get_agenda: async (a) => getAgendaForAgent(coord, a as never),
+    list_reminders: async (a) => listRemindersForAgent(coord, a as never),
+    propose_family_exception: async (a) => coord.proposeFamilyException(a as never, ctx),
   };
 }
 
