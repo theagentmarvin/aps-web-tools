@@ -2909,7 +2909,7 @@ export class Coordinator {
   async appendNote(input: { projectId?: string; text: string; kind?: string }, caller: CallerContext) {
     this.checkTexts({ note: input.text });
     const pid = await this.ctxProject(input.projectId);
-    const line = `- ${nowIso(this.now()).slice(0, 10)} · [${input.kind ?? "convención"}] ${input.text.replace(/\s+/g, " ").trim()} (confirmado por ${caller.actor.name})`;
+    const line = `- ${nowIso(this.now()).slice(0, 10)} · [${input.kind ?? "convención"}] ${input.text.replace(/\s+/g, " ").trim()} (confirmado por coordinador)`; // role, not the name (rule 7); the audit log keeps the actor
     await this.store.appendNote(pid, line);
     await this.store.audit({ actor: caller.actor, action: "notes.appended", projectId: pid, details: { chars: input.text.length } });
     return this.getNotes(pid);

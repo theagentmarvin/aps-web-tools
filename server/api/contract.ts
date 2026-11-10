@@ -1255,3 +1255,50 @@ export interface ChatHistory {
   messages: ChatHistoryMessage[];
   running?: string;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Human-side parity (docs/ai/agent-human-parity.md #10, #62, #68): read-only views of what
+// the agent sees (hygiene stats, generate_report files, record_feedback). No personal data.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type HygieneCheck =
+  | "self_clashes_same_document" | "duplicate_elements" | "missing_level" | "missing_system"
+  | "generic_or_placeholder_types" | "unassigned_discipline_documents" | "insulation_hosted_clashes"
+  | "linked_model_misplacement" | "category_mismatch_by_name";
+/** Same numbers as the MCP tool get_model_hygiene_stats. `doc` is model text (untrusted, render as text). */
+export interface TestHygiene {
+  testId: string;
+  byDocument: { doc: string; discipline: string; elementsInClashes: number; selfClashes: number; duplicates: number; missingLevel: number; missingSystem: number; genericTypes: number }[];
+  findings: { check: HygieneCheck; doc: string; count: number; examples: string[]; clashesAffected: number }[];
+}
+/** A file written by generate_report under .coordinator/reports/<projectId>/. */
+export interface ReportFile { name: string; format: "md" | "html"; kind?: string; testKey?: string; date?: string; size: number; modifiedAt: string }
+export interface ReportFileContent { name: string; format: "md" | "html"; content: string }
+/** Origin of a feedback record: the web UI, the agent (record_feedback) or a triage decision. */
+export type FeedbackSource = "ui" | "agent" | "decision";
+export interface FeedbackRow {
+  feedbackId: string;
+  at: string;
+  source: FeedbackSource;
+  verdict: "correct" | "incorrect" | "partially_correct";
+  testKey?: string;
+  groupId?: string;
+  proposalId?: string;
+  engineValidity?: string;
+  correctedValidity?: string;
+  disciplinePair?: string;
+  ruleIds: string[];
+  /** Free text written by the coordinator (or relayed by the agent): render as text. */
+  statement: string;
+  generalizable: "yes" | "no" | "unsure";
+  scope: "this_group" | "project" | "company";
+  reasonCode?: string;
+  curated: boolean;
+}
+
+export interface Endpoints {
+  "GET /api/coord/tests/:testId/hygiene": { req: void; res: TestHygiene };
+  "GET /api/coord/reports/files?projectId": { req: void; res: ReportFile[] };
+  "GET /api/coord/reports/files/:name?projectId": { req: void; res: ReportFileContent };
+  "GET /api/coord/learning/feedback?projectId&source&limit&cursor": { req: void; res: Page<FeedbackRow> };
+}

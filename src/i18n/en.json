@@ -1393,5 +1393,128 @@
   "toolbar": {
     "label": "Coordination workspace toolbar",
     "more": "More actions"
+  },
+  "parity": {
+    "hygiene": {
+      "tab": "Hygiene",
+      "needsAnalysis": "Analyse this version to see model hygiene.",
+      "intro": "Model hygiene for v{version}: the same numbers the agent reads. A finding is one hygiene issue per responsible file, not one per clash.",
+      "clean": "No hygiene findings in this version.",
+      "summary": "Summary by check",
+      "byDocument": "By document ({count})",
+      "agentHint": "For a prioritised per-document report, ask the agent for /auditar-modelo.",
+      "col": {
+        "check": "Check",
+        "doc": "Document",
+        "elements": "Elements",
+        "clashes": "Clashes",
+        "examples": "Examples",
+        "discipline": "Discipline",
+        "inClashes": "In clashes"
+      },
+      "check": {
+        "self_clashes_same_document": "Same-file clashes",
+        "duplicate_elements": "Duplicate elements",
+        "missing_level": "No level",
+        "missing_system": "MEP without system",
+        "generic_or_placeholder_types": "Generic types",
+        "unassigned_discipline_documents": "Document without discipline",
+        "insulation_hosted_clashes": "Insulation",
+        "linked_model_misplacement": "Duplicate or misplaced link",
+        "category_mismatch_by_name": "Category mismatch",
+        "other": "Other check"
+      }
+    },
+    "report": {
+      "menu": "Cycle report",
+      "title": "Coordination cycle report",
+      "print": "Open to print (HTML)",
+      "downloadMd": "Download .md",
+      "download": "Download",
+      "agentFiles": "Agent reports",
+      "noFiles": "The agent has not generated reports for this project yet.",
+      "kind": {
+        "weekly": "Weekly report",
+        "test_summary": "Test summary",
+        "hygiene": "Model hygiene",
+        "proposals_digest": "Proposals digest",
+        "other": "Report"
+      }
+    },
+    "notes": {
+      "title": "Project conventions",
+      "count_one": "{count} line",
+      "count_other": "{count} lines",
+      "unavailable": "unavailable",
+      "hint": "The agent reads them at the start of every session (notes.md). Each line is dated and signed 'confirmado por coordinador'. To change a convention, add a new line that supersedes it.",
+      "empty": "No conventions yet.",
+      "add": "Add convention",
+      "kind": "Kind",
+      "text": "Convention text",
+      "placeholder": "E.g.: HVAC penetrations in level 03 beams planned per drawing E-301",
+      "preview": "Line preview",
+      "signature": "confirmado por coordinador",
+      "confirm": "I confirm this convention for the project; the agent will apply it in the next cycles.",
+      "save": "Save line",
+      "saved": "Convention saved to notes.md"
+    },
+    "feedback": {
+      "tab": "Feedback",
+      "intro": "Corrections recorded in the UI and by the agent (record_feedback). This is what /curar-reglas reads.",
+      "empty": "No feedback recorded.",
+      "more": "Showing {shown} of {total}.",
+      "curatedYes": "Curated",
+      "source": {
+        "all": "All",
+        "ui": "UI",
+        "agent": "Agent",
+        "decision": "UI (decision)"
+      },
+      "col": {
+        "date": "Date",
+        "source": "Origin",
+        "target": "Object",
+        "pair": "Pair",
+        "change": "Correction",
+        "statement": "Statement",
+        "scope": "Scope",
+        "curated": "Status"
+      },
+      "verdict": {
+        "correct": "Correct",
+        "incorrect": "Incorrect",
+        "partially_correct": "Partially correct"
+      },
+      "scope": {
+        "this_group": "This group",
+        "project": "Project",
+        "company": "Company"
+      },
+      "general": {
+        "yes": "Generalisable",
+        "no": "Not generalisable",
+        "unsure": "Generalisable: unsure"
+      }
+    },
+    "family": {
+      "more": "More family actions",
+      "detach": "Detach a location…",
+      "detachSingle": "The family has a single location.",
+      "merge": "Merge with another family…",
+      "mergeDecided": "The family already has a decision: reject it before merging.",
+      "detachTitle": "Detach a location",
+      "mergeTitle": "Merge with another family",
+      "pickInstance": "Location leaving the family",
+      "pickTarget": "Target family",
+      "detachEffect": "{group} ({title}) leaves {family} and becomes its own family, decided separately.",
+      "mergeEffect": "The {count} locations of {from} move to '{into}'. {from} ceases to exist.",
+      "localOnly": "Local regrouping: nothing changes in ACC, nor do approved decisions.",
+      "detachConfirm": "Detach",
+      "mergeConfirm": "Merge",
+      "detached": "{group} detached into its own family",
+      "merged": "{from} merged into {into}",
+      "instances_one": "{count} location",
+      "instances_other": "{count} locations"
+    }
   }
 }

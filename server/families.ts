@@ -404,9 +404,12 @@ export function familyViews(families: readonly FamilyRecord[], groups: readonly 
     if (!g) continue;
     const src = families.find((f) => f.groupIds.includes(gid));
     if (!src) continue;
-    const e = members.get(d.familyId) ?? { base: { ...src, id: d.familyId, title: st.labels?.[d.familyId] ?? `${src.title} (separada)`, groupIds: [], tags: src.tags.filter((t) => t !== "tipico") }, ids: new Set<string>(), mergedFrom: new Set<string>() };
+    // A detached (manual) family can itself be merged into another family later: follow its alias.
+    const target = resolveAlias(st.aliases, d.familyId);
+    const e = members.get(target) ?? { base: { ...src, id: target, title: st.labels?.[target] ?? `${src.title} (separada)`, groupIds: [], tags: src.tags.filter((t) => t !== "tipico") }, ids: new Set<string>(), mergedFrom: new Set<string>() };
+    if (target !== d.familyId) e.mergedFrom.add(d.familyId);
     e.ids.add(gid);
-    members.set(d.familyId, e);
+    members.set(target, e);
   }
 
   const views: FamilyView[] = [];

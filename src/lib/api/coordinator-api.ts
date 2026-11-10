@@ -75,6 +75,7 @@ import type {
   FamilyExceptionRequest,
   UserInfo,
 } from "./types";
+import type * as P from "./types";
 
 export type ApiMode = "mock" | "http";
 
@@ -197,6 +198,24 @@ export interface CoordinatorApi {
   listCorrections(params?: { projectId?: string; limit?: number; cursor?: string }): Promise<Page<CorrectionRow>>;
   getCalibration(): Promise<Calibration>;
 
+  // ── Human-side parity (docs/ai/agent-human-parity.md #10, #31, #32, #62, #68, #70, #71) ──
+  /** Model hygiene stats of a test (same numbers as the agent's get_model_hygiene_stats). */
+  getTestHygiene(testId: string): Promise<P.TestHygiene>;
+  /** Cycle KPIs (GET /reports), the base of the "Informe del ciclo". */
+  getReport(scope: P.ReportScope): Promise<P.ReportData>;
+  /** Report files the agent wrote with generate_report (newest first). */
+  listReportFiles(projectId: string): Promise<P.ReportFile[]>;
+  getReportFile(projectId: string, name: string): Promise<P.ReportFileContent>;
+  /** Project conventions (.coordinator/projects/<id>/notes.md). */
+  getProjectNotes(projectId: string): Promise<P.ProjectNotes>;
+  /** Human-only: append one dated, confirmed line to notes.md. */
+  appendProjectNote(projectId: string, text: string, kind?: string): Promise<P.ProjectNotes>;
+  /** Feedback recorded by the UI and by the agent (record_feedback), with its origin. No user names. */
+  listFeedback(params?: { projectId?: string; source?: P.FeedbackSource[]; limit?: number; cursor?: string }): Promise<Page<P.FeedbackRow>>;
+  /** Human-only: move one location (group) out of a family into its own family. Local only. */
+  detachFamilyInstance(familyId: string, req: { testId: string; groupId: string }): Promise<FamiliesPayload>;
+  /** Human-only: merge family `from` into `into`. Local only. */
+  mergeFamilies(req: { testId: string; from: string; into: string }): Promise<FamiliesPayload>;
 }
 
 /** Error with an HTTP-ish status and a stable code for the UI to translate. */

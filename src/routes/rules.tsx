@@ -16,10 +16,11 @@ import { Banner, Button, EmptyState, ErrorState, SkeletonRows, cardCls } from "~
 import { downloadBlob } from "~/lib/csv";
 import { BRAND, SERIES_2 } from "~/lib/charts/theme";
 import { FIELD_KEY } from "~/lib/labels";
+import { FeedbackLog } from "~/features/rules/FeedbackLog";
 
-const TABS = ["reglas", "sugerencias", "correcciones", "calibracion"] as const;
+const TABS = ["reglas", "sugerencias", "feedback", "correcciones", "calibracion"] as const;
 type Tab = (typeof TABS)[number];
-const TAB_KEY: Record<Tab, TKey> = { reglas: "rules.tabs.rules", sugerencias: "rules.tabs.suggestions", correcciones: "rules.tabs.corrections", calibracion: "rules.tabs.calibration" };
+const TAB_KEY: Record<Tab, TKey> = { reglas: "rules.tabs.rules", sugerencias: "rules.tabs.suggestions", feedback: "parity.feedback.tab", correcciones: "rules.tabs.corrections", calibracion: "rules.tabs.calibration" };
 
 export function RulesPage() {
   const t = useT();
@@ -37,6 +38,7 @@ export function RulesPage() {
       </div>
       {tab === "reglas" && <RulesTable />}
       {tab === "sugerencias" && <Suggestions />}
+      {tab === "feedback" && <FeedbackLog />}
       {tab === "correcciones" && <Corrections />}
       {tab === "calibracion" && <CalibrationView />}
     </div>

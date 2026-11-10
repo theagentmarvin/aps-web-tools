@@ -45,7 +45,7 @@ Estados posibles: **parity** · **agent-missing** · **human-missing** · **inte
 | 2 | Estado de sesión | `GET /auth/status`, `/session`, `/me`, `/agent/status` | `get_session_status` · CC, HA, RC (Chat no) | parity |
 | 3 | Explorar hubs, proyectos, conjuntos de modelos, versiones, tests y vistas | `GET /hubs`, `/projects[/:id]`, `…/model-sets`, `…/tests`, `…/views` · `projects.tsx`, `project.tsx` | `list_projects`, `list_model_sets`, `list_model_set_versions`, `list_clash_tests` · CC | parity |
 | 4 | Fijar el contexto activo | URL de la ruta | `set_active_context` · CC | parity |
-| 5 | Inicio: cola, lotes, actividad, KPIs | `GET /home` existe, pero `/inicio` redirige a proyectos (sin página) | `get_session_status.pending` (solo conteos) | **human-missing** |
+| 5 | Inicio: cola, lotes, actividad, KPIs | `GET /home` existe, pero `/inicio` redirige a proyectos (sin página) | `get_session_status.pending` (solo conteos) | intentional (WS-F): la página Inicio se quitó a propósito para simplificar la navegación; la cola vive en Proyectos y Aprobaciones |
 
 ### B. Ingesta y motor
 | # | Capacidad | Humano | Agente | Estado |
@@ -54,7 +54,7 @@ Estados posibles: **parity** · **agent-missing** · **human-missing** · **inte
 | 7 | Clasificar (motor) | `ingest` con `classify:true` | `run_classification` (también hace dry-run con `rulesetRef`) · CC | parity |
 | 8 | Matriz documento × documento | `GET …/clash-grid` · `ClashGridView` | `summarize_clashes` con `documentPair`/`disciplinePair` · CC, T, HA, Chat | parity |
 | 9 | Diferencias entre versiones | Delta en las tarjetas de test, filtro `delta`, `GET /triage/…/changes` | `diff_test_versions` · CC (Chat no) | parity |
-| 10 | Higiene de modelos (H1–H10) | No hay ruta ni panel | `get_model_hygiene_stats` · CC, HA | **human-missing** |
+| 10 | Higiene de modelos (H1–H10) | `GET /tests/:id/hygiene` · pestaña «Higiene» del conjunto de modelos en `project.tsx` (`HygienePanel`) | `get_model_hygiene_stats` · CC, HA | parity (WS-F) |
 
 ### C. Revisión de grupos (triage)
 | # | Capacidad | Humano | Agente | Estado |
@@ -83,8 +83,8 @@ Estados posibles: **parity** · **agent-missing** · **human-missing** · **inte
 | 28 | Decidir una familia | `POST /families/:id/decision` con `proposalId` · `FamilyPanel` | `propose_family_decision` · CC (`acta`), T (staging), Chat | parity: el agente propone, el humano aprueba con muestreo |
 | 29 | Vista previa del efecto de una decisión | `POST /families/:id/decision-preview` | `get_family` da la mezcla de validez, pero no la vista previa | **agent-missing** (bajo) |
 | 30 | Excepción de instancia (con motivo) o su retiro | `POST`/`DELETE /families/:id/exceptions` · `FamilyDialogs` | No tiene: `propose_classification` sobre el grupo no crea una excepción | **agent-missing** |
-| 31 | Separar una instancia (detach) | `POST /families/:id/detach` existe, pero la UI no lo llama | `propose_group_action` con `move_groups`/`detach_clashes` | **human-missing** (UI) |
-| 32 | Fusionar familias | `POST /families/merge` existe, pero la UI no lo llama | `propose_group_action` con `merge_families`/`split_family` | **human-missing** (UI) |
+| 31 | Separar una instancia (detach) | `POST /families/:id/detach` · menú «⋯» del panel de familia › «Separar una ubicación…», con confirmación (`FamilyMoreMenu`) | `propose_group_action` con `move_groups`/`detach_clashes` | parity (WS-F) |
+| 32 | Fusionar familias | `POST /families/merge` · menú «⋯» del panel de familia › «Fusionar con otra familia…», con confirmación. Una familia separada puede volver a fusionarse (alias resuelto en `familyViews`) | `propose_group_action` con `merge_families`/`split_family` | parity (WS-F) |
 | 33 | Aplicar o rechazar una reagrupación propuesta | `POST /proposals/:id/regroup` `{testId, decision}`. **Bug:** `http.ts` llama `POST /proposals/:id/regroup/apply` con `{}`; la ruta no existe (regex anclada) y en modo live devuelve 404 | Crea la propuesta | **human-missing** (bug) |
 | 34 | Contar las decisiones de familia en los lotes | — | — | en curso (WS-A) |
 | 35 | Plantilla de incidencia por familia, tipo de incidencia, enlaces profundos a ACC | — | — | en curso (WS-B) |
@@ -138,7 +138,7 @@ Estados posibles: **parity** · **agent-missing** · **human-missing** · **inte
 |---|---|---|---|---|
 | 60 | Registrar una corrección o feedback | `POST /feedback`; decisión `correct` con `suggestRule` | `record_feedback` · CC, Chat | parity |
 | 61 | Ver correcciones | `GET /learning/corrections` · `rules.tsx` | `list_feedback` · CC, RC (incluye las correcciones hechas en la UI) | parity |
-| 62 | Ver el feedback que registró el agente (`record_feedback` desde el chat o CC) | `/learning/corrections` muestra solo decisiones | — | **human-missing** |
+| 62 | Ver el feedback que registró el agente (`record_feedback` desde el chat o CC) | `GET /learning/feedback?source=` · Reglas › pestaña «Feedback» con columna Origen (UI / Agente / UI (decisión)), sin nombres | `list_feedback` | parity (WS-F) |
 | 63 | Calibración de confianza por banda | `GET /learning/calibration` · `rules.tsx`, `detail-accordion` | No tiene | **agent-missing** (bajo) |
 | 64 | Catálogo de reglas | `GET /rules`, `/rules/:id` · `rules.tsx`, `rule.tsx` | `Read rules/` · CC, RC (Chat sin `Read`) | parity |
 | 65 | Redactar un cambio de reglas | Git/PR (regla 8) | `propose_rule_change` + `evaluate_ruleset` · RC vía `/curar-reglas` | intentional (regla 8: un humano hace el merge) |
@@ -148,10 +148,10 @@ Estados posibles: **parity** · **agent-missing** · **human-missing** · **inte
 ### K. Informes, notas de proyecto, auditoría y chat
 | # | Capacidad | Humano | Agente | Estado |
 |---|---|---|---|---|
-| 68 | Informes (semanal, resumen, higiene, digest) | `GET /reports` existe, pero `/reportes/*` redirige a proyectos | `generate_report` (archivo en `.coordinator/reports/`) · CC | **human-missing** |
-| 69 | Auditoría | `GET /audit` existe, pero `/auditoria/*` redirige | No tiene (el hook escribe el log y `.coordinator` está denegado) | **human-missing** |
-| 70 | Leer las notas de proyecto (convenciones) | `GET /projects/:id/notes` existe, sin llamador en la UI | `get_session_status.projectNotes` + `Read notes.md` · CC (Chat no) | **human-missing** (UI) |
-| 71 | Escribir notas de proyecto | `POST /projects/:id/notes` existe, sin llamador en la UI | `Edit notes.md`, solo tras confirmación · CC | **human-missing** (UI) |
+| 68 | Informes (semanal, resumen, higiene, digest) | Menú «Informe del ciclo» en la cabecera del conjunto (`project.tsx`): HTML para imprimir y `.md` desde `GET /reports`, más los archivos del agente (`GET /reports/files`, `/reports/files/:name`; HTML en iframe sin scripts) | `generate_report` (archivo en `.coordinator/reports/`) · CC | parity (WS-F). La página `/reportes` sigue quitada a propósito |
+| 69 | Auditoría | `GET /audit` existe, pero `/auditoria/*` redirige | No tiene (el hook escribe el log y `.coordinator` está denegado) | intentional (WS-F): la página Auditoría se quitó a propósito; el log sigue en el servidor |
+| 70 | Leer las notas de proyecto (convenciones) | `GET /projects/:id/notes` · sección plegable «Convenciones del proyecto» en `project.tsx` (`ProjectNotesPanel`) | `get_session_status.projectNotes` + `Read notes.md` · CC (Chat no) | parity (WS-F) |
+| 71 | Escribir notas de proyecto | `POST /projects/:id/notes` · «Agregar convención» con vista previa y casilla de confirmación; solo agrega líneas (fechadas, «confirmado por coordinador», sin nombre) | `Edit notes.md`, solo tras confirmación · CC | parity (WS-F) |
 | 72 | Asignatarios de ACC (personas) | `GET /projects/:id/assignees` · editor del lote | No tiene | intentional (regla 7: sin datos personales) |
 | 73 | Conversar con el agente | `POST /chat/messages`, SSE, `history`, `status` · `ChatPanel` | — | intentional: canal del humano al agente |
 | 74 | Cancelar el turno del chat | `POST /chat/:id/cancel`. **Bug:** `http.ts` envía `DELETE /chat/:id` y luego `DELETE /chat/:id/run`; ninguna existe | — | **human-missing** (bug) |
