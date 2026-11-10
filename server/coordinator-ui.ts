@@ -8,8 +8,9 @@ import { join } from "node:path";
 import type * as C from "./api/contract";
 import { applyApproved, approvalOptions, approveBatch, verifyBatchApproval, withBatchLock, type ApprovalDeps } from "./approval";
 import type { AssignedGroupCreate, CloseReason, ClosedGroupCreate } from "./aps/types";
-import { AGENT_ACTOR, type Coordinator, proposalSummary, type ReviewState } from "./coordinator";
-import { CLOSABLE, loadRules } from "./engine";
+import { AGENT_ACTOR, CHAT_AGENT_ACTOR, type Coordinator, proposalSummary, type ReviewState } from "./coordinator";
+import { CLOSABLE, loadRules, runEngine } from "./engine";
+import { affectedCounts, describeRuleChange, pairLabel, ruleLabelEs, VALIDITY_ES } from "./rule-effect";
 import { assertCode, inCode, modelLevelDiscipline, outCode, ruleMatches, SIN, suggestedToken, validCodes, type DisciplineRule } from "./disciplines";
 import { sanitizeModelText } from "./sanitize";
 import { PROBLEM_TYPES } from "../core/families";
@@ -157,7 +158,9 @@ export class CoordinatorUi {
 
   async agentStatus(): Promise<C.AgentStatus> {
     const events = await this.store.listAudit();
-    const agent = events.filter((e) => e.actor.type === "agent").pop();
+    // The chat panel's agent (actor agent-chat) has its own status line in the panel: its tool calls
+    // must not light the header chip "El agente está analizando…" for 2 minutes after the turn (G12).
+    const agent = events.filter((e) => e.actor.type === "agent" && e.actor.id !== CHAT_AGENT_ACTOR.id).pop();
     const run = events.filter((e) => e.action === "classification.run").pop();
     return {
       lastActivityAt: agent?.at ?? null,
@@ -1649,6 +1652,8 @@ export class CoordinatorUi {
     return rs.source.classification.rules.map((r) => ({
       id: r.id,
       name: r.name,
+      nameEs: ruleLabelEs(r, rs),
+      outcomeEs: `${pairLabel(r, rs)} → ${VALIDITY_ES[r.then.validity] ?? r.then.validity}`,
       scope: JSON.stringify(r.when).slice(0, 120),
       effect: "validity" as const,
       state: "active" as const,
@@ -1688,6 +1693,46 @@ export class CoordinatorUi {
     };
   }
 
+  /** Plain-language effect + impact on the current test, cached per (proposal, stage, rules hash). */
+  private readonly ruleEffectCache = new Map<string, { effect: string[]; impact?: C.RuleImpact }>();
+  private async ruleEffect(p: ProposalRecord, patch: string, stage: string): Promise<{ effect: string[]; impact?: C.RuleImpact }> {
+    const pub = this.core.rulePublisher;
+    const ctx = await this.store.getContext();
+    const tests = await this.store.listTests();
+    const test = (ctx?.testKey ? tests.find((t) => t.testKey === ctx.testKey) : undefined) ?? tests.filter((t) => t.testKey).pop();
+    let current = "";
+    try {
+      current = loadRules(pub.rulesDir).hash;
+    } catch {
+      // rules/ does not load: no effect
+    }
+    const key = `${p.id}|${stage}|${sha256(patch)}|${current}|${test?.testKey ?? ""}`;
+    const hit = this.ruleEffectCache.get(key);
+    if (hit) return hit;
+    const dirs = await pub.effectDirs(p, patch).catch(() => undefined);
+    if (!dirs) return { effect: [] };
+    const base = loadRules(dirs.baseDir);
+    const cand = loadRules(dirs.candDir);
+    const effect = describeRuleChange(base, cand);
+    let impact: C.RuleImpact | undefined;
+    if (test) {
+      try {
+        const raw = await this.core.loadRaw(test);
+        const run = async (rules: typeof base) =>
+          runEngine({ clashes: raw.clashes, elements: raw.elements, documents: raw.documents, config: this.core.config, rules, levelMap: this.core.config.levelMap, projectDisciplines: await this.core.disciplines.load(test.projectId) });
+        const before = await run(base);
+        const after = await run(cand);
+        const n = affectedCounts(before, after);
+        impact = { testKey: test.testKey, version: test.modelSetVersion, ...n };
+      } catch {
+        // no cached raw data for that test: effect sentences only
+      }
+    }
+    const out = { effect, ...(impact ? { impact } : {}) };
+    this.ruleEffectCache.set(key, out);
+    return out;
+  }
+
   async ruleSuggestions(): Promise<C.RuleSuggestion[]> {
     const { readFile } = await import("node:fs/promises");
     const ps = await this.store.listProposals((p) => p.kind === "rule_change");
@@ -1695,6 +1740,9 @@ export class CoordinatorUi {
     for (const p of ps) {
       if (p.payload.kind !== "rule_change") continue;
       const patch = await readFile(p.payload.patchFile, "utf8").catch(() => "");
+      const stage = await this.core.rulePublisher.stage(p);
+      const pubRec = await this.core.rulePublisher.latest(p.id);
+      const { effect, impact } = await this.ruleEffect(p, patch, stage);
       const raw = p.payload.evaluation;
       const ev = {
         baselineMacroF1: raw.baselineMacroF1 ?? (raw.baselineRubricScore ?? 0) / 100,
@@ -1713,17 +1761,35 @@ export class CoordinatorUi {
         evaluation: ev,
         feedbackCount: p.payload.feedbackIds.length,
         ...(p.payload.evidence ? { evidence: p.payload.evidence } : {}),
-        state: p.state === "approved" || p.state === "applied" ? "approved" : p.state === "rejected" || p.state === "withdrawn" ? "rejected" : "pending",
+        state: stage,
         createdAt: p.createdAt,
+        ...(effect.length ? { effect } : {}),
+        ...(impact ? { impact } : {}),
+        ...(pubRec
+          ? {
+              publication: {
+                id: pubRec.id,
+                at: pubRec.publishedAt,
+                by: pubRec.publishedBy.name,
+                proof: pubRec.proof,
+                files: pubRec.files.map((f) => `rules/${f.file}`),
+                ...(pubRec.reverted ? { reverted: { at: pubRec.reverted.at, by: pubRec.reverted.by.name } } : {}),
+              },
+            }
+          : {}),
       });
     }
     return out;
   }
 
-  /** Human decision on a rule suggestion. Approval does NOT edit rules/: a human merges the patch with git. */
+  /**
+   * Human decision on a rule suggestion. Approval does NOT edit rules/: the suggestion becomes
+   * "aprobada · pendiente de publicar"; "Publicar" (passkey, evaluation re-run) writes rules/.
+   */
   async decideRuleSuggestion(id: string, decision: "approve" | "reject", user: HumanUser): Promise<C.RuleSuggestion> {
     const p = await this.store.getProposal(id);
     if (!p || p.kind !== "rule_change") throw new CoordError("not_found", `Sugerencia ${id} no existe`);
+    if (p.state !== "draft" && p.state !== "pending_review") throw new CoordError("invalid_state", `La sugerencia ${id} ya fue decidida.`);
     await this.store.transitionProposal(id, decision === "approve" ? "approved" : "rejected", user.name);
     if (p.payload.kind === "rule_change") {
       const fb = new Set(p.payload.feedbackIds);
@@ -1738,6 +1804,23 @@ export class CoordinatorUi {
       }
     }
     await this.store.audit({ actor: { type: "user", id: user.id, name: user.name }, action: decision === "approve" ? "rule.approved" : "rule.rejected", targetIds: [id] });
+    return (await this.ruleSuggestions()).find((s) => s.id === id)!;
+  }
+
+  /** G15 step 1 of Publicar / Revertir: WebAuthn options bound to the exact files written. */
+  async rulePublishOptions(id: string, op: "publish" | "revert"): Promise<C.RulePublishOptions> {
+    return this.core.rulePublisher.options(id, op);
+  }
+
+  /** G15 Publicar (human, passkey; demo only in fixtures): re-evaluates, writes rules/, backup + audit. */
+  async publishRuleSuggestion(id: string, req: C.RulePublishRequest, user: HumanUser): Promise<C.RuleSuggestion> {
+    await this.core.rulePublisher.publish(id, req, user);
+    return (await this.ruleSuggestions()).find((s) => s.id === id)!;
+  }
+
+  /** G15 Revertir: restores the backup if rules/ still holds what was published. */
+  async revertRuleSuggestion(id: string, req: C.RulePublishRequest, user: HumanUser): Promise<C.RuleSuggestion> {
+    await this.core.rulePublisher.revert(id, req, user);
     return (await this.ruleSuggestions()).find((s) => s.id === id)!;
   }
 

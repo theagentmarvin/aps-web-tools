@@ -140,7 +140,7 @@ describe("chat service with a fake claude", () => {
     expect(ev[0]).toEqual({ type: "status", phase: "starting" });
     expect(ev.filter((e) => e.type === "delta").map((e) => (e as { text: string }).text).join("")).toContain("Hola, revisé");
     const props = ev.filter((e) => e.type === "proposal");
-    expect(props).toEqual([{ type: "proposal", id: p.proposalId, kind: "group_action", summary: expect.stringContaining("fusionar") }]);
+    expect(props).toEqual([{ type: "proposal", id: p.proposalId, kind: "group_action", summary: expect.stringContaining("fusionar"), card: expect.objectContaining({ id: p.proposalId, kind: "group_action", action: "regroup" }) }]);
     expect(ev.some((e) => e.type === "tool" && e.name === "propose_group_action")).toBe(true);
     const done = ev.at(-1)!;
     expect(done).toMatchObject({ type: "done", messageId, costUsd: 0.0123 });
@@ -153,6 +153,8 @@ describe("chat service with a fake claude", () => {
     const h = await chat.history(testKey, HUMAN);
     expect(h.messages.map((m) => m.role)).toEqual(["user", "assistant"]);
     expect(h.messages[1]!.proposalIds).toEqual([p.proposalId]);
+    // G12: the history resolves each id to a card (never from the stored text).
+    expect(h.messages[1]!.cards).toEqual([expect.objectContaining({ id: p.proposalId, action: "regroup", state: "pending_review" })]);
     expect((await chat.history(testKey, OTHER)).messages).toEqual([]);
     expect(() => chat.subscribe(messageId, OTHER, () => undefined)).toThrow(/no existe/);
     // Replay after the end.
@@ -200,7 +202,8 @@ describe("chat service with a fake claude", () => {
     const done = collect(chat, messageId, u);
     await new Promise<void>((r) => {
       const off = chat.subscribe(messageId, u, (e) => {
-        if (e.type === "delta") {
+        // The narration filter holds short text until its segment ends: wait for the run to start.
+        if (e.type === "status" && e.phase === "thinking") {
           queueMicrotask(() => off());
           r();
         }

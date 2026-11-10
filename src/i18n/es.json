@@ -751,7 +751,7 @@
     "calibrationProposals": "Propuestas",
     "calibrationAccepted": "Aceptadas sin cambios",
     "spotCheckRate": "Correcciones en revisiones aleatorias: {pct}",
-    "readOnlyNote": "Las reglas se editan en el repositorio (con el agente en Claude Code). Esta vista es de solo lectura.",
+    "readOnlyNote": "Las reglas cambian con sugerencias del agente (/curar-reglas): se aprueban y se publican en Sugerencias, con passkey.",
     "description": "Descripción",
     "conditions": "Condiciones",
     "proposedChange": "Cambio propuesto",
@@ -771,7 +771,32 @@
       "unsafe": "Cierres inseguros",
       "scenarios": "Escenarios de evaluación"
     },
-    "evidenceOnlyHeader": "Respaldada por evaluación en datos reales · aún sin correcciones de coordinadores"
+    "evidenceOnlyHeader": "Respaldada por evaluación en datos reales · aún sin correcciones de coordinadores",
+    "stage": {
+      "pending": "Propuesta",
+      "approved": "Aprobada · pendiente de publicar",
+      "published": "Publicada",
+      "reverted": "Revertida",
+      "rejected": "Rechazada"
+    },
+    "publish": "Publicar",
+    "publishAgain": "Publicar de nuevo",
+    "revert": "Revertir",
+    "publishing": "Reevaluando y publicando…",
+    "publishedToast": "Regla publicada: el motor la usa desde ahora.",
+    "revertedToast": "Regla revertida: se restauró la versión anterior.",
+    "publishHint": "Publicar vuelve a evaluar las reglas (no se permiten regresiones), pide tu passkey y escribe el archivo con copia de respaldo.",
+    "confirmPublish": "¿Publicar «{title}»? Se reevalúa contra las reglas actuales, se pide tu passkey y se escriben las reglas (queda una copia para revertir).",
+    "confirmRevert": "¿Revertir «{title}»? Se pide tu passkey y se restaura la versión anterior de las reglas.",
+    "publishedBy": "Publicada por {by} · {at}",
+    "revertedBy": "Revertida por {by} · {at}",
+    "approvedNote": "Aprobada: aún no rige. «Publicar» la aplica al motor.",
+    "technicalDetail": "Ver detalle técnico",
+    "effectTitle": "Qué cambia",
+    "impact": "Afecta {families} grupos ({groups} ubicaciones, {clashes} interferencias) en el test actual (v{version}).",
+    "impactNone": "No cambia ninguna interferencia del test actual (v{version}).",
+    "outcome": "Resultado",
+    "demoProof": "Modo demostración: se publica sin passkey."
   },
   "reports": {
     "chart": {
@@ -1366,7 +1391,10 @@
       "family_decision": "Decisión de grupo",
       "regroup": "Reagrupar",
       "question": "Pregunta",
-      "other": "Propuesta"
+      "other": "Propuesta",
+      "classification": "Decisión",
+      "issue_draft": "Incidencia",
+      "status_change": "Cambio de estado"
     },
     "targets_one": "{count} objetivo",
     "targets_other": "{count} objetivos",
@@ -1402,7 +1430,32 @@
     "noTarget": "La propuesta aún no aparece en la prueba; actualiza las propuestas y vuelve a intentarlo.",
     "suggestions": "Sugerencias",
     "contextShort": "Contexto:",
-    "inputHint": "Enter envía · Shift+Enter nueva línea"
+    "inputHint": "Enter envía · Shift+Enter nueva línea",
+    "cardAction": {
+      "create_issue": "Crear incidencia",
+      "close": "Cerrar",
+      "close_not_issue": "Cerrar (no es problema)",
+      "mark_reviewed": "Marcar revisada",
+      "hygiene_issue": "Incidencia de higiene",
+      "escalate": "Escalar a revisión humana",
+      "request_info": "Pedir información",
+      "reopen": "Reabrir",
+      "regroup": "Reagrupar",
+      "issue": "Redactar incidencia",
+      "classify": "Clasificar",
+      "other": "Propuesta"
+    },
+    "cardTarget": {
+      "family": "Grupo: {label}",
+      "group": "Ubicación: {label}",
+      "clash": "Interferencia {label}"
+    },
+    "cardClashes_one": "{count} interferencia",
+    "cardClashes_other": "{count} interferencias",
+    "cardGroups_one": "{count} ubicación",
+    "cardGroups_other": "{count} ubicaciones",
+    "selectTarget": "Seleccionar en el árbol",
+    "cardQuestion": "Pregunta del agente"
   },
   "toolbar": {
     "label": "Barra de herramientas del espacio de coordinación",

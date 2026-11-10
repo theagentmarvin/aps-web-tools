@@ -11,6 +11,7 @@ import { sanitizeModelText, sanitizeMultilineText } from "../sanitize";
 import { bareProjectId, CoordError, log, nowIso } from "../util";
 import { loadChatAgent, type ChatAgentDef } from "./agent";
 import { authStatus, ChatRunError, childEnv, claudeArgs, mcpConfigJson, resolveClaudeBin, runClaude, type AuthStatus, type ResolvedBin } from "./bridge";
+import { chatCard } from "./cards";
 import { chatPrompt, contextBlock } from "./context";
 import { ChatStore, type StoredChatSession } from "./store";
 
@@ -97,7 +98,15 @@ export class ChatService {
   async history(testKey: string, user: { id: string }): Promise<C.ChatHistory> {
     const { test, key, stored } = await this.session(testKey, user);
     const running = this.running.get(key);
-    return { sessionId: stored?.sessionId ?? "", testKey: test.testKey, messages: stored?.messages ?? [], ...(running ? { running } : {}) };
+    // Cards are resolved now (current state of each proposal / question), never stored text.
+    const cache = new Map();
+    const messages: C.ChatHistoryMessage[] = [];
+    for (const m of stored?.messages ?? []) {
+      const ids = [...(m.proposalIds ?? []).map((id) => [id, "proposal"] as const), ...(m.questionIds ?? []).map((id) => [id, "question"] as const)];
+      const cards = (await Promise.all(ids.map(([id, kind]) => chatCard(this.coord, id, kind, cache).catch(() => undefined)))).filter((c): c is C.ChatCard => !!c);
+      messages.push(cards.length ? { ...m, cards } : m);
+    }
+    return { sessionId: stored?.sessionId ?? "", testKey: test.testKey, messages, ...(running ? { running } : {}) };
   }
 
   /** POST /chat/:messageId/cancel: SIGINT, then SIGTERM after 5 s (bridge). */
@@ -192,12 +201,14 @@ export class ChatService {
               const q = await this.coord.questions.get(c.id);
               if (!q) return;
               created.push({ id: c.id, kind: "question" });
-              this.emit(run, { type: "question", id: c.id, question: sanitizeModelText(q.question, 300) });
+              const card = await chatCard(this.coord, c.id, "question").catch(() => undefined);
+              this.emit(run, { type: "question", id: c.id, question: sanitizeModelText(q.question, 300), ...(card ? { card } : {}) });
             } else {
               const p = await this.coord.store.getProposal(c.id).catch(() => undefined);
               if (!p) return;
               created.push({ id: c.id, kind: "proposal" });
-              this.emit(run, { type: "proposal", id: c.id, kind: p.kind, summary: sanitizeModelText(proposalSummary(p), 200) });
+              const card = await chatCard(this.coord, c.id, "proposal").catch(() => undefined);
+              this.emit(run, { type: "proposal", id: c.id, kind: p.kind, summary: sanitizeModelText(proposalSummary(p), 200), ...(card ? { card } : {}) });
             }
           })().catch(() => undefined),
         );

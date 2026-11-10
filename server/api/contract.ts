@@ -1027,7 +1027,7 @@ export interface FeedbackInput {
 
 export type RuleEffect = "validity" | "priority" | "owner" | "grouping";
 export type RuleState = "active" | "draft" | "disabled";
-export interface RuleSummary { id: string; name: string; scope: string; effect: RuleEffect; state: RuleState; hits7d: number; acceptance: number | null; corrections: number; updatedAt: string; file: string }
+export interface RuleSummary { id: string; name: string; /** Spanish name (YAML nameEs, label table or derived). */ nameEs?: string; /** Plain-language outcome ("CLI×EST viga → Conflicto"). */ outcomeEs?: string; scope: string; effect: RuleEffect; state: RuleState; hits7d: number; acceptance: number | null; corrections: number; updatedAt: string; file: string }
 export interface RuleDetail extends RuleSummary {
   description: string;
   conditions: string[];
@@ -1066,8 +1066,15 @@ export interface RuleSuggestion {
   };
   /** Number of coordinator feedback records backing the proposal (0 when backed by evidence only). */
   feedbackCount?: number;
-  state: "pending" | "approved" | "rejected";
+  /** propuesta → aprobada (pendiente de publicar) → publicada (→ revertida). */
+  state: "pending" | "approved" | "rejected" | "published" | "reverted";
   createdAt: string;
+  /** Plain-language effect sentences (G15), shown before the technical detail. */
+  effect?: string[];
+  /** Impact on the current cached test with the candidate rules. */
+  impact?: RuleImpact;
+  /** Latest publication (published or reverted). */
+  publication?: RulePublicationView;
 }
 export interface CorrectionRow {
   decisionId: string;
@@ -1255,9 +1262,9 @@ export type ChatEvent =
   /** The agent is calling a tool (chip "consultando G-…"). */
   | { type: "tool"; name: string; target?: string }
   /** A proposal the agent created, extracted by the server from the tool result. */
-  | { type: "proposal"; id: string; kind: string; summary: string }
+  | { type: "proposal"; id: string; kind: string; summary: string; card?: ChatCard }
   /** A question the agent asked (ask_coordinator). */
-  | { type: "question"; id: string; question: string }
+  | { type: "question"; id: string; question: string; card?: ChatCard }
   | { type: "done"; messageId: string; costUsd?: number; durationMs: number; stoppedBy?: "timeout" | "tool_cap" | "proposal_cap" | "budget" }
   | { type: "error"; code: "claude_not_found" | "not_logged_in" | "busy" | "cancelled" | "timeout" | "mcp_unavailable" | "rate_limited" | "failed"; message: string };
 /** GET /chat/status: pre-flight (cached 5 min). Never contains the account email. */
@@ -1280,6 +1287,8 @@ export interface ChatHistoryMessage {
   context?: ChatContext;
   proposalIds?: string[];
   questionIds?: string[];
+  /** Cards of proposalIds / questionIds, resolved from the store when the history is read (G12). */
+  cards?: ChatCard[];
   costUsd?: number;
   durationMs?: number;
   error?: { code: string; message: string };
@@ -1313,4 +1322,57 @@ export interface IssueSettings {
   updatedBy?: string;
   /** Agent suggestions waiting for a human decision. */
   pendingProposals: Array<{ id: string; summary: string; rationale: string; createdAt: string; payload: Record<string, unknown> }>;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// G15 rule publication (human-only; agents read the stage through list_proposals).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface RuleImpact {
+  testKey: string;
+  version: number;
+  /** Grupos (families) / ubicaciones (groups) / interferencias whose validity changes. */
+  families: number;
+  groups: number;
+  clashes: number;
+}
+export interface RulePublicationView {
+  id: string;
+  at: string;
+  by: string;
+  proof: "webauthn" | "demo";
+  files: string[];
+  reverted?: { at: string; by: string };
+}
+/** GET /rule-suggestions/:id/publish-options?op=publish|revert → WebAuthn options bound to the files written. */
+export interface RulePublishOptions {
+  nonce: string;
+  payloadHash: string;
+  options: unknown;
+}
+/** POST /rule-suggestions/:id/publish | /revert (human, CSRF): passkey assertion, or demo in fixtures mode. */
+export interface RulePublishRequest {
+  webauthn?: { nonce: string; origin: string; response: unknown };
+  demo?: boolean;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// G12 chat cards: what a proposal / question card shows (server data, never model text).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface ChatCard {
+  id: string;
+  /** Proposal kind (classification, family_decision, status_change, issue_draft, group_action…) or "question". */
+  kind: string;
+  /** Engine action: create_issue | close | close_not_issue | mark_reviewed | hygiene_issue | escalate | reopen | regroup | issue … */
+  action?: string;
+  validity?: Validity;
+  /** Issue title / regroup summary / question text (sanitised). */
+  title?: string;
+  /** Proposal state or question state. */
+  state?: string;
+  /** What the card acts on: grupo (family) or ubicación (group), with its clash count. */
+  target?: { kind: "family" | "group" | "clash"; id: string; label: string; clashCount: number; groupCount?: number };
+  /** Questions: the full question so the card can be answered in place. */
+  question?: CoordinatorQuestion;
 }

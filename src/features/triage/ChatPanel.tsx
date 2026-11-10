@@ -9,10 +9,13 @@ import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "
 import { useI18n, useT, type TFunction } from "~/i18n";
 import { useApi } from "~/lib/api";
 import type { ChatContext, ChatErrorCode, ChatMessage, ChatProposal, ChatSelectedElement, ChatStatus } from "~/lib/api/types";
+import { VALIDITY_KEY } from "~/lib/labels";
 import { useToast } from "~/lib/components/Toast";
 import { IconChevronDown, IconSparkle } from "~/lib/components/icons";
+import { AGENT_STATUS_REFRESH } from "~/lib/components/shell-widgets";
 import { readJson, readString, writeJson, writeString } from "~/lib/storage";
 import { useTriageContext } from "./actions";
+import { QuestionAnswer } from "./QuestionAnswer";
 import { useTriage, type TriageStore } from "./store";
 import { onViewerSelection, readViewerSelection } from "./viewer-selection";
 
@@ -278,6 +281,8 @@ export function ChatPanel() {
       setStreaming(null);
       setStatus(null);
       abort.current = null;
+      // G12: the turn ended (done, error or cancel): the header chip re-reads the agent status now.
+      window.dispatchEvent(new Event(AGENT_STATUS_REFRESH));
     }
   }
 
@@ -574,6 +579,17 @@ function PromptMenu({ prompts, disabled, onPick }: { prompts: string[]; disabled
   );
 }
 
+/** G12: "Crear incidencia · Conflicto" — the action plus the validity label as the UI names it. */
+export function cardSummary(t: TFunction, p: ChatProposal): string {
+  const c = p.card;
+  if (!c) return p.summary;
+  if (c.kind === "question") return c.title ?? p.summary;
+  const action = c.action && CARD_ACTIONS.has(c.action) ? t(`chat.cardAction.${c.action}` as Parameters<TFunction>[0]) : t("chat.cardAction.other");
+  return [action, c.validity ? t(VALIDITY_KEY[c.validity]) : ""].filter(Boolean).join(" · ");
+}
+const CARD_ACTIONS = new Set(["create_issue", "close", "close_not_issue", "mark_reviewed", "hygiene_issue", "escalate", "request_info", "reopen", "regroup", "issue", "classify"]);
+const KIND_LABELS = new Set(["decision", "family_decision", "regroup", "question", "classification", "issue_draft", "status_change"]);
+
 /** A proposal from the agent: Aplicar uses the EXISTING human paths; nothing applies without a click. */
 function ProposalCard({ proposal }: { proposal: ChatProposal }) {
   const t = useT();
@@ -583,6 +599,15 @@ function ProposalCard({ proposal }: { proposal: ChatProposal }) {
   const [state, setState] = useState<"open" | "confirm" | "applied" | "dismissed">("open");
   const [resolved, setResolved] = useState<string | null>(null);
   const testId = useTriage(store, (s) => s.payload?.test.id ?? "");
+  const card = proposal.card;
+  const isQuestion = proposal.kind === "question";
+  // Questions are answered in place with the same flow as the panel callout (store copy wins once loaded).
+  const questionId = isQuestion ? (proposal.questionId ?? proposal.id) : "";
+  const storedQuestion = useTriage(store, (s) => (questionId ? s.questions.get(questionId) : undefined));
+  useEffect(() => {
+    if (card?.question) store.upsertQuestion(card.question);
+  }, [card?.question, store]);
+  const question = storedQuestion ?? card?.question;
   const local =
     proposal.familyId && proposal.kind === "family_decision"
       ? `f:${proposal.familyId}`
@@ -596,7 +621,7 @@ function ProposalCard({ proposal }: { proposal: ChatProposal }) {
   const target = local ?? resolved;
   // The event has no ids beyond the proposal's: look it up once (server data, never the model's text).
   useEffect(() => {
-    if (local || !testId || proposal.kind === "regroup") return;
+    if (local || !testId || proposal.kind === "regroup" || isQuestion) return;
     let live = true;
     api.listProposals({ testId, ids: [proposal.id], limit: 1 }).then(
       (page) => {
@@ -610,7 +635,11 @@ function ProposalCard({ proposal }: { proposal: ChatProposal }) {
     return () => {
       live = false;
     };
-  }, [api, local, proposal.id, proposal.kind, store, testId]);
+  }, [api, local, proposal.id, proposal.kind, store, testId, isQuestion]);
+  // Select the target in the tree (the chat tab stays open).
+  const select = () => {
+    if (target) store.reveal(target);
+  };
   // "Ver": back to the Detalle tab, focused on the item.
   const see = () => {
     if (!target) return;
@@ -639,43 +668,74 @@ function ProposalCard({ proposal }: { proposal: ChatProposal }) {
     store.reveal(target);
     if (proposal.kind === "family_decision" && proposal.familyId) store.setDialog({ type: "familyApprove", familyId: proposal.familyId });
     else if (proposal.kind === "decision" || proposal.kind === "classification") actions.accept(target);
-    // question: revealing the ubicación shows its callout.
     setState("applied");
   }
 
-  const kindLabel = t(`chat.kind.${["decision", "family_decision", "regroup", "question"].includes(proposal.kind) ? proposal.kind : "other"}` as Parameters<TFunction>[0]);
+  const kindLabel = t(`chat.kind.${KIND_LABELS.has(proposal.kind) ? proposal.kind : "other"}` as Parameters<TFunction>[0]);
+  const tg = card?.target;
+  const targetLine = tg
+    ? [t(`chat.cardTarget.${tg.kind}` as Parameters<TFunction>[0], { label: tg.label }), tg.groupCount && tg.groupCount > 1 ? t("chat.cardGroups", { count: tg.groupCount }) : "", t("chat.cardClashes", { count: tg.clashCount })].filter(Boolean).join(" · ")
+    : null;
+  const detail = card && card.kind !== "question" && card.title ? card.title : null;
   return (
     <div className={`mt-2 rounded border px-2 py-1.5 text-xs ${state === "dismissed" ? "border-gray-200 bg-gray-50 text-gray-400" : "border-violet-300 bg-violet-50"}`}>
       <p className="flex items-center gap-1.5">
-        <span className="rounded bg-violet-600 px-1 text-[10px] font-medium text-white">{kindLabel}</span>
-        {proposal.targetCount !== undefined && <span className="text-[11px] text-gray-500">{t("chat.targets", { count: proposal.targetCount })}</span>}
+        <span className="rounded bg-violet-600 px-1 text-[10px] font-medium text-white">{isQuestion ? t("chat.cardQuestion") : kindLabel}</span>
+        <span className="truncate font-mono text-[10px] text-gray-400" title={proposal.id}>
+          {proposal.id}
+        </span>
       </p>
-      <p className="mt-1 text-gray-900">{proposal.summary}</p>
-      {state === "confirm" && <p className="mt-1 font-medium text-amber-900">{t("chat.regroupConfirm", { count: proposal.targetCount ?? 0 })}</p>}
-      {state === "applied" ? (
-        <p className="mt-1 text-green-800">{t("chat.applied")}</p>
-      ) : state === "dismissed" ? (
-        <p className="mt-1">{t("chat.dismissed")}</p>
+      <p className="mt-1 font-medium text-gray-900" lang="es">
+        {cardSummary(t, proposal)}
+      </p>
+      {detail && (
+        <p className="truncate text-gray-700" title={detail} lang="es">
+          {detail}
+        </p>
+      )}
+      {targetLine && (
+        <button type="button" onClick={select} disabled={!target} title={t("chat.selectTarget")} className="mt-0.5 block max-w-full truncate text-left text-brand hover:underline disabled:text-gray-500 disabled:no-underline">
+          {targetLine}
+        </button>
+      )}
+      {!targetLine && !card && proposal.targetCount !== undefined && <p className="text-[11px] text-gray-500">{t("chat.targets", { count: proposal.targetCount })}</p>}
+      {isQuestion && question ? (
+        state === "dismissed" ? (
+          <p className="mt-1">{t("chat.dismissed")}</p>
+        ) : (
+          <QuestionAnswer q={question} />
+        )
       ) : (
-        <div className="mt-1.5 flex gap-1.5">
-          <button
-            type="button"
-            onClick={() => void apply()}
-            disabled={!target && proposal.kind !== "regroup"}
-            title={!target && proposal.kind !== "regroup" ? t("chat.noTarget") : undefined}
-            className="rounded bg-brand px-2 py-0.5 font-medium text-white hover:bg-brand-light disabled:opacity-50"
-          >
-            {state === "confirm" ? t("chat.confirm") : t("chat.apply")}
-          </button>
-          <button type="button" onClick={() => setState("dismissed")} className="rounded border border-brand-muted/30 px-2 py-0.5 text-gray-700">
-            {t("chat.dismiss")}
-          </button>
-          {target && (
-            <button type="button" onClick={see} className="rounded px-2 py-0.5 text-brand hover:underline">
-              {t("chat.see")}
-            </button>
+        <>
+          {state === "confirm" && <p className="mt-1 font-medium text-amber-900">{t("chat.regroupConfirm", { count: proposal.targetCount ?? 0 })}</p>}
+          {state === "applied" ? (
+            <p className="mt-1 text-green-800">{t("chat.applied")}</p>
+          ) : state === "dismissed" ? (
+            <p className="mt-1">{t("chat.dismissed")}</p>
+          ) : (
+            <div className="mt-1.5 flex gap-1.5">
+              {!isQuestion && (
+                <button
+                  type="button"
+                  onClick={() => void apply()}
+                  disabled={!target && proposal.kind !== "regroup"}
+                  title={!target && proposal.kind !== "regroup" ? t("chat.noTarget") : undefined}
+                  className="rounded bg-brand px-2 py-0.5 font-medium text-white hover:bg-brand-light disabled:opacity-50"
+                >
+                  {state === "confirm" ? t("chat.confirm") : t("chat.apply")}
+                </button>
+              )}
+              <button type="button" onClick={() => setState("dismissed")} className="rounded border border-brand-muted/30 px-2 py-0.5 text-gray-700">
+                {t("chat.dismiss")}
+              </button>
+              {target && (
+                <button type="button" onClick={see} className="rounded px-2 py-0.5 text-brand hover:underline">
+                  {t("chat.see")}
+                </button>
+              )}
+            </div>
           )}
-        </div>
+        </>
       )}
     </div>
   );

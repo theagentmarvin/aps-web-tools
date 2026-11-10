@@ -9,6 +9,7 @@ import { homedir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import type * as C from "../api/contract";
 import { CHAT_AGENT, inlineAgentsJson, type ChatAgentDef } from "./agent";
+import { NarrationFilter } from "./narration";
 
 export const CHAT_TIMEOUT_MS = 120_000;
 export const CHAT_TOOL_CAP = 25;
@@ -213,6 +214,11 @@ export function runClaude(opts: {
       return;
     }
     const res: RunResult = { text: "", created: [] };
+    // G12 safety net: English or narrating preambles before a tool call are not shown.
+    const narration = new NarrationFilter((t) => {
+      res.text += t;
+      opts.onEvent({ type: "delta", text: t });
+    });
     const tools = new Map<string, string>();
     let toolCalls = 0;
     let stderr = "";
@@ -262,20 +268,18 @@ export function runClaude(opts: {
           if (ev.rate_limit_info?.status && ev.rate_limit_info.status !== "allowed") opts.onEvent({ type: "status", phase: "rate_limited", ...(ev.rate_limit_info.resetsAt ? { detail: String(ev.rate_limit_info.resetsAt) } : {}) });
           break;
         case "stream_event": {
+          if (ev.parent_tool_use_id) break;
           const d = ev.event?.delta;
-          // A new text block after earlier text (e.g. around a tool call): keep the paragraphs apart.
-          if (!ev.parent_tool_use_id && ev.event?.type === "content_block_start" && ev.event.content_block?.type === "text" && res.text && !res.text.endsWith("\n")) {
-            res.text += "\n\n";
-            opts.onEvent({ type: "delta", text: "\n\n" });
-          }
-          if (!ev.parent_tool_use_id && ev.event?.type === "content_block_delta" && d?.type === "text_delta" && typeof d.text === "string") {
-            res.text += d.text;
-            opts.onEvent({ type: "delta", text: d.text });
-          }
+          const t = ev.event?.type;
+          // Segment boundaries (the filter keeps paragraphs apart): a tool call next → the held text was a preamble.
+          if (t === "content_block_start") narration.end(ev.event.content_block?.type === "tool_use");
+          else if (t === "message_delta" && d?.stop_reason) narration.end(d.stop_reason === "tool_use");
+          else if (t === "content_block_delta" && d?.type === "text_delta" && typeof d.text === "string") narration.push(d.text);
           break;
         }
         case "assistant": {
           if (ev.error === "authentication_failed") notLogged = true;
+          if (!ev.parent_tool_use_id && (ev.message?.content ?? []).some((b: { type?: string }) => b?.type === "tool_use")) narration.end(true);
           for (const b of ev.message?.content ?? []) {
             if (b?.type !== "tool_use" || typeof b.name !== "string") continue;
             tools.set(String(b.id), b.name);
@@ -301,6 +305,7 @@ export function runClaude(opts: {
           break;
         case "result":
           gotResult = true;
+          narration.end(false);
           if (typeof ev.total_cost_usd === "number") res.costUsd = ev.total_cost_usd;
           if (ev.is_error) {
             resultErr = String(ev.result ?? ev.subtype ?? "error");
@@ -331,6 +336,7 @@ export function runClaude(opts: {
     );
     child.on("close", (code) => {
       if (buf.trim()) handle(buf.trim());
+      narration.end(false);
       if (cancelled && !mcpDown) return end(new ChatRunError("cancelled", "Cancelado."));
       if (mcpDown) return end(new ChatRunError("mcp_unavailable", "No se pudo iniciar el servidor de coordinación."));
       if (notLogged) return end(new ChatRunError("not_logged_in", "Claude Code no tiene sesión iniciada. Abre una terminal y ejecuta `claude`, luego `/login`."));

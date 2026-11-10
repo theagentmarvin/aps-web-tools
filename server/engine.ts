@@ -61,6 +61,11 @@ let rulesCache: { rs: CompiledRuleSet; at: number } | undefined;
 /** CompiledRuleSet.warnings are logged once per process (stderr). */
 let warnedRules = false;
 
+/** Drop the cached rule set (after rules/ is published or reverted at runtime). */
+export function clearRulesCache(): void {
+  rulesCache = undefined;
+}
+
 /** Compile rules/ (cached for 5 s so repeated calls in one request are cheap; edits are picked up). */
 export function loadRules(dir?: string): CompiledRuleSet {
   if (!dir && rulesCache && Date.now() - rulesCache.at < 5000) return rulesCache.rs;

@@ -874,7 +874,7 @@ export const TOOLS: ToolSpec[] = [
   { family: "learning", name: "evaluate_ruleset", title: "Evaluate ruleset", minLevel: 0, annotations: { ...RO_LOCAL, idempotentHint: true }, input: EvaluateRulesetInput,
     description: "Run the EV scenarios, fixture checks and feedback replay for current rules or a candidate patch; returns metric deltas and regressions." },
   { family: "learning", name: "propose_rule_change", title: "Propose rule change", minLevel: 1, annotations: LOCAL_WRITE, input: ProposeRuleChangeInput,
-    description: "Store a rules/ patch as a rule_change proposal. Never edits rules/; a human merges." },
+    description: "Store a rules/ patch as a rule_change proposal. Never edits rules/; a human approves and publishes it in the UI (Reglas, passkey)." },
   { family: "learning", name: "list_disciplines", title: "List discipline mappings", minLevel: 0, annotations: RO_LOCAL, input: ListDisciplinesInput,
     description: "Project discipline mappings (assignments, ordered naming rules, codes) and per-document resolution of a cached test (source: assignment|rule|matrix|elements|unassigned, share, ruleId). SIN = Sin asignar." },
   { family: "learning", name: "propose_discipline_mapping", title: "Propose discipline mapping", minLevel: 1, annotations: LOCAL_WRITE, input: ProposeDisciplineMappingInput,

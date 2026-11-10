@@ -726,6 +726,28 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
     async ({ params, body, user }) => ui.decideRuleSuggestion(params.id, z.object({ decision: z.enum(["approve", "reject"]) }).parse(body).decision, await user()),
     true,
   );
+  // G15 Publicar / Revertir (human-only, CSRF; passkey over the exact files written; demo only in fixtures).
+  const RuleSuggestionIdZ = z.string().regex(/^P-\d{8}-\d{4}$/);
+  const RulePublishSchema = z.strictObject({
+    webauthn: z.strictObject({ nonce: z.string().regex(/^[0-9a-f]{32}$/), origin: z.string().max(100), response: AssertionSchema }).optional(),
+    demo: z.boolean().optional(),
+  });
+  add("GET", "/rule-suggestions/:id/publish-options", async ({ params, query }) => ui.rulePublishOptions(RuleSuggestionIdZ.parse(params.id), z.enum(["publish", "revert"]).parse(query.get("op") ?? "publish")), true);
+  for (const op of ["publish", "revert"] as const) {
+    add(
+      "POST",
+      `/rule-suggestions/:id/${op}`,
+      async ({ req, params, body, user }) => {
+        const b = RulePublishSchema.parse(body ?? {});
+        // The WebAuthn origin is the request origin, never a client claim.
+        if (b.webauthn) b.webauthn.origin = String(req.headers.origin ?? "");
+        if (b.demo && coord.source.kind !== "fixtures") throw new CoordError("forbidden", "La publicación de demostración solo existe en modo fixtures.");
+        const id = RuleSuggestionIdZ.parse(params.id);
+        return op === "publish" ? ui.publishRuleSuggestion(id, b, await user()) : ui.revertRuleSuggestion(id, b, await user());
+      },
+      true,
+    );
+  }
   add("GET", "/learning/corrections", async ({ query }) => ui.corrections({ projectId: query.get("projectId") ?? undefined, limit: num(query.get("limit")), cursor: query.get("cursor") ?? undefined }));
   add("GET", "/learning/calibration", async () => ui.calibration());
   add("GET", "/reports", async ({ query }) => ui.report({ projectId: query.get("projectId") ?? undefined, modelSetId: query.get("modelSetId") ?? undefined, from: query.get("from") ?? undefined, to: query.get("to") ?? undefined }));
