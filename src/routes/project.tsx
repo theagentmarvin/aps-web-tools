@@ -16,6 +16,7 @@ import { readJson, writeJson } from "~/lib/storage";
 import { ClashGridView } from "~/features/modelset/ClashGridView";
 import { DisciplineDialog } from "~/features/modelset/DisciplineDialog";
 import { DisciplinesPanel } from "~/features/modelset/DisciplinesPanel";
+import { IssueSettingsPanel } from "~/features/modelset/IssueSettingsPanel";
 import { IngestProgressBar } from "~/features/modelset/IngestProgressBar";
 import { TestChecks, testState } from "~/features/modelset/TestChecks";
 import { useIngest } from "~/features/modelset/useIngest";
@@ -225,6 +226,7 @@ function ModelSetPanel({ projectId, ms, onChanged }: { projectId: string; ms: Mo
           />
         ))}
       {tab === "disciplinas" && <DisciplinesPanel projectId={projectId} modelSetId={ms.id} grid={grid} test={test} onGrid={gridQ.setData} />}
+      {tab === "disciplinas" && <div className="mt-6"><IssueSettingsPanel projectId={projectId} /></div>}
       {tab === "cerradas" && <EmptyState title={t("grid.tabs.closed")} body={t("grid.closedEmpty")} />}
 
       {queue && disciplines.data && (

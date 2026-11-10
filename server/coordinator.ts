@@ -2046,16 +2046,16 @@ export class Coordinator {
       assignees: Object.entries(settings.assignees).map(([discipline, a]) => ({ discipline, id: a.id, type: a.type, label: show(a.type, a.label) })),
       unmappedDisciplines: codes.map((c) => c.code).filter((c) => !settings.assignees[c]),
       candidates: candidates.slice(0, 200).map((c) => ({ id: c.id, type: c.kind, label: show(c.kind, c.name) })),
-      note: "Solo lectura. Para cambiar un responsable usa propose_issue_assignee; un humano lo acepta en la UI. Nunca escribas nombres en el texto de incidencias.",
+      note: "Solo lectura. Para cambiar un responsable usa propose_issue_responsible; un humano lo acepta en la UI. Nunca escribas nombres en el texto de incidencias.",
     };
   }
 
   /** PROPOSAL only (G5 parity): the agent never changes the mapping; a human accepts it in the UI. */
-  async proposeIssueAssignee(
+  async proposeIssueResponsible(
     input: { projectId?: string; discipline: string; assignee: { id: string; type: AssigneeKind } | null; rationale: string },
     caller: CallerContext = { actor: AGENT_ACTOR },
   ) {
-    this.requireLevel(1, "propose_issue_assignee");
+    this.requireLevel(1, "propose_issue_responsible");
     this.checkTexts({ rationale: input.rationale });
     const projectId = await this.ctxProject(input.projectId);
     const discipline = assertCode(loadRules(), inCode(input.discipline));

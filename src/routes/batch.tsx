@@ -211,7 +211,7 @@ export function BatchPage() {
       {apply && <div className="mb-4"><ApplyProgress status={apply} /></div>}
       {batch.state === "approved" && (
         <div className="mb-4 space-y-3">
-          {dryRun ? <DryRunPreview res={dryRun} /> : <SkeletonRows count={2} height="h-12" />}
+          {dryRun ? <DryRunPreview res={dryRun} projectId={batch.projectId} /> : <SkeletonRows count={2} height="h-12" />}
           <div className="flex flex-wrap gap-2">
             <Button onClick={loadDryRun}>{t("batch.dryRun")}</Button>
             <Button variant="primary" className="ml-auto" disabled={!dryRun || !!dryRun.refused || applying || batch.approval?.valid === false} onClick={() => setConfirmMode("apply")}>
@@ -275,7 +275,7 @@ export function BatchPage() {
         ) : (
           <div className="grid gap-3 lg:grid-cols-2">
             {issues.map((i) => (
-              <IssuePreviewCard key={i.id} item={i} readOnly={readOnly} onSave={(p) => saveIssue(i.id, p)} onToggle={(ex) => toggle([i.id], ex)} />
+              <IssuePreviewCard key={i.id} item={i} readOnly={readOnly} onSave={(p) => saveIssue(i.id, p)} onToggle={(ex) => toggle([i.id], ex)} projectId={batch.projectId} />
             ))}
           </div>
         ))}

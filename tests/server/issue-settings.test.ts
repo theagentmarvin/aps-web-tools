@@ -141,7 +141,7 @@ describe("G4/G5 · batches carry the issue type and the mapped ACC assignee (fix
     expect(JSON.stringify(dry.requests.map((r) => r.body))).toContain('"assignedTo":"co-demo-mep"');
   });
 
-  it("agent parity: get_issue_settings masks user names; propose_issue_assignee only proposes; a human accepts it", async () => {
+  it("agent parity: get_issue_settings masks user names; propose_issue_responsible only proposes; a human accepts it", async () => {
     await coord.setActiveContext({ projectId: P, modelSetId: MODEL_SET_ID });
     await ui.setIssueAssignee(P, "EST", { id: "AUTHUSER01", type: "user", label: "Nombre Apellido" }, HUMAN);
     const read = await coord.getIssueSettings({});
@@ -149,12 +149,12 @@ describe("G4/G5 · batches carry the issue type and the mapped ACC assignee (fix
     expect(read.assignees.find((a) => a.discipline === "EST")).toMatchObject({ id: "AUTHUSER01", type: "user", label: "usuario ACC" });
     expect(read.candidates.length).toBeGreaterThan(0);
 
-    const p = await coord.proposeIssueAssignee({ discipline: "ELE", assignee: { id: "role-ele", type: "role" }, rationale: "ELE responde como rol en ACC." });
+    const p = await coord.proposeIssueResponsible({ discipline: "ELE", assignee: { id: "role-ele", type: "role" }, rationale: "ELE responde como rol en ACC." });
     expect(p.kind).toBe("issue_settings");
     let s = await ui.issueSettings(P);
     expect(s.assignees.some((a) => a.discipline === "ELE")).toBe(false);
     expect(s.pendingProposals.map((x) => x.id)).toContain(p.proposalId);
-    await expect(coord.proposeIssueAssignee({ discipline: "ELE", assignee: { id: "nope", type: "role" }, rationale: "x" })).rejects.toThrow(/no es un responsable/);
+    await expect(coord.proposeIssueResponsible({ discipline: "ELE", assignee: { id: "nope", type: "role" }, rationale: "x" })).rejects.toThrow(/no es un responsable/);
 
     s = await ui.decideIssueSettingsProposal(P, p.proposalId, "accept", HUMAN);
     expect(s.assignees.find((a) => a.discipline === "ELE")).toMatchObject({ id: "role-ele", type: "role", label: "Especialista Eléctrico" });

@@ -8,6 +8,8 @@
  * approveBatch → server apply.
  */
 import type {
+  AccIssueType,
+  IssueSettings,
   AgentStatus,
   ApplyRequest,
   ClashGrid,
@@ -196,6 +198,13 @@ export interface CoordinatorApi {
   decideRuleSuggestion(id: string, decision: "approve" | "reject"): Promise<RuleSuggestion>;
   listCorrections(params?: { projectId?: string; limit?: number; cursor?: string }): Promise<Page<CorrectionRow>>;
   getCalibration(): Promise<Calibration>;
+
+  // G4/G5: project ACC issue settings (GET-only toward ACC; local writes, human-only)
+  listIssueTypes(projectId: string): Promise<AccIssueType[]>;
+  getIssueSettings(projectId: string): Promise<IssueSettings>;
+  setIssueType(projectId: string, req: { typeId: string; subtypeId: string; label: string } | { clear: true }): Promise<IssueSettings>;
+  setIssueAssignee(projectId: string, discipline: string, assignee: { id: string; type: "user" | "role" | "company"; label: string } | null): Promise<IssueSettings>;
+  decideIssueSettingsSuggestion(projectId: string, proposalId: string, decision: "accept" | "reject"): Promise<IssueSettings>;
 
 }
 

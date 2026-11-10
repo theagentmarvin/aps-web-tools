@@ -339,7 +339,7 @@ export class CoordinatorUi {
     return this.issueSettings(projectId);
   }
 
-  /** Human decision on an agent's propose_issue_assignee proposal. */
+  /** Human decision on an agent's propose_issue_responsible proposal. */
   async decideIssueSettingsProposal(projectId: string, proposalId: string, decision: "accept" | "reject", user: HumanUser): Promise<C.IssueSettings> {
     const p = await this.store.getProposal(proposalId);
     if (!p || p.payload.kind !== "issue_settings" || !p.projectId || bareProjectId(p.projectId) !== bareProjectId(projectId)) throw new CoordError("not_found", `Propuesta ${proposalId} no existe`);

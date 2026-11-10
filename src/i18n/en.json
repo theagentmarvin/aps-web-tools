@@ -1393,5 +1393,41 @@
   "toolbar": {
     "label": "Coordination workspace toolbar",
     "more": "More actions"
+  },
+  "accIssues": {
+    "title": "Project ACC issues",
+    "hint": "Issue type and ACC assignee per discipline. The assignee is ACC metadata (company, role or user): it is never written in the issue text. It is confirmed or changed per issue when the batch is approved.",
+    "type": "Default issue type",
+    "typeEffective": "In use: {label} ({source})",
+    "typeNone": "No known type: chosen on each issue at approval.",
+    "source": {
+      "project": "project",
+      "config": "configuration",
+      "auto": "detected in ACC",
+      "fixtures": "demo"
+    },
+    "typeChoose": "Choose type / subtype…",
+    "typeClear": "Remove default",
+    "typesUnavailable": "Could not read the ACC issue types.",
+    "assignees": "ACC assignee per discipline",
+    "discipline": "Discipline",
+    "assignee": "ACC assignee",
+    "none": "— no assignee —",
+    "manual": "Enter ACC id…",
+    "manualId": "ACC id (company, role or user)",
+    "manualType": "Type",
+    "kind": {
+      "company": "Company",
+      "role": "Role",
+      "user": "User"
+    },
+    "candidatesEmpty": "ACC did not return the project members: enter the id by hand.",
+    "saved": "Saved",
+    "suggestions": "Agent suggestions",
+    "accept": "Accept",
+    "reject": "Reject",
+    "unassigned": "No ACC assignee: the issue stays unassigned in ACC.",
+    "openIssue": "Open issue in ACC",
+    "createdIssues": "Issues created in ACC"
   }
 }

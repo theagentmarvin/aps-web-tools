@@ -70,7 +70,7 @@ export function toolHandlers(coord: Coordinator, actor: Actor = AGENT_ACTOR): Re
     propose_discipline_mapping: async (a) => coord.proposeDisciplineMapping(a as never, ctx),
     generate_report: async (a) => coord.generateReport(a as never, ctx),
     get_issue_settings: async (a) => coord.getIssueSettings(a as never),
-    propose_issue_assignee: async (a) => coord.proposeIssueAssignee(a as never, ctx),
+    propose_issue_responsible: async (a) => coord.proposeIssueResponsible(a as never, ctx),
     apply_approved_proposals: async (a) => applyTool(coord, a as { batchId: string; dryRun?: boolean }),
   };
 }

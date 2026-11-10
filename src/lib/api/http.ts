@@ -475,4 +475,16 @@ export class HttpCoordinatorApi implements CoordinatorApi {
   }
   getCalibration() { return this.get<T.Calibration>("/learning/calibration"); }
 
+  listIssueTypes(projectId: string) { return this.get<T.AccIssueType[]>(`/projects/${enc(projectId)}/issue-types`); }
+  getIssueSettings(projectId: string) { return this.get<T.IssueSettings>(`/projects/${enc(projectId)}/issue-settings`); }
+  setIssueType(projectId: string, req: { typeId: string; subtypeId: string; label: string } | { clear: true }) {
+    return this.req<T.IssueSettings>("PUT", `/projects/${enc(projectId)}/issue-settings/issue-type`, req);
+  }
+  setIssueAssignee(projectId: string, discipline: string, assignee: { id: string; type: "user" | "role" | "company"; label: string } | null) {
+    return this.req<T.IssueSettings>("PUT", `/projects/${enc(projectId)}/issue-settings/assignees/${enc(discipline)}`, { assignee });
+  }
+  decideIssueSettingsSuggestion(projectId: string, proposalId: string, decision: "accept" | "reject") {
+    return this.req<T.IssueSettings>("POST", `/projects/${enc(projectId)}/issue-settings/proposals/${enc(proposalId)}/decision`, { decision });
+  }
+
 }

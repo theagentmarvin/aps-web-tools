@@ -683,7 +683,7 @@ export const ProposeDisciplineMappingInput = z.object({
 /** Read-only (G5 parity): project ACC issue type default + discipline → ACC assignee mapping. */
 export const GetIssueSettingsInput = z.object({ projectId: z.string().max(80).optional().describe("Default: active context project") });
 /** PROPOSAL only (G5 parity): a human accepts it in the UI (Disciplinas › Responsables ACC). */
-export const ProposeIssueAssigneeInput = z.object({
+export const ProposeIssueResponsibleInput = z.object({
   projectId: z.string().max(80).optional().describe("Default: active context project"),
   discipline: z.string().min(2).max(6).describe("Discipline code (CLI, EST, ARQ…)"),
   assignee: z
@@ -832,7 +832,7 @@ export const TOOLS: ToolSpec[] = [
     description: "Apply ONE batch (lote) that a HUMAN approved in the web UI. Refuses without a valid approval. dryRun defaults to true. Main agent only." },
   { family: "learning", name: "get_issue_settings", title: "Get ACC issue settings", minLevel: 0, annotations: RO_LOCAL, input: GetIssueSettingsInput,
     description: "Project ACC issue settings: default issue type/subtype and the discipline → ACC assignee mapping (company/role; user names masked), plus candidate assignees read from ACC. Read-only." },
-  { family: "learning", name: "propose_issue_assignee", title: "Propose ACC assignee mapping", minLevel: 1, annotations: LOCAL_WRITE, input: ProposeIssueAssigneeInput,
+  { family: "learning", name: "propose_issue_responsible", title: "Propose ACC assignee mapping", minLevel: 1, annotations: LOCAL_WRITE, input: ProposeIssueResponsibleInput,
     description: "Suggest discipline → ACC assignee (company / role / user id) as a proposal. Never changes the mapping: a human accepts it in the web UI. The assignee is ACC metadata only; never write names in issue text." },
 ];
 
