@@ -1,7 +1,7 @@
 {
   "app": {
     "name": "Coordinación BIM",
-    "company": "SalfaCorp",
+    "company": "SalfaLabs",
     "governance": "Uso sujeto al Procedimiento Acceso Herramientas IA de SalfaCorp",
     "version": "v{version}",
     "demoMode": "Modo demostración · datos simulados",

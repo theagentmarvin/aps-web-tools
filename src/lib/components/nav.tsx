@@ -97,8 +97,7 @@ export function Nav() {
   return (
     <nav aria-label={t("nav.mainNav")} className={`flex flex-shrink-0 items-center border-b border-brand-muted/20 bg-white shadow-sm ${workspace ? "h-11 gap-4 px-4" : "gap-6 px-6 py-2"}`}>
       <Link to="/proyectos" className="flex items-center gap-2 whitespace-nowrap text-lg font-bold tracking-tight text-brand">
-        <span aria-hidden className="inline-block h-3 w-3 bg-brand" />
-        {t("app.company")}
+        <img src="/brand/salfalabs-logo.png" alt={t("app.company")} className={workspace ? "h-7 w-auto" : "h-9 w-auto"} />
         <span className="font-normal text-gray-300">|</span>
         <span className="text-base">{t("app.name")}</span>
       </Link>

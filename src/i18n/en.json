@@ -1,7 +1,7 @@
 {
   "app": {
     "name": "BIM Coordination",
-    "company": "SalfaCorp",
+    "company": "SalfaLabs",
     "governance": "Use subject to SalfaCorp's AI Tools Access Procedure",
     "version": "v{version}",
     "demoMode": "Demo mode · simulated data",
