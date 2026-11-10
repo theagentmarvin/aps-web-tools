@@ -586,16 +586,34 @@ export const RuleChangeEvidence = z.object({
   summary: z.string().min(1).max(1500),
   metrics: RealDataMetrics,
 });
+export const RuleChangeKindZ = z.enum(["new", "calibrate", "edit", "retire", "restore"]);
 export const ProposeRuleChangeInput = z.object({
-  title: z.string().max(120),
-  patch: z.string().max(20000).describe("Unified diff touching only rules/**"),
+  title: z.string().max(120).optional().describe("Optional; the server titles structured changes (\"Retirar 12 reglas…\")."),
+  patch: z.string().max(20000).optional().describe("Unified diff touching only rules/**. Omit it to send a structured change (changeKind)."),
+  changeKind: RuleChangeKindZ.optional().describe("new | calibrate | edit | retire | restore. Without patch the server builds it: new → end of its section (before DEF-999), edit/calibrate in place, retire → Biblioteca (rules/classification-rules.archive.yaml, not evaluated), restore → original precedence."),
+  ruleIds: z.array(z.string().regex(/^[A-Z]{2,4}-\d{3}$/)).max(200).optional().describe("retire / restore: the rules (bulk allowed). Never DEF-999."),
+  ruleId: z.string().regex(/^[A-Z]{2,4}-\d{3}$/).optional().describe("calibrate / edit: the rule."),
+  rule: z.string().max(6000).optional().describe("new / edit: YAML of ONE rule (id optional for new, nameEs required)."),
+  calibration: z
+    .object({
+      then: z.object({ validity: z.enum(["real", "false_positive", "tolerated", "needs_info"]), responsibleDiscipline: z.string().max(10), secondaryDiscipline: z.string().max(10).nullable(), severity: z.enum(["critical", "high", "medium", "low", "none"]), suggestedAction: z.enum(["close_not_issue", "mark_reviewed", "create_issue", "hygiene_issue", "request_info", "escalate"]), humanReview: z.boolean(), confidence: z.number().min(0).max(1) }).partial().optional(),
+      thresholds: z.array(z.object({ path: z.string().max(80), value: z.number() })).max(20).optional(),
+    })
+    .optional()
+    .describe("calibrate: outcome fields and/or numeric thresholds (paths as returned in the rule's thresholds, e.g. a.sizeMm.gte)."),
   rationale: z.string().max(1500),
-  feedbackIds: z.array(z.string()).max(100).default([]).describe("Coordinator feedback backing the change. Required unless evidence is given."),
-  evidence: RuleChangeEvidence.optional().describe("Real-data evaluation backing the change. Required unless feedbackIds is given."),
+  feedbackIds: z.array(z.string()).max(100).default([]).describe("Coordinator feedback backing the change. With a patch: required unless evidence is given."),
+  evidence: RuleChangeEvidence.optional().describe("Real-data evaluation backing a patch. Structured changes are measured by the server."),
   evaluation: z
     .object({ baselineRubricScore: z.number(), candidateRubricScore: z.number(), unsafeClosureRate: z.number(), criticalFalseNegatives: z.number() })
-    .extend(RealDataMetrics.partial().omit({ validityBefore: true, validityAfter: true }).shape),
-  scope: z.enum(["project", "company"]),
+    .extend(RealDataMetrics.partial().omit({ validityBefore: true, validityAfter: true }).shape)
+    .optional(),
+  scope: z.enum(["project", "company"]).default("company"),
+});
+/** Discovery read for the agent (end of each cycle). */
+export const GetRuleInsightsInput = z.object({
+  testKey: TestKey.optional().describe("One classified test; default: every classified test (or the project's)."),
+  projectId: z.string().max(100).optional(),
 });
 // output: ProposalCreatedOutput with kind "rule_change"; patch saved to .coordinator/rule-proposals/<id>.patch
 
@@ -876,8 +894,10 @@ export const TOOLS: ToolSpec[] = [
     description: "Feedback clustered by signature or rule, for rules curation." },
   { family: "learning", name: "evaluate_ruleset", title: "Evaluate ruleset", minLevel: 0, annotations: { ...RO_LOCAL, idempotentHint: true }, input: EvaluateRulesetInput,
     description: "Run the EV scenarios, fixture checks and feedback replay for current rules or a candidate patch; returns metric deltas and regressions." },
+  { family: "learning", name: "get_rule_insights", title: "Rule insights", minLevel: 0, annotations: RO_LOCAL, input: GetRuleInsightsInput,
+    description: "Deterministic discovery input for rules: clusters that ended in DEF-999 / needs_info (pair, categories, systems, levels, example ids), rules humans keep correcting (acierto, n, top correction), active rules with 0 use (retire candidates) and Biblioteca rules that would cover current DEF-999 clashes (reactivation). Read-only." },
   { family: "learning", name: "propose_rule_change", title: "Propose rule change", minLevel: 1, annotations: LOCAL_WRITE, input: ProposeRuleChangeInput,
-    description: "Store a rules/ patch as a rule_change proposal. Never edits rules/; a human approves and publishes it in the UI (Reglas, passkey)." },
+    description: "Store a rule change as a rule_change proposal: a rules/ unified diff, or a structured changeKind (new | calibrate | edit | retire | restore) for which the server builds the patch, keeps precedence (new → end of its section, before DEF-999; edit/calibrate in place; restore → original position) and measures the evidence. Never edits rules/; a human approves and publishes it in the UI (Reglas, passkey)." },
   { family: "learning", name: "list_disciplines", title: "List discipline mappings", minLevel: 0, annotations: RO_LOCAL, input: ListDisciplinesInput,
     description: "Project discipline mappings (assignments, ordered naming rules, codes) and per-document resolution of a cached test (source: assignment|rule|matrix|elements|unassigned, share, ruleId). SIN = Sin asignar." },
   { family: "learning", name: "propose_discipline_mapping", title: "Propose discipline mapping", minLevel: 1, annotations: LOCAL_WRITE, input: ProposeDisciplineMappingInput,

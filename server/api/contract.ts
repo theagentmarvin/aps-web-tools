@@ -217,6 +217,8 @@ export interface Clash {
   validity: Validity;
   nature: Nature;
   delta: Delta;
+  /** Winning engine rule of this clash (Reglas → workspace filter ?regla=). */
+  ruleId?: string;
   persistingSince?: string;
   persistingCount?: number;
   previousDistanceMm?: number;
@@ -1082,6 +1084,10 @@ export interface RuleSuggestion {
   impact?: RuleImpact;
   /** Latest publication (published or reverted). */
   publication?: RulePublicationView;
+  /** Who proposed it: the agent (propose_rule_change) or a coordinator in the UI. Same flow for both. */
+  origin: "agente" | "coordinador";
+  changeKind?: RuleChangeKind;
+  ruleIds?: string[];
 }
 export interface CorrectionRow {
   decisionId: string;
@@ -1361,6 +1367,94 @@ export interface RulePublishOptions {
 export interface RulePublishRequest {
   webauthn?: { nonce: string; origin: string; response: unknown };
   demo?: boolean;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reglas (simplified page): active rules by pair + use + acierto, Biblioteca, alerts,
+// and human rule changes (calibrate · edit · retire · restore) as suggestions.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type RuleChangeKind = "new" | "calibrate" | "edit" | "retire" | "restore";
+/** One rule exactly as in the YAML (render text fields as text). */
+export interface RuleDefinition {
+  id: string;
+  name: string;
+  nameEs?: string;
+  when: Record<string, unknown>;
+  then: Record<string, unknown> & { validity: string; severity: string; suggestedAction: string; responsibleDiscipline: string; confidence: number; rationale: string; humanReview?: boolean };
+}
+/** A number of the rule's conditions a coordinator can calibrate (mm, ratio, days…). */
+export interface RuleThreshold { path: string; block: string; field: string; op: string; value: number }
+export interface RuleRow {
+  id: string;
+  name: string;
+  nameEs: string;
+  /** Id prefix (HYG, DUP, FP… MM, DEF). */
+  section: string;
+  /** Discipline / group token per side ("EST", "MEP", "CLI"…); null = any. */
+  sides: [string | null, string | null];
+  validity: string;
+  responsible: string;
+  severity: string;
+  action: string;
+  confidence: number;
+  humanReview: boolean;
+  /** Clashes / ubicaciones whose winning rule is this one in the selected test (null = no test). */
+  usage: { clashes: number; groups: number } | null;
+  /** Winning clashes over every classified test. */
+  totalUse: number;
+  /** Human decisions on its ubicaciones that kept its outcome; rate null = too few (n < minAccuracyN). */
+  accuracy: { agree: number; n: number; rate: number | null; topCorrection?: string };
+  thresholds: RuleThreshold[];
+  raw: RuleDefinition;
+  /** DEF-999: fallback (human review); never retired. */
+  fallback: boolean;
+}
+export interface RuleLibraryRow { id: string; nameEs: string; section: string; sides: [string | null, string | null]; validity: string; retiredAt: string; reason?: string }
+export interface RulesOverview {
+  tests: Array<{ testKey: string; projectId: string; modelSetId: string; version: number; label: string; classifiedTests: number }>;
+  selectedTestKey?: string;
+  rules: RuleRow[];
+  library: RuleLibraryRow[];
+  archiveError?: string;
+  /** Automatic alerts (tags such as seguridad_personas, requiere_calculista): read-only. */
+  annotations: Array<{ id: string; tags: string[]; note?: string }>;
+  minAccuracyN: number;
+}
+/** Human rule change (POST /rule-suggestions and /rule-suggestions/preview). */
+export type RuleChangeRequest =
+  | { kind: "calibrate"; ruleId: string; then?: { validity?: string; responsibleDiscipline?: string; secondaryDiscipline?: string | null; severity?: string; suggestedAction?: string; humanReview?: boolean; confidence?: number }; thresholds?: Array<{ path: string; value: number }>; nameEs?: string }
+  | { kind: "edit"; ruleId: string; rule: RuleDefinition | string }
+  | { kind: "retire"; ruleIds: string[]; reason?: string }
+  | { kind: "restore"; ruleIds: string[] };
+export interface RuleShadow { ruleId: string; nameEs: string; clashes: number }
+export interface RuleChangePreview {
+  kind: RuleChangeKind;
+  title: string;
+  ruleIds: string[];
+  patch: string;
+  effect: string[];
+  /** Blocking (safety, validation): the suggestion is refused. */
+  errors: string[];
+  warnings: string[];
+  impact?: { testKey: string; version: number; families: number; groups: number; clashes: number; ruleChanged: number; toFallback: number; newlyClosing: number; policyUnsafe: number };
+  focus?: { ruleId: string; matches: number; wins: number; shadowedBy: RuleShadow[]; shadows: RuleShadow[] };
+}
+export interface RuleInsights {
+  testKeys: string[];
+  uncovered: Array<{ disciplinePair: string; categoryPair: string; ruleIds: string[]; clashes: number; groups: number; topSystems: string[]; topLevels: string[]; exampleClashIds: string[]; exampleGroupIds: string[]; testKeys: string[] }>;
+  corrected: Array<{ ruleId: string; nameEs: string; n: number; agree: number; rate: number; reliable: boolean; topCorrection: string }>;
+  zeroUse: Array<{ ruleId: string; nameEs: string }>;
+  reactivation: Array<{ ruleId: string; nameEs: string; clashes: number; testKey: string }>;
+  library: Array<{ ruleId: string; nameEs: string; retiredAt: string }>;
+  note: string;
+}
+export interface Endpoints {
+  "GET /api/coord/rules/overview?testKey": { req: void; res: RulesOverview };
+  /** Human-only (CSRF). Impact, shadowing and safety of a change; writes nothing. */
+  "POST /api/coord/rule-suggestions/preview": { req: { change: RuleChangeRequest; testKey?: string }; res: RuleChangePreview };
+  /** Human-only (CSRF). Creates a rule suggestion (origin coordinador) at stage "propuesta". */
+  "POST /api/coord/rule-suggestions": { req: { change: RuleChangeRequest; rationale: string; title?: string; testKey?: string }; res: RuleSuggestion };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

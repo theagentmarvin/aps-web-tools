@@ -234,6 +234,12 @@ export interface CoordinatorApi {
   appendProjectNote(projectId: string, text: string, kind?: string): Promise<P.ProjectNotes>;
   /** Feedback recorded by the UI and by the agent (record_feedback), with its origin. No user names. */
   listFeedback(params?: { projectId?: string; source?: P.FeedbackSource[]; limit?: number; cursor?: string }): Promise<Page<P.FeedbackRow>>;
+  /** Reglas: active rules (by pair, use and acierto in a classified test), Biblioteca, alerts. */
+  getRulesOverview(testKey?: string): Promise<P.RulesOverview>;
+  /** Human-only: impact / shadowing / safety of a calibrate · edit · retire · restore (writes nothing). */
+  previewRuleChange(change: P.RuleChangeRequest, testKey?: string): Promise<P.RuleChangePreview>;
+  /** Human-only: the change becomes a rule suggestion (origin coordinador) at stage propuesta. */
+  createRuleSuggestion(req: { change: P.RuleChangeRequest; rationale: string; title?: string; testKey?: string }): Promise<P.RuleSuggestion>;
   /** Human-only: move one location (group) out of a family into its own family. Local only. */
   detachFamilyInstance(familyId: string, req: { testId: string; groupId: string }): Promise<FamiliesPayload>;
   /** Human-only: merge family `from` into `into`. Local only. */

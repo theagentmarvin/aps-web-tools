@@ -271,6 +271,19 @@ describe("F2 DNS rebinding and local clients (poc-http)", () => {
     expect((await doReq("POST", "/triage/decisions", d("validity", "duplicate"), hdr)).status).toBe(400);
     expect((await doReq("GET", "/tests/T-00000000/groups?validity=bogus", undefined, { Host: host })).status).toBe(400);
   });
+
+  it("rule changes from the UI are human-only routes (CSRF) and refuse new rules / unknown fields", async () => {
+    const host = `127.0.0.1:${port}`;
+    const change = { kind: "retire", ruleIds: ["HYG-003"] };
+    expect((await doReq("POST", "/rule-suggestions/preview", { change }, { Host: host, Origin: `http://${host}` })).status).toBe(403);
+    expect((await doReq("POST", "/rule-suggestions", { change, rationale: "x" }, { Host: host, Origin: `http://${host}` })).status).toBe(403);
+    const tok = (await doReq("GET", "/csrf", undefined, { Host: host })).json.token!;
+    const hdr = { Host: host, Origin: `http://${host}`, "X-Coord-CSRF": tok, Cookie: `coord_csrf=${tok}` };
+    // Creating a rule from scratch is the agent's job (propose_rule_change), not a UI route.
+    expect((await doReq("POST", "/rule-suggestions", { change: { kind: "new", rule: "id: MM-099" }, rationale: "x" }, hdr)).status).toBe(400);
+    expect((await doReq("POST", "/rule-suggestions/preview", { change: { ...change, extra: 1 } }, hdr)).status).toBe(400);
+    expect((await doReq("POST", "/rule-suggestions/preview", { change: { kind: "retire", ruleIds: ["../x"] } }, hdr)).status).toBe(400);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

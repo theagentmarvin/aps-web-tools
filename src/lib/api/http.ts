@@ -498,4 +498,11 @@ export class HttpCoordinatorApi implements CoordinatorApi {
     return this.req<T.FamiliesPayload>("POST", `/families/${enc(familyId)}/detach`, r);
   }
   mergeFamilies(r: { testId: string; from: string; into: string }) { return this.req<T.FamiliesPayload>("POST", "/families/merge", r); }
+  getRulesOverview(testKey?: string) { return this.get<T.RulesOverview>("/rules/overview", testKey ? { testKey } : undefined); }
+  previewRuleChange(change: T.RuleChangeRequest, testKey?: string) {
+    return this.req<T.RuleChangePreview>("POST", "/rule-suggestions/preview", { change, ...(testKey ? { testKey } : {}) });
+  }
+  createRuleSuggestion(r: { change: T.RuleChangeRequest; rationale: string; title?: string; testKey?: string }) {
+    return this.req<T.RuleSuggestion>("POST", "/rule-suggestions", r);
+  }
 }

@@ -1,7 +1,10 @@
 /**
- * /reglas/:ruleId — rule detail + performance (read-only in v1).
+ * /reglas/:ruleId — rule detail + performance, with the same human actions as Reglas
+ * (Calibrar · Editar condiciones · Retirar → a suggestion approved and published with passkey).
  */
-import { Link, useParams } from "react-router";
+import { useState } from "react";
+import { Link, useNavigate, useParams } from "react-router";
+import { RuleChangeDialog, type RuleChangeMode } from "~/features/rules/RuleChangeDialog";
 import { useI18n, useT } from "~/i18n";
 import { useApi, useAsync } from "~/lib/api";
 import type { DecisionState } from "~/lib/api/types";
@@ -27,14 +30,45 @@ export function RulePage() {
   const toast = useToast();
   const { ruleId = "" } = useParams();
   const { data: r, error, loading, reload } = useAsync(() => api.getRule(ruleId), [api, ruleId]);
+  const overview = useAsync(() => api.getRulesOverview(), [api]);
+  const row = overview.data?.rules.find((x) => x.id === ruleId);
+  const [mode, setMode] = useState<RuleChangeMode | null>(null);
+  const navigate = useNavigate();
   if (error) return <ErrorState error={error} onRetry={reload} />;
   if (loading || !r) return <SkeletonRows count={4} height="h-16" />;
   return (
     <div>
       <PageHeader title={`${r.id} · ${r.nameEs ?? r.name}`} crumbs={[{ label: t("nav.rules"), to: "/reglas" }, { label: r.id }]} subtitle={<span className={RULE_STATE_CLS[r.state]}>{t(`rules.state.${r.state}`)}</span>} />
-      <Banner tone="info" className="mb-4 rounded">
+      <Banner
+        tone="info"
+        className="mb-4 rounded"
+        actions={
+          row ? (
+            <div className="flex gap-1.5">
+              <Button variant="primary" onClick={() => setMode("calibrate")}>
+                {t("rules.board.calibrate")}
+              </Button>
+              <Button onClick={() => setMode("edit")}>{t("rules.board.editConditions")}</Button>
+              {!row.fallback && <Button onClick={() => setMode("retire")}>{t("rules.board.retire")}</Button>}
+            </div>
+          ) : undefined
+        }
+      >
         {t("rules.readOnlyNote")}
       </Banner>
+      {mode && row && (
+        <RuleChangeDialog
+          mode={mode}
+          row={row}
+          testKey={overview.data?.selectedTestKey}
+          onClose={() => setMode(null)}
+          onCreated={() => {
+            setMode(null);
+            toast.show(t("rules.board.dialog.created"));
+            navigate("/reglas");
+          }}
+        />
+      )}
       <div className="grid gap-4 lg:grid-cols-2">
         <section className={`${cardCls} space-y-3 p-4 text-sm`}>
           <div>

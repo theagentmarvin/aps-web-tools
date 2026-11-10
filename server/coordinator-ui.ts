@@ -13,6 +13,7 @@ import { CLOSABLE, loadRules, runEngine } from "./engine";
 import { affectedCounts, describeRuleChange, pairLabel, ruleLabelEs, VALIDITY_ES } from "./rule-effect";
 import { assertCode, inCode, modelLevelDiscipline, outCode, ruleMatches, SIN, suggestedToken, validCodes, type DisciplineRule } from "./disciplines";
 import { sanitizeModelText } from "./sanitize";
+import type { RuleOp } from "./rule-suggest";
 import { PROBLEM_TYPES } from "../core/families";
 import { aggregateAcc, emptyCounts, itemChange, mergeAcc, type AccIndex } from "./cycle";
 import { questionView, type StoredQuestion } from "./questions";
@@ -417,6 +418,7 @@ export class CoordinatorUi {
       validity: c.validity,
       nature: c.nature,
       delta: c.delta,
+      ...(c.ruleId ? { ruleId: c.ruleId } : {}),
       ...(c.previousDistanceMm !== undefined ? { previousDistanceMm: round(c.previousDistanceMm) } : {}),
     };
   }
@@ -1763,6 +1765,9 @@ export class CoordinatorUi {
         ...(p.payload.evidence ? { evidence: p.payload.evidence } : {}),
         state: stage,
         createdAt: p.createdAt,
+        origin: p.createdBy.type === "user" ? ("coordinador" as const) : ("agente" as const),
+        ...(p.payload.changeKind ? { changeKind: p.payload.changeKind } : {}),
+        ...(p.payload.ruleIds?.length ? { ruleIds: p.payload.ruleIds } : {}),
         ...(effect.length ? { effect } : {}),
         ...(impact ? { impact } : {}),
         ...(pubRec
@@ -1822,6 +1827,22 @@ export class CoordinatorUi {
   async revertRuleSuggestion(id: string, req: C.RulePublishRequest, user: HumanUser): Promise<C.RuleSuggestion> {
     await this.core.rulePublisher.revert(id, req, user);
     return (await this.ruleSuggestions()).find((s) => s.id === id)!;
+  }
+
+  /** Reglas page: active rules with use / acierto in a classified test, Biblioteca, alerts. */
+  async rulesOverview(testKey?: string): Promise<C.RulesOverview> {
+    return this.core.ruleAuthoring.overview(testKey);
+  }
+
+  /** Impact / shadowing / safety of a coordinator's rule change. Writes nothing. */
+  async previewRuleChange(change: C.RuleChangeRequest, testKey?: string): Promise<C.RuleChangePreview> {
+    return this.core.ruleAuthoring.preview(change as RuleOp, testKey);
+  }
+
+  /** A coordinator's calibrate / edit / retire / restore → the same rule_change suggestion the agent creates. */
+  async createRuleSuggestion(req: { change: C.RuleChangeRequest; rationale: string; title?: string; testKey?: string }, user: HumanUser): Promise<C.RuleSuggestion> {
+    const r = await this.core.ruleAuthoring.suggest(req.change as RuleOp, { rationale: req.rationale, title: req.title, testKey: req.testKey }, { type: "user", id: user.id, name: user.name });
+    return (await this.ruleSuggestions()).find((x) => x.id === r.proposalId)!;
   }
 
   async corrections(q: { projectId?: string; limit?: number; cursor?: string }): Promise<C.Page<C.CorrectionRow>> {

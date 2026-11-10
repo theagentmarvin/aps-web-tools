@@ -11,6 +11,7 @@ import { DISCIPLINES, RULES, USERS } from "./catalog";
 import { HUBS, PROJECTS, SANDBOX_RULES, SANDBOX_SUGGESTIONS, SANDBOX_VIEWS, type MockModelSet, type MockProject } from "./fixtures";
 import { generateTest, rng, type GenerateOptions, type GeneratedTest, type MockDocDef } from "./generate";
 import { fakeHash, seedCorrections, seedSuggestions } from "./reports";
+import { mockRulesOverview } from "./rules-overview";
 import { deriveFamilies, refreshFamily } from "./families";
 import { applyM1, type M1Data } from "./m1";
 import { applyM2, type M2Data } from "./m2";
@@ -1375,6 +1376,25 @@ export class MockCoordinatorApi implements CoordinatorApi {
       }),
       reasonDistribution: (["R01", "R02", "R03", "R08", "R09"] as const).map((code) => ({ code, count: g.int(0, 9) })).filter((x) => x.count > 0),
     };
+  }
+
+  async getRulesOverview(): Promise<T.RulesOverview> {
+    await delay();
+    return mockRulesOverview();
+  }
+
+  async previewRuleChange(change: T.RuleChangeRequest): Promise<T.RuleChangePreview> {
+    await delay(150);
+    const ids = "ruleIds" in change ? change.ruleIds : [change.ruleId];
+    return { kind: change.kind, title: `${change.kind} ${ids.join(", ")}`, ruleIds: ids, patch: "", effect: ["Modo demostración: el impacto real se calcula en el servidor."], errors: [], warnings: [] };
+  }
+
+  async createRuleSuggestion(req: { change: T.RuleChangeRequest; rationale: string; title?: string }): Promise<T.RuleSuggestion> {
+    await delay(150);
+    const ids = "ruleIds" in req.change ? req.change.ruleIds : [req.change.ruleId];
+    const s: T.RuleSuggestion = { id: `RS-${newId().slice(0, 4)}`, title: req.title ?? `${req.change.kind} ${ids.join(", ")}`, count: 0, reasonCode: "R99", pair: "", summary: req.rationale, patch: "", affected: 0, state: "pending", createdAt: new Date().toISOString(), origin: "coordinador", changeKind: req.change.kind, ruleIds: ids };
+    this.suggestions.push(s);
+    return clone(s);
   }
 
   async listRuleSuggestions() {

@@ -230,6 +230,7 @@ export function FilterBar({ query, onChange, compact }: { query: ListQuery; onCh
       </label>
       <div className="flex min-w-0 items-center gap-1.5">
       {query.docs && <DocsChip docs={query.docs} onClear={() => onChange({ ...query, docs: undefined })} />}
+      {query.rule && <RuleChip ruleId={query.rule} onClear={() => onChange({ ...query, rule: undefined })} />}
       {shown.map((k) => (
         <FilterChip key={k} fkey={k} query={query} onChange={(filters) => onChange({ ...query, filters })} autoOpen={justAdded === k} />
       ))}
@@ -259,7 +260,7 @@ export function FilterBar({ query, onChange, compact }: { query: ListQuery; onCh
         )}
       </div>
       {!isDefaultQuery(query) && (
-        <button type="button" onClick={() => onChange({ filters: { decision: ["pendiente"] }, sort: query.sort, view: query.view, q: "", docs: undefined })} className="whitespace-nowrap text-xs text-brand underline-offset-2 hover:underline">
+        <button type="button" onClick={() => onChange({ filters: { decision: ["pendiente"] }, sort: query.sort, view: query.view, q: "", docs: undefined, rule: undefined })} className="whitespace-nowrap text-xs text-brand underline-offset-2 hover:underline">
           {t("list.clearFilters")}
         </button>
       )}
@@ -296,6 +297,20 @@ export function FilterBar({ query, onChange, compact }: { query: ListQuery; onCh
 }
 
 const NO_DOCS: { documentId: number; name: string }[] = [];
+
+/** Engine-rule filter coming from Reglas (regla=ID): removable chip. */
+function RuleChip({ ruleId, onClear }: { ruleId: string; onClear: () => void }) {
+  const t = useT();
+  const label = t("rules.board.ruleFilter", { id: ruleId });
+  return (
+    <span className="inline-flex max-w-[260px] items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-2.5 py-0.5 text-xs text-violet-900" title={label}>
+      <span className="truncate">{label}</span>
+      <button type="button" onClick={onClear} aria-label={`${t("common.clear")} ${label}`} className="hover:text-brand">
+        <IconX size={11} />
+      </button>
+    </span>
+  );
+}
 
 /** Document-pair filter coming from the clash grid (docs=a,b). */
 function DocsChip({ docs, onClear }: { docs: string; onClear: () => void }) {
