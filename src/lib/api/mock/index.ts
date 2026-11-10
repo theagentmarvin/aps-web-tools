@@ -1184,6 +1184,13 @@ export class MockCoordinatorApi implements CoordinatorApi {
     return clone(b);
   }
 
+  async rebaseBatch(id: string): Promise<T.BatchRebaseResult> {
+    this.getBatchOrThrow(id);
+    await delay();
+    // Demo batches never go stale (the mock has a single version per test).
+    throw new Error("Llevar decisiones a otra versión no está disponible en modo demo.");
+  }
+
   async discardBatch(id: string) {
     const b = this.getBatchOrThrow(id);
     await delay();

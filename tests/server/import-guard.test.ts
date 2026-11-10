@@ -9,7 +9,7 @@ import { join, relative, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ROOT } from "./helpers";
 
-const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "tests", ".coordinator", "docs", "evals", "public"]);
+const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "tests", ".coordinator", "docs", "evals", "public", ".wt"]);
 const ALLOWED = new Set(["server/aps/write-guard.ts", "server/approval/index.ts"]);
 
 function walk(dir: string, out: string[] = []): string[] {

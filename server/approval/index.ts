@@ -116,7 +116,7 @@ export async function approvalOptions(deps: ApprovalDeps, batchId: string, exclu
   if (!batch) throw new CoordError("not_found", `Lote ${batchId} no existe`);
   if (batch.state !== "ready") throw new CoordError("invalid_state", `El lote está ${batch.state}; solo se aprueban lotes 'ready'.`);
   const latest = await deps.source.latestVersion(batch.projectId, batch.modelSetId);
-  if (latest !== batch.modelSetVersion) throw new CoordError("stale_cache", `La prueba es v${batch.modelSetVersion} y el conjunto ya está en v${latest}.`);
+  if (latest !== batch.modelSetVersion) throw new CoordError("stale_cache", `La prueba es v${batch.modelSetVersion} y el conjunto ya está en v${latest}. Usa «Llevar decisiones a v${latest}» en el lote.`);
   const effective = withExclusions(batch, excludedItemIds);
   const payloadHash = batchPayloadHash(effective);
   const { nonce, options } = await deps.webauthn.approvalOptions(batchId, payloadHash, batch.modelSetVersion);
@@ -139,7 +139,7 @@ export async function approveBatch(
     // Stale-version check BEFORE touching anything.
     const latest = await source.latestVersion(stored.projectId, stored.modelSetId);
     if (latest !== stored.modelSetVersion) {
-      throw new CoordError("stale_cache", `La prueba es de la versión v${stored.modelSetVersion} pero el conjunto ya está en v${latest}. Re-analiza la versión nueva.`);
+      throw new CoordError("stale_cache", `La prueba es de la versión v${stored.modelSetVersion} pero el conjunto ya está en v${latest}. Usa «Llevar decisiones a v${latest}» en el lote (requiere v${latest} analizada).`);
     }
     const batch = withExclusions(stored, opts.excludedItemIds);
     if (includedItems(batch).length === 0) throw new CoordError("validation_error", "El lote no tiene cambios aplicables en ACC.");

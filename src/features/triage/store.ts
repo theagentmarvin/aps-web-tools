@@ -1204,6 +1204,11 @@ export class TriageStore {
     this.set({ familySplit: s });
   }
 
+  /** A family (grupo) approve / reject counts as one decision of this session (status bar, pace). */
+  recordFamilyDecision(kind: "accept" | "reject", dwellMs = 0) {
+    this.set({ session: [...this.state.session, { at: Date.now(), kind, dwellMs }] });
+  }
+
   /** Replace the families with a fresh GET /tests/:testId/families (after a decision); syncs instance inheritance onto groups. */
   applyFamilies(payload: FamiliesPayload, clearDraftOf?: string) {
     const families = new Map(payload.families.map((f) => [f.id, f]));

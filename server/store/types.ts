@@ -388,6 +388,8 @@ export interface DecisionRecord {
   undoes?: string;
   batchId?: string;
   receivedAt: string;
+  /** G3: copied from this decision (older version) by "Llevar decisiones a vN"; never feeds the learning loop. */
+  carriedFrom?: string;
 }
 
 // ── Batches ────────────────────────────────────────────────────────────────
@@ -466,6 +468,13 @@ export interface ApprovalRecord {
   hmac: string;
 }
 
+export interface BatchRebaseNote {
+  batchId: string;
+  fromVersion: number;
+  carried: number;
+  needsReview: Array<{ label: string; groupId?: string; familyId?: string; reason: string }>;
+}
+
 export interface BatchRecord {
   id: string;
   projectId: string;
@@ -485,6 +494,10 @@ export interface BatchRecord {
   appliedAt?: string;
   lastPreflightAt?: string;
   items: BatchItemRecord[];
+  /** G3: discarded because "Llevar decisiones a vN" created this batch. */
+  supersededBy?: string;
+  /** G3: created by "Llevar decisiones a vN" from an older batch; what could not be carried. */
+  rebasedFrom?: BatchRebaseNote;
   apply?: {
     log: Array<{ at: string; text: string; ok: boolean }>;
     requests: Array<{ idempotencyKey: string; operation: string; status: "succeeded" | "failed" | "skipped"; jobId?: string; createdIssueIds?: string[]; message?: string }>;

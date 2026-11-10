@@ -32,6 +32,7 @@ import type {
   Batch,
   BatchState,
   BatchSummary,
+  BatchRebaseResult,
   Calibration,
   Clash,
   ClashGroup,
@@ -177,6 +178,8 @@ export interface CoordinatorApi {
   updateBatchIssue(batchId: string, itemId: string, issue: Partial<IssueDraft>): Promise<Batch>;
   returnBatchToReview(batchId: string): Promise<Batch>;
   discardBatch(batchId: string): Promise<Batch>;
+  /** G3 "Llevar decisiones a vN": new ready, unapproved batch on the latest analysed version; the old one is superseded. */
+  rebaseBatch(batchId: string): Promise<BatchRebaseResult>;
   /** Signs the HMAC approval; the batch moves to `approved`. Does not write to ACC. */
   approveBatch(batchId: string, req: ApproveRequest): Promise<ApplyStatus>;
   /** WebAuthn step 1: options whose challenge is derived from the exact batch payload (2-minute nonce). */

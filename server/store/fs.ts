@@ -170,7 +170,15 @@ async function acquireFile(lockPath: string, opts: LockOptions): Promise<string>
       await fh.close();
       return nonce;
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      const code = (err as NodeJS.ErrnoException).code;
+      // Windows: opening a lock file that another holder is deleting fails with EPERM/EACCES
+      // (delete pending) instead of EEXIST. It is contention, not a real permission error: retry.
+      if (code === "EPERM" || code === "EACCES") {
+        if (Date.now() > deadline) throw err;
+        await sleep(Math.min(200, 5 + attempt * 5));
+        continue;
+      }
+      if (code !== "EEXIST") throw err;
       const age = await stat(lockPath).then((s) => Date.now() - s.mtimeMs).catch(() => 0);
       if (age > staleMs) {
         await rm(lockPath, { force: true });

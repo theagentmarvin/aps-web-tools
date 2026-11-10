@@ -98,6 +98,7 @@ export function FamilyApproveDialog({ familyId }: { familyId: string }) {
     try {
       await syncExceptions(api, store, f);
       await api.decideFamily(f.id, decisionRequest(store, f, draft!, impact.spotDone, changeRows.length > 0));
+      store.recordFamilyDecision("accept");
       store.applyFamilies(await api.getFamilies(store.state.payload?.test.id ?? ""), f.id);
       toast.show(t("families.approved", { instances: impact.applied.length, clashes: impact.affectedClashes }));
     } catch (e) {
@@ -204,6 +205,7 @@ export function FamilyRejectDialog({ familyId }: { familyId: string }) {
     try {
       const testId = store.state.payload?.test.id ?? "";
       await api.decideFamily(f.id, { testId, decision: "reject", note: [code, note.trim()].filter(Boolean).join(" · ") });
+      store.recordFamilyDecision("reject");
       store.applyFamilies(await api.getFamilies(testId), f.id);
       toast.show(t("families.rejected"));
     } catch (e) {

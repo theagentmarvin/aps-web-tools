@@ -423,6 +423,7 @@ export class HttpCoordinatorApi implements CoordinatorApi {
   }
   returnBatchToReview(id: string) { return this.req<T.Batch>("POST", `/batches/${enc(id)}/return`); }
   discardBatch(id: string) { return this.req<T.Batch>("POST", `/batches/${enc(id)}/discard`); }
+  rebaseBatch(id: string) { return this.req<T.BatchRebaseResult>("POST", `/batches/${enc(id)}/rebase`); }
   approveBatch(id: string, r: T.ApproveRequest) { return this.req<T.ApplyStatus>("POST", `/batches/${enc(id)}/approve`, r); }
   getApproveOptions(batchId: string, excludedItemIds: string[]) {
     return this.get<T.ApproveOptionsResponse>("/webauthn/approve-options", { batch: batchId, exclude: excludedItemIds.length ? excludedItemIds.join(",") : undefined });

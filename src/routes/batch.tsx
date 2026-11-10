@@ -12,7 +12,7 @@ import type { ApplyResponse, ApplyStatus, Batch, IssueDraft } from "~/lib/api/ty
 import { Modal } from "~/lib/components/Modal";
 import { PageHeader } from "~/lib/components/PageHeader";
 import { useToast } from "~/lib/components/Toast";
-import { Banner, Button, EmptyState, ErrorState, SkeletonRows, inputCls } from "~/lib/components/ui";
+import { Banner, Button, EmptyState, ErrorState, SkeletonRows } from "~/lib/components/ui";
 import { ApplyConfirmDialog, changeCount, ApplyProgress, BatchSummaryView, ConflictsList, DryRunPreview, IssuePreviewCard, PreflightStatus, preflightFresh } from "~/features/approvals/BatchParts";
 import { BatchDiffTable } from "~/features/approvals/BatchDiffTable";
 import { BatchStateLabel } from "./approvals";
@@ -38,8 +38,7 @@ export function BatchPage() {
   const [discardOpen, setDiscardOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [apply, setApply] = useState<ApplyStatus | null>(null);
-  const [staleOk, setStaleOk] = useState(false);
-  const [staleNote, setStaleNote] = useState("");
+  const [rebasing, setRebasing] = useState(false);
   const autoRan = useRef(false);
   const { status: authStatus } = useCoordAuth();
   const [approveError, setApproveError] = useState<string | null>(null);
@@ -111,7 +110,8 @@ export function BatchPage() {
   const issues = batch.items.filter((i) => i.operation === "issue.create" && i.issue && !i.conflict);
   const changesCount = batch.items.filter((i) => !i.conflict).reduce((s, i) => s + i.fields.length, 0);
   const excluded = batch.items.filter((i) => i.excluded).length;
-  const canApprove = batch.state === "ready" && preflightFresh(batch) && !preflighting && (!batch.stale || (staleOk && staleNote.trim().length > 0));
+  // G3: a batch on an outdated base is never approved; "Llevar decisiones a vN" makes a new one.
+  const canApprove = batch.state === "ready" && preflightFresh(batch) && !preflighting && !batch.stale;
 
   async function toggle(itemIds: string[], ex: boolean) {
     setBatch(await api.setBatchItemsExcluded(batchId, itemIds, ex));
@@ -124,15 +124,13 @@ export function BatchPage() {
     setBusy(true);
     setApproveError(null);
     const excludedItemIds = batch.items.filter((i) => i.excluded).map((i) => i.id);
-    // The stale-base override is enforced in the UI (checkbox + note); the note travels with the approval.
-    const note = staleNote || undefined;
     try {
       if (demoApproval) {
         // Fixtures / mock: labelled demo approval, no passkey (the live source refuses it).
-        await api.approveBatch(batchId, { confirmWord: word, note, excludedItemIds, demo: true });
+        await api.approveBatch(batchId, { confirmWord: word, excludedItemIds, demo: true });
       } else {
         // Live: WebAuthn ceremony (Windows Hello) over a challenge bound to this exact payload.
-        await approveWithPasskey(api, { batchId, confirmWord: word, excludedItemIds, note });
+        await approveWithPasskey(api, { batchId, confirmWord: word, excludedItemIds });
       }
       setConfirmMode(null);
       setDryRun(null);
@@ -168,6 +166,18 @@ export function BatchPage() {
     toast.show(t("batch.returned"));
     navigate("/aprobaciones");
   }
+  async function rebase() {
+    setRebasing(true);
+    try {
+      const r = await api.rebaseBatch(batchId);
+      toast.show(t("batch.rebaseDone", { batch: r.batch.id, count: r.batch.items.filter((i) => !i.excluded).length, version: r.batch.modelSetVersion }));
+      navigate(`/aprobaciones/${encodeURIComponent(r.batch.id)}`);
+    } catch (err) {
+      toast.show(String(err instanceof Error ? err.message : err), { tone: "error" });
+    } finally {
+      setRebasing(false);
+    }
+  }
   async function discard() {
     await api.discardBatch(batchId);
     setDiscardOpen(false);
@@ -196,10 +206,45 @@ export function BatchPage() {
           </span>
         }
       />
-      {batch.stale && batch.state === "ready" && (
+      {batch.rebase && (
         <Banner tone="warning" className="mb-4 rounded">
-          {t("batch.staleWarning", { latest: batch.latestVersion })}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="flex-1">
+              {t("batch.staleWarning", { latest: batch.latestVersion })}{" "}
+              <span className="text-xs">{batch.rebase.available ? t("batch.rebaseHint", { version: batch.rebase.targetVersion }) : batch.rebase.reason}</span>
+            </span>
+            <Button variant="primary" disabled={!batch.rebase.available || rebasing} onClick={() => void rebase()} title={batch.rebase.reason}>
+              {t("batch.rebaseAction", { version: batch.rebase.targetVersion })}
+            </Button>
+          </div>
         </Banner>
+      )}
+      {batch.supersededBy && (
+        <Banner tone="info" className="mb-4 rounded">
+          <Link to={`/aprobaciones/${encodeURIComponent(batch.supersededBy)}`} className="underline">
+            {t("batch.supersededBy", { batch: batch.supersededBy })}
+          </Link>
+        </Banner>
+      )}
+      {batch.rebasedFrom && (
+        <div className="mb-4 rounded border border-brand-muted/20 bg-white px-3 py-2 text-sm text-gray-700">
+          <p>
+            {t("batch.rebasedFrom", { batch: batch.rebasedFrom.batchId, version: batch.rebasedFrom.fromVersion })}
+          </p>
+          {batch.rebasedFrom.needsReview.length > 0 && (
+            <details className="mt-1">
+              <summary className="cursor-pointer text-xs font-medium text-amber-800">{t("batch.rebaseNeedsReview", { count: batch.rebasedFrom.needsReview.length })}</summary>
+              <ul className="mt-1 max-h-48 space-y-0.5 overflow-auto text-xs">
+                {batch.rebasedFrom.needsReview.map((x, i) => (
+                  <li key={i} className="flex gap-2">
+                    <span className="min-w-0 max-w-[50%] truncate font-medium" title={x.label}>{x.label}</span>
+                    <span className="text-gray-600">{x.reason}</span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </div>
       )}
       {batch.approval && (
         <Banner tone={batch.approval.valid ? "info" : "error"} className="mb-4 rounded">
@@ -240,18 +285,6 @@ export function BatchPage() {
         <div className="space-y-4">
           <BatchSummaryView batch={batch} preflight={<PreflightStatus batch={batch} running={preflighting} />} />
           {excluded > 0 && <p className="text-sm text-gray-600">{t("batch.excludedCount", { count: excluded })}</p>}
-          {batch.stale && batch.state === "ready" && (
-            <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-              <label className="flex items-center gap-2">
-                <input type="checkbox" className="accent-brand" checked={staleOk} onChange={(e) => setStaleOk(e.target.checked)} />
-                {t("batch.staleOverride", { version: batch.modelSetVersion })}
-              </label>
-              <label className="block">
-                <span className="text-xs">{t("batch.staleNote")}</span>
-                <input className={`${inputCls} mt-1 w-full`} value={staleNote} onChange={(e) => setStaleNote(e.target.value)} />
-              </label>
-            </div>
-          )}
           {batch.state === "ready" && (
             <div className="flex flex-wrap items-center gap-2">
               <Button onClick={runPreflight} disabled={preflighting}>

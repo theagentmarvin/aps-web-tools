@@ -32,6 +32,7 @@ export type {
   BatchOperation,
   BatchState,
   BatchSummary,
+  BatchRebaseResult,
   Calibration,
   CalibrationBand,
   Clash,

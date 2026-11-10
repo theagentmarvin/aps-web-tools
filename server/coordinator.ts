@@ -345,9 +345,47 @@ export class Coordinator {
         proposals: proposals.filter((p) => PENDING_STATES.includes(p.state)).length,
         approvedNotApplied: batches.filter((b) => b.state === "approved" || b.state === "partial").length,
         feedbackSinceLastCuration: feedback.filter((f) => !f.curated).length,
+        staleBatches: await this.staleBatches(batches),
       },
       versions: { server: SERVER_VERSION, ruleset: rulesetVersion, engine: `${ENGINE_NAME}@${ENGINE_VERSION}` },
     };
+  }
+
+  /**
+   * G3: can a batch prepared on an older model set version be carried to the latest one
+   * ("Llevar decisiones a vN", human-only in /aprobaciones)? Read-only; shared by the batch page and
+   * get_session_status so both sides see the same state.
+   */
+  async batchRebaseInfo(b: Pick<import("./store/types").BatchRecord, "projectId" | "modelSetId" | "modelSetVersion" | "state">): Promise<{ stale: boolean; latestVersion: number; available: boolean; targetVersion?: number; targetTestKey?: string; reason?: string }> {
+    const latest = await this.source.latestVersion(b.projectId, b.modelSetId).catch(() => b.modelSetVersion);
+    if (latest === b.modelSetVersion) return { stale: false, latestVersion: latest, available: false };
+    const base = { stale: true, latestVersion: latest, targetVersion: latest };
+    if (b.state !== "draft" && b.state !== "ready" && b.state !== "approved") return { ...base, available: false, reason: `El lote está ${b.state}: no se lleva a otra versión.` };
+    const candidates = (await this.store.listTests())
+      .filter((t) => t.modelSetId === b.modelSetId && bareProjectId(t.projectId) === bareProjectId(b.projectId) && t.modelSetVersion === latest)
+      .sort((x, y) => (y.completedOn ?? y.ingestedAt).localeCompare(x.completedOn ?? x.ingestedAt));
+    for (const t of candidates) if (await this.store.hasClassification(t.testKey)) return { ...base, available: true, targetTestKey: t.testKey };
+    return { ...base, available: false, reason: `La versión v${latest} no está analizada: usa «Analizar v${latest}» en el espacio de trabajo y vuelve a este lote.` };
+  }
+
+  /** Unapplied batches whose model set moved on (get_session_status.pending.staleBatches). */
+  private async staleBatches(batches: readonly import("./store/types").BatchRecord[]) {
+    const out: Array<{ batchId: string; version: number; latestVersion: number; canRebase: boolean; hint: string }> = [];
+    for (const b of batches) {
+      if (b.state !== "draft" && b.state !== "ready" && b.state !== "approved") continue;
+      const r = await this.batchRebaseInfo(b).catch(() => undefined);
+      if (!r?.stale) continue;
+      out.push({
+        batchId: b.id,
+        version: b.modelSetVersion,
+        latestVersion: r.latestVersion,
+        canRebase: r.available,
+        hint: r.available
+          ? `Pide al coordinador: usa «Llevar decisiones a v${r.latestVersion}» en /aprobaciones/${b.id} (solo humanos; luego se aprueba de nuevo con passkey).`
+          : `${r.reason ?? ""} Luego el coordinador usa «Llevar decisiones a v${r.latestVersion}» en /aprobaciones/${b.id}.`.trim(),
+      });
+    }
+    return out;
   }
 
   async setActiveContext(input: { projectId: string; modelSetId?: string; testKey?: string }) {

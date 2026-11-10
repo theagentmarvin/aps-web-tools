@@ -86,7 +86,7 @@ Estados posibles: **parity** · **agent-missing** · **human-missing** · **inte
 | 31 | Separar una instancia (detach) | `POST /families/:id/detach` existe, pero la UI no lo llama | `propose_group_action` con `move_groups`/`detach_clashes` | **human-missing** (UI) |
 | 32 | Fusionar familias | `POST /families/merge` existe, pero la UI no lo llama | `propose_group_action` con `merge_families`/`split_family` | **human-missing** (UI) |
 | 33 | Aplicar o rechazar una reagrupación propuesta | `POST /proposals/:id/regroup` `{testId, decision}` (bug de `http.ts` corregido; test de contrato `tests/server/api-route-contract.test.ts`) | Crea la propuesta | parity (WS-E) |
-| 34 | Contar las decisiones de familia en los lotes | — | — | en curso (WS-A) |
+| 34 | Contar las decisiones de familia en los lotes | Barra del espacio de trabajo (`progress.ts`: listas = decisiones de grupo sin lote + familias con `pendingSend` > 0; hechas incluye instancias heredadas), pie «N decisiones», página de proyecto | `TriageFamily.pendingSend` en `families`/triage; el lote ya incluía las familias | parity |
 | 35 | Plantilla de incidencia por familia, tipo de incidencia, enlaces profundos a ACC | — | — | en curso (WS-B) |
 | 36 | Familias más gruesas y etiquetas de par | — | — | en curso (WS-C) |
 
@@ -127,7 +127,7 @@ Estados posibles: **parity** · **agent-missing** · **human-missing** · **inte
 |---|---|---|---|---|
 | 53 | Enviar a aprobación (lote `ready`) | `POST /batches` · triage | Las propuestas caen solas en el lote borrador | intentional: el humano arma el lote |
 | 54 | Ver lotes, su detalle y el estado de aplicación | `GET /batches`, `/batches/:id`, `…/apply-status` · `approvals.tsx`, `batch.tsx` | `list_batches`, `get_batch` (estado, ítems por operación, último preflight, validez de la aprobación, `stale`; sin firmas, nonces ni nombres) · CC, Chat; nunca subagentes | parity (WS-E) |
-| 55 | Preflight contra ACC, lote obsoleto y re-base | `POST /batches/:id/preflight` | Solo `apply` con dry-run sobre un lote aprobado | en curso (WS-A): el re-base es humano y el agente lo verá |
+| 55 | Preflight contra ACC, lote obsoleto y re-base | `POST /batches/:id/preflight`; `POST /batches/:id/rebase` «Llevar decisiones a vN» (lote nuevo `ready` sin aprobar; el viejo queda `discarded` con `supersededBy`). Sin «Aplicar igualmente» | `get_session_status.pending.staleBatches` (lote, versión, `canRebase`, pista hacia `/aprobaciones/L-…`); solo apply con dry-run | intentional: el re-base arma un lote y eso es humano (regla 1); el agente lo ve y lo señala |
 | 56 | Excluir ítems o editar la incidencia de un ítem | `PATCH /batches/:id/items[/:itemId/issue]` · `BatchDiffTable` | Retirar y volver a redactar (`withdraw` + `draft_issue`) antes de que el lote pase a `ready` | intentional: curar el lote es humano (tipo y asignatario: WS-B) |
 | 57 | Devolver o descartar un lote | `POST …/return`, `…/discard` | No tiene | intentional (regla 1) |
 | 58 | Aprobar con WebAuthn; registrar passkey | `POST …/approve`, `/webauthn/*` · `batch.tsx`, `passkey.tsx` | No tiene | intentional (regla 1; harness-design §8) |

@@ -645,6 +645,8 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
   add("PATCH", "/batches/:batchId/items/:itemId/issue", async ({ params, body }) => ui.updateIssue(params.batchId, params.itemId, IssuePatch.parse(body ?? {}) as never), true);
   add("POST", "/batches/:batchId/return", async ({ params, user }) => ui.returnToReview(params.batchId, await user()), true);
   add("POST", "/batches/:batchId/discard", async ({ params, user }) => ui.discard(params.batchId, await user()), true);
+  // G3 "Llevar decisiones a vN": human only (no MCP tool); the new batch still needs a fresh approval.
+  add("POST", "/batches/:batchId/rebase", async ({ params, user }) => ui.rebaseBatch(params.batchId, await user()), true);
   add(
     "POST",
     "/batches/:batchId/approve",

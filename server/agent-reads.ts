@@ -30,18 +30,13 @@ export interface BatchStaleness {
   staleReason?: string;
 }
 
-/**
- * Is the batch built on an older model-set version than the latest one?
- * Single switch point: when workstream A's `batchRebaseInfo` lands, read it here (it also knows
- * whether a re-base is possible) instead of comparing versions.
- */
-async function stalenessOf(coord: Coordinator, b: BatchRecord, cache: Map<string, Promise<number | null>>): Promise<BatchStaleness> {
-  const key = `${bareProjectId(b.projectId)}|${b.modelSetId}`;
-  if (!cache.has(key)) cache.set(key, coord.source.latestVersion(b.projectId, b.modelSetId).then((v) => v, () => null));
-  const latest = await cache.get(key)!;
-  if (latest === null) return { stale: false, latestVersion: null };
-  const stale = latest !== b.modelSetVersion && (b.state === "draft" || b.state === "ready" || b.state === "approved");
-  return { stale, latestVersion: latest, ...(stale ? { staleReason: `El lote es de la versión v${b.modelSetVersion}; la última es v${latest}. Un humano debe rehacerlo en la UI.` } : {}) };
+/** Is the batch built on an older model-set version? Same source of truth as the batch page (Coordinator.batchRebaseInfo). */
+async function stalenessOf(coord: Coordinator, b: BatchRecord, _cache: Map<string, Promise<number | null>>): Promise<BatchStaleness> {
+  const r = await coord.batchRebaseInfo(b).catch(() => undefined);
+  if (!r) return { stale: false, latestVersion: null };
+  if (!r.stale || (b.state !== "draft" && b.state !== "ready" && b.state !== "approved")) return { stale: false, latestVersion: r.latestVersion };
+  const how = r.available ? `un humano usa «Llevar decisiones a v${r.latestVersion}» en /aprobaciones/${b.id}` : (r.reason ?? "un humano debe rehacerlo en la UI");
+  return { stale: true, latestVersion: r.latestVersion, staleReason: `El lote es de la versión v${b.modelSetVersion}; la última es v${r.latestVersion}: ${how}.` };
 }
 
 function counts(b: BatchRecord) {

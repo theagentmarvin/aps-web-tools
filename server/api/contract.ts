@@ -660,6 +660,11 @@ export interface TriageFamily {
   acc?: AccState;
   /** Instances per change word. */
   changeCounts?: ChangeCounts;
+  /**
+   * Inherited instances of an approved (non-escalate) decision not yet in a batch: what
+   * "Enviar a aprobación" would send for this family (0 = nothing pending).
+   */
+  pendingSend?: number;
 }
 /** GET /tests/:testId/families */
 export interface FamiliesPayload { testId: string; families: TriageFamily[]; problemTypes: ProblemTypeInfo[] }
@@ -899,7 +904,21 @@ export interface Batch {
   /** Approval record summary (no signature). */
   approval?: { approvedBy: string; approvedAt: string; expiresAt: string; channel: "web-ui" | "cli"; valid: boolean; reason?: string };
   items: BatchItem[];
+  /** G3, only when stale: can "Llevar decisiones a vN" run (vN analysed, batch not applied)? */
+  rebase?: { available: boolean; targetVersion: number; reason?: string };
+  /** G3: this batch was discarded and replaced by the given one (re-based to a newer version). */
+  supersededBy?: string;
+  /** G3: this batch was re-based from an older one; items that were not carried need a review. */
+  rebasedFrom?: BatchRebaseNote;
 }
+export interface BatchRebaseNote {
+  batchId: string;
+  fromVersion: number;
+  carried: number;
+  needsReview: Array<{ label: string; groupId?: string; familyId?: string; reason: string }>;
+}
+/** POST /batches/:id/rebase (human only). The new batch is ready and UNAPPROVED. */
+export interface BatchRebaseResult { batch: Batch; previous: string; needsReview: BatchRebaseNote["needsReview"] }
 export type BatchSummary = Omit<Batch, "items">;
 export interface PreflightResult { at: string; conflicts: number; batch: Batch }
 
