@@ -216,6 +216,7 @@ export type TriagePayloadWithFamilies = WirePayload;
 
 // M2 (F1 decision memory + X3 coordinator questions): wire types from the server contract.
 export type { CoordinatorQuestion, InheritedDecision, QuestionAnswerRequest, QuestionOption } from "../../../server/api/contract";
+export type { InheritConfirmReason, InheritedConfirmItem, InheritedConfirmList, InheritedConfirmRequest, InheritedConfirmResult } from "../../../server/api/contract";
 export type AgentQuestion = import("../../../server/api/contract").CoordinatorQuestion;
 
 /** Verification reject reasons (M3, F2). Labels in i18n reasons.V01… */

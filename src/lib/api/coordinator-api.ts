@@ -9,6 +9,9 @@
  */
 import type {
   AgentStatus,
+  InheritedConfirmList,
+  InheritedConfirmRequest,
+  InheritedConfirmResult,
   ApplyRequest,
   ClashGrid,
   DisciplineConfig,
@@ -197,6 +200,9 @@ export interface CoordinatorApi {
   listCorrections(params?: { projectId?: string; limit?: number; cursor?: string }): Promise<Page<CorrectionRow>>;
   getCalibration(): Promise<Calibration>;
 
+  // G7 (ws-C): "Confirmar heredadas sin cambio" (optional: the mock may not implement it)
+  getInheritedConfirmations?(testId: string): Promise<InheritedConfirmList>;
+  confirmInheritedBulk?(testId: string, req: Omit<InheritedConfirmRequest, "testId">): Promise<InheritedConfirmResult>;
 }
 
 /** Error with an HTTP-ish status and a stable code for the UI to translate. */

@@ -169,7 +169,8 @@ export type Dialog =
   | { type: "send" }
   | { type: "familyApprove"; familyId: string }
   | { type: "familyReject"; familyId: string }
-  | { type: "issueReject"; issueId: string };
+  | { type: "issueReject"; issueId: string }
+  | { type: "inheritedConfirm" };
 
 interface UndoEntry {
   label: string;

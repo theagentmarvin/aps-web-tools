@@ -8,6 +8,7 @@ import { createPortal } from "react-dom";
 import { Link } from "react-router";
 import { useIngest } from "~/features/modelset/useIngest";
 import { useToast } from "~/lib/components/Toast";
+import { useApi } from "~/lib/api";
 import { IconChevronDown, IconInherited, IconMore, IconRefresh, IconSparkle, Spinner } from "~/lib/components/icons";
 import { useI18n, useT, type TKey } from "~/i18n";
 import type { Priority, Validity } from "~/lib/api/types";
@@ -164,6 +165,9 @@ export function WorkspaceActions({
     if (uncached) void ingest.start(uncached.accTestId);
   }
   const inheritedCount = useTriage(store, (s) => s.rows.filter((r) => !r.nested && !s.latest.has(r.id) && s.proposals.get(r.id)?.inherited).length);
+  // G7: unchanged inherited decisions that policy re-asks (bulk dialog; changed ones stay one by one).
+  const policyInherited = useTriage(store, (s) => [...s.groups.values()].filter((g) => !s.latest.has(g.id) && g.inherited?.needsConfirmation && g.inherited.confirmReasons?.length && !g.inherited.confirmReasons.includes("changed")).length);
+  const api = useApi();
   if (!payload) return null;
   const tip = [
     t("workspace.progress", { done: progress.done, total: progress.total }),
@@ -226,7 +230,7 @@ export function WorkspaceActions({
           className="relative inline-flex h-7 w-7 items-center justify-center rounded text-gray-600 hover:bg-brand-surface hover:text-brand"
         >
           <IconMore size={16} />
-          {(inheritedCount > 0 || (compact && uncached && !ingesting)) && <span aria-hidden className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-brand" />}
+          {(inheritedCount > 0 || policyInherited > 0 || (compact && uncached && !ingesting)) && <span aria-hidden className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-brand" />}
         </button>
         {menu && (
           <div role="menu" className="absolute right-0 top-9 z-40 w-64 rounded-lg border border-brand-muted/20 bg-white py-1 shadow-lg" onKeyDown={(e) => e.key === "Escape" && close()}>
@@ -257,6 +261,20 @@ export function WorkspaceActions({
               <span className="flex-1">{rightTab === "agent" ? t("chat.tabDetail") : t("chat.tabAgent")}</span>
               <Kbd>Shift+C</Kbd>
             </button>
+            {policyInherited > 0 && api.getInheritedConfirmations && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  store.setDialog({ type: "inheritedConfirm" });
+                  close();
+                }}
+                className={item}
+              >
+                <IconInherited size={14} />
+                {t("inheritedBulk.menu", { count: policyInherited })}
+              </button>
+            )}
             {inheritedCount > 0 && (
               <button
                 type="button"

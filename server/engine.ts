@@ -406,6 +406,11 @@ export function runEngine(input: EngineInput): EngineOutput {
     const sub: EngineGroup = { ...eg, id: part.id, memberKeys: part.keys, mcClashIds: part.mcClashIds };
     draftFor(sub, representativeOf(part.keys.map((k) => byKey.get(k)).filter((c): c is ClassifiedClash => !!c)));
   }
+  // G23: the issue owner follows the group's (system) responsible discipline.
+  for (const g of groups) {
+    const d = issueDrafts[g.id];
+    if (d && d.responsibleDiscipline !== g.responsibleDiscipline) d.responsibleDiscipline = g.responsibleDiscipline;
+  }
   const hubExt = new Map(res.groups.map((g) => [g.id, g.hubElement?.externalId]));
   // Unique, self-explaining titles (same type on the same level → state the element).
   disambiguateTitles(groups, {

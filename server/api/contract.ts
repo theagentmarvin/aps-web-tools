@@ -307,6 +307,11 @@ export interface InheritedDecision {
   ref: string;
   /** true = listed by "Aceptar heredadas" for an explicit confirmation (family instance pending). */
   needsConfirmation?: boolean;
+  /**
+   * G7: why a confirmation is needed. "changed" (clashes, membership or the engine proposal changed:
+   * one by one) or policy reasons on an unchanged item (bulk "Confirmar heredadas sin cambio").
+   */
+  confirmReasons?: InheritConfirmReason[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -658,6 +663,8 @@ export interface TriageFamily {
   acc?: AccState;
   /** Instances per change word. */
   changeCounts?: ChangeCounts;
+  /** G16: decisions of older family ids (previous signature) that disagree here — a human reviews them. */
+  legacyDecisions?: Array<{ familyId: string; version: number; validity: Validity; action: FamilyAction; responsibleDiscipline: string; decidedAt: string }>;
 }
 /** GET /tests/:testId/families */
 export interface FamiliesPayload { testId: string; families: TriageFamily[]; problemTypes: ProblemTypeInfo[] }
@@ -1254,4 +1261,48 @@ export interface ChatHistory {
   testKey: string;
   messages: ChatHistoryMessage[];
   running?: string;
+}
+
+// G7 (ws-C): bulk confirmation of inherited decisions
+/** G7: policy reasons that force a human look at an inherited decision, plus "changed". */
+export type InheritConfirmReason = "changed" | "critical" | "structural_opening" | "life_safety";
+
+/** G7: one row of "Confirmar heredadas sin cambio". */
+export interface InheritedConfirmItem {
+  groupId: string;
+  title: string;
+  familyId?: string;
+  source: "human" | "family";
+  ref: string;
+  fromVersion: number;
+  decision: string;
+  validity?: Validity;
+  effect: "issue" | "close" | "none";
+  reasons: Array<Exclude<InheritConfirmReason, "changed">>;
+}
+
+export interface InheritedConfirmList {
+  testId: string;
+  items: InheritedConfirmItem[];
+  /** Pending confirmations that cannot be bulk-confirmed (changed since the decision): one by one. */
+  changedCount: number;
+  /** Agent proposals (propose_group_action confirm_inherited) waiting for a human. */
+  proposals: Array<{ id: string; groupIds: string[]; rationale: string; createdAt: string }>;
+}
+
+export interface InheritedConfirmRequest {
+  testId: string;
+  groupIds: string[];
+  /** Typed by the coordinator: must equal groupIds.length. */
+  typedCount: number;
+  /** Separate acknowledgements: required when any item is a structural opening / life safety. */
+  acknowledgeStructural?: boolean;
+  acknowledgeLifeSafety?: boolean;
+  /** The agent proposal this confirms (optional). */
+  proposalId?: string;
+}
+
+export interface InheritedConfirmResult {
+  confirmed: string[];
+  list: InheritedConfirmList;
 }

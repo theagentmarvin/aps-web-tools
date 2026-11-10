@@ -1957,6 +1957,68 @@ export class CoordinatorUi {
     return this.family(test.testKey, v.id);
   }
 
+  /** G7: "Confirmar heredadas sin cambio" — unchanged items that policy re-asks, plus agent proposals. */
+  async inheritedConfirmList(testId: string): Promise<C.InheritedConfirmList> {
+    const { test, items, changedCount } = await this.core.inheritedConfirmables(testId);
+    const eligible = new Set(items.map((i) => i.groupId));
+    const proposals = (await this.store.listProposals((p) => p.testKey === test.testKey && p.payload.kind === "group_action" && p.payload.action.type === "confirm_inherited" && PENDING.has(p.state)))
+      .map((p) => ({ id: p.id, groupIds: p.target.groupIds.filter((g) => eligible.has(g)), rationale: sanitizeModelText(p.rationale ?? "", 600), createdAt: p.createdAt }))
+      .filter((p) => p.groupIds.length > 0);
+    return { testId: test.testKey, items: items.map((i) => ({ ...i, title: sanitizeModelText(i.title, 160) })), changedCount, proposals };
+  }
+
+  /**
+   * G7: bulk confirmation of inherited decisions (human only). Every id must be in the list above
+   * (unchanged, policy-gated, never real → closure); the typed count must match; structural openings
+   * and life-safety items need their own acknowledgement. Audited per item.
+   */
+  async confirmInheritedBulk(body: C.InheritedConfirmRequest, user: HumanUser): Promise<C.InheritedConfirmResult> {
+    const { test, items } = await this.core.inheritedConfirmables(body.testId);
+    const ids = [...new Set(body.groupIds)];
+    if (!ids.length) throw new CoordError("validation_error", "No hay ubicaciones que confirmar.");
+    if (body.typedCount !== ids.length) throw new CoordError("validation_error", `Escribe la cantidad exacta (${ids.length}) para confirmar.`);
+    const byId = new Map(items.map((i) => [i.groupId, i]));
+    const bad = ids.filter((g) => !byId.has(g));
+    if (bad.length) throw new CoordError("validation_error", `No son heredadas sin cambio pendientes de confirmar: ${bad.slice(0, 5).join(", ")}`, "Las que cambiaron se confirman una por una.");
+    const chosen = ids.map((g) => byId.get(g)!);
+    if (chosen.some((i) => i.reasons.includes("structural_opening")) && !body.acknowledgeStructural) {
+      throw new CoordError("validation_error", "Hay pasadas en estructura: confirma por separado que siguen sujetas a aprobación del calculista.");
+    }
+    if (chosen.some((i) => i.reasons.includes("life_safety")) && !body.acknowledgeLifeSafety) {
+      throw new CoordError("validation_error", "Hay ítems de seguridad de las personas: confírmalos por separado.");
+    }
+    let proposal: ProposalRecord | undefined;
+    if (body.proposalId) {
+      proposal = await this.store.getProposal(body.proposalId);
+      if (!proposal || proposal.payload.kind !== "group_action" || proposal.payload.action.type !== "confirm_inherited") throw new CoordError("not_found", `Propuesta ${body.proposalId} no existe`);
+      if (!PENDING.has(proposal.state)) throw new CoordError("invalid_state", `La propuesta ${proposal.id} está ${proposal.state}.`);
+      if (proposal.testKey && proposal.testKey !== test.testKey) throw new CoordError("validation_error", `La propuesta ${proposal.id} es del test ${proposal.testKey}.`);
+    }
+    const at = nowIso(this.core.now());
+    await this.core.families.update(test.projectId, test.modelSetId, user, (st) => {
+      for (const i of chosen) {
+        if (i.source === "family") {
+          const m = /^(F-[0-9A-Za-z]+)@v([0-9]+)$/.exec(i.ref);
+          const fs = m ? st.families[m[1]!] : undefined;
+          if (!m || !fs) throw new CoordError("invalid_state", `Decisión de familia ${i.ref} no encontrada.`);
+          fs.confirmed.push({ groupId: i.groupId, version: Number(m[2]), by: user.id, at, testKey: test.testKey });
+        } else {
+          const perTest = ((st.inheritConfirmations ??= {})[test.testKey] ??= {});
+          perTest[i.groupId] = { ref: i.ref, by: user.id, at, reasons: i.reasons };
+        }
+      }
+    }, { action: "inherited.bulk_confirmed", testKey: test.testKey, targetIds: ids.slice(0, 20), details: { confirmed: ids.length, structural: chosen.filter((i) => i.reasons.includes("structural_opening")).length, lifeSafety: chosen.filter((i) => i.reasons.includes("life_safety")).length, proposalId: proposal?.id ?? null } });
+    const actor: Actor = { type: "user", id: user.id, name: user.name };
+    for (const i of chosen) {
+      await this.store.audit({ actor, action: "inherited.confirmed", projectId: test.projectId, modelSetId: test.modelSetId, testId: test.testKey, targetIds: [i.groupId, i.ref], details: { source: i.source, reasons: i.reasons.join(","), fromVersion: i.fromVersion, decision: i.decision, effect: i.effect, bulk: ids.length, proposalId: proposal?.id ?? null } });
+    }
+    if (proposal) {
+      await this.store.transitionProposal(proposal.id, "approved", user.name);
+      await this.store.transitionProposal(proposal.id, "applied", user.name, `confirmadas ${ids.length} heredadas (local)`);
+    }
+    return { confirmed: ids, list: await this.inheritedConfirmList(test.testKey) };
+  }
+
   async detachInstance(familyId: string, body: { testId: string; groupId: string }, user: HumanUser): Promise<C.FamiliesPayload> {
     const { test, views } = await this.core.familyViewsFor(body.testId);
     const v = assertFamilyInTest(views, familyId);

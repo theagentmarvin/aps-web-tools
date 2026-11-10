@@ -156,6 +156,17 @@ ${f.signature}`}>
             {f.id} · {t("list.clashesCount", { count: f.rawClashCount })}
           </span>
         </div>
+        {/* G16: decisions of older grupos (previous signature) that disagree here: never applied, a human reviews them. */}
+        {!!f.legacyDecisions?.length && (
+          <div role="note" className="mt-1.5 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-900">
+            <p className="font-medium">{t("inheritedBulk.legacyTitle")}</p>
+            <ul className="mt-0.5 space-y-0.5">
+              {f.legacyDecisions.map((d) => (
+                <li key={`${d.familyId}@${d.version}`}>{t("inheritedBulk.legacyRow", { family: d.familyId, version: d.version, validity: t(VALIDITY_KEY[d.validity]), responsible: d.responsibleDiscipline })}</li>
+              ))}
+            </ul>
+          </div>
+        )}
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden" id="triage-detail" tabIndex={-1}>

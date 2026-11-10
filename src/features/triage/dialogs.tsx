@@ -17,6 +17,7 @@ import { BULK_CAP, REASONS_BY_FIELD, changesFromEdits, isRisky, useTriageContext
 import { parseKey, useTriage, type Dialog } from "./store";
 import { FamilyApproveDialog, FamilyRejectDialog } from "./FamilyDialogs";
 import { IssueRejectDialog } from "./IssueViews";
+import { InheritedConfirmDialog } from "./InheritedConfirmDialog";
 
 // ── Reason code picker (§4.4) ──────────────────────────────────────
 
@@ -387,6 +388,8 @@ export function WorkspaceDialogs() {
       return <IssueRejectDialog key={dialog.issueId} issueId={dialog.issueId} />;
     case "familyReject":
       return <FamilyRejectDialog key={dialog.familyId} familyId={dialog.familyId} />;
+    case "inheritedConfirm":
+      return <InheritedConfirmDialog />;
     default:
       return null;
   }

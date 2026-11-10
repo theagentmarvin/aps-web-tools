@@ -31,9 +31,9 @@ import { applyDecisionRefs, updateLedger, type LedgerDecisionRef } from "../core
 import { accIndexOf, accResolvedByGroup, CHANGE_PENETRATION_MM, clashChanges, clashDeltas, detectScopeChanges, elementTypesOf, itemDelta, outOfScopePredicate } from "./cycle";
 import type { AccSnapshot } from "../core/ingest/ledger";
 import type { QuestionOption } from "./api/contract";
-import type { AgendaPayload, ChangeKind, InheritedDecision, IssueChecksPayload, IssueVerdict, MeetingNote, SavedViewerView, ScopeChange } from "./api/contract";
-import { familyViews, FamilyDecisionStore, type FamilyView, type FamilyViewContext, type ModelSetFamilies } from "./families";
-import { PROBLEM_TYPES } from "../core/families";
+import type { AgendaPayload, ChangeKind, InheritConfirmReason, InheritedConfirmItem, InheritedDecision, IssueChecksPayload, IssueVerdict, MeetingNote, SavedViewerView, ScopeChange } from "./api/contract";
+import { familyViews, FamilyDecisionStore, inheritPolicyReasons, legacyFamilyMapping, type FamilyView, type FamilyViewContext, type ModelSetFamilies } from "./families";
+import { PROBLEM_TYPES, type SignatureParts } from "../core/families";
 import { assertCode, DisciplineStore, inCode, outCode, suggestedToken, validCodes } from "./disciplines";
 import type { ClashDiff } from "../core/types";
 import { checkAgentText, referencedIds, sanitizeModelText, untrusted, type Untrusted } from "./sanitize";
@@ -928,9 +928,13 @@ export class Coordinator {
     const ledger = await this.ledger.load(test.projectId, test.modelSetId).catch(() => undefined);
     const versionOf = new Map((await this.store.listTests()).map((t) => [t.testKey, t.modelSetVersion]));
     const famInst = new Map<string, { inst: FamilyView["instances"][number]; view: FamilyView }>();
+    let famUnchanged: ((groupId: string, familyId: string) => boolean) | undefined;
     if (cls.families) {
-      for (const v of (await this.familyViewsFor(test.testKey)).views) for (const i of v.instances) famInst.set(i.groupId, { inst: i, view: v });
+      const fv = await this.familyViewsFor(test.testKey);
+      famUnchanged = fv.unchanged;
+      for (const v of fv.views) for (const i of v.instances) famInst.set(i.groupId, { inst: i, view: v });
     }
+    const confirmations = (await this.families.load(test.projectId, test.modelSetId)).inheritConfirmations?.[test.testKey] ?? {};
     const clash = new Map(cls.clashes.map((c) => [c.id, c]));
     for (const g of cls.groups) {
       if (own.has(g.id)) continue;
@@ -949,9 +953,13 @@ export class Coordinator {
         const from = versionOf.get(dec.testKey) ?? test.modelSetVersion;
         const effect = dec.action === "create_issue" || dec.action === "hygiene_issue" ? "issue" : dec.action === "close" || dec.action === "mark_reviewed" ? "close" : "none";
         if (from < test.modelSetVersion && !(effect === "close" && g.validity === "real")) {
-          // Only an unchanged, not-gated instance inherits silently (familyViews "stable"); anything else is pending.
-          const pending = f.inst.inheritance.state === "inherited_pending" || g.reviewState === "needs_review";
-          out.set(g.id, { fromVersion: from, fromTestKey: dec.testKey, source: "family", decision: dec.action, validity: dec.validity, effect, decidedAt: dec.decidedAt, ref: `${dec.familyId}@v${dec.version}`, ...(pending ? { needsConfirmation: true } : {}) });
+          // G7: an unchanged instance keeps the decision unless policy forces a look (familyViews "stable");
+          // a confirmed instance (families[id].confirmed for this test) is inherited. Anything else is pending.
+          const pending = f.inst.inheritance.state === "inherited_pending";
+          const policy = inheritPolicyReasons(g);
+          const same = famUnchanged?.(g.id, f.view.id) ?? false;
+          const confirmReasons: InheritConfirmReason[] = !pending ? [] : same && policy.length ? policy : ["changed", ...policy];
+          out.set(g.id, { fromVersion: from, fromTestKey: dec.testKey, source: "family", decision: dec.action, validity: dec.validity, effect, decidedAt: dec.decidedAt, ref: `${dec.familyId}@v${dec.version}`, ...(pending ? { needsConfirmation: true, confirmReasons } : {}) });
           continue;
         }
       }
@@ -967,11 +975,51 @@ export class Coordinator {
       });
       const r = refs.reduce((m, x) => (x!.decidedAt > m!.decidedAt ? x : m))!;
       if (!unchanged || (r.effect === "close" && g.validity === "real")) continue;
-      out.set(g.id, { fromVersion: r.decidedAtVersion, fromTestKey: r.testKey, source: "human", decision: r.decision, ...(r.validity ? { validity: r.validity as Validity } : {}), effect: r.effect, decidedAt: r.decidedAt, ...(r.decidedBy ? { decidedBy: r.decidedBy } : {}), ref: r.ref });
+      // G7: an "accept" accepted the engine's proposal of that version: when the engine now proposes another
+      // validity, accepting again is not the same decision (one by one). Policy reasons re-ask until confirmed.
+      const engineChanged = r.decision === "accept" && !!r.validity && r.validity !== g.validity;
+      const policy = confirmations[g.id]?.ref === r.ref ? [] : inheritPolicyReasons(g);
+      const confirmReasons: InheritConfirmReason[] = [...(engineChanged ? ["changed" as const] : []), ...policy];
+      out.set(g.id, { fromVersion: r.decidedAtVersion, fromTestKey: r.testKey, source: "human", decision: r.decision, ...(r.validity ? { validity: r.validity as Validity } : {}), effect: r.effect, decidedAt: r.decidedAt, ...(r.decidedBy ? { decidedBy: r.decidedBy } : {}), ref: r.ref, ...(confirmReasons.length ? { needsConfirmation: true, confirmReasons } : {}) });
     }
     return out;
   }
 
+
+  /**
+   * G7: inherited decisions that need a confirmation ONLY because policy re-asks (critical, structural
+   * opening, life safety) on an unchanged item: the "Confirmar heredadas sin cambio" list. Changed
+   * items are counted, never listed (one by one). A closure is never listed for a real group.
+   */
+  async inheritedConfirmables(testKey?: string): Promise<{ test: TestRecord; items: InheritedConfirmItem[]; changedCount: number }> {
+    const { test, cls } = await this.requireClassified(testKey);
+    const inh = await this.inheritanceFor(test, cls, await this.accFor(test, cls.clashes));
+    const items: InheritedConfirmItem[] = [];
+    let changedCount = 0;
+    for (const g of cls.groups) {
+      const i = inh.get(g.id);
+      if (!i?.needsConfirmation) continue;
+      const reasons = i.confirmReasons ?? ["changed"];
+      if (i.source === "acc" || reasons.includes("changed") || (i.effect === "close" && g.validity === "real")) {
+        changedCount++;
+        continue;
+      }
+      const familyId = i.source === "family" ? i.ref.replace(/@v[0-9]+$/, "") : g.familyId;
+      items.push({
+        groupId: g.id,
+        title: g.title,
+        ...(familyId ? { familyId } : {}),
+        source: i.source,
+        ref: i.ref,
+        fromVersion: i.fromVersion,
+        decision: i.decision,
+        ...(i.validity ? { validity: i.validity } : {}),
+        effect: i.effect,
+        reasons: reasons.filter((r): r is Exclude<InheritConfirmReason, "changed"> => r !== "changed"),
+      });
+    }
+    return { test, items, changedCount };
+  }
 
   get questions(): QuestionStore {
     return (this.questionStore ??= new QuestionStore(this.store));
@@ -1578,7 +1626,7 @@ export class Coordinator {
         return {
           humanReview: info.needsHuman(g),
           delta: info.groupDelta(g),
-          previousDecision: inh ? { source: inh.source, version: inh.fromVersion, validity: inh.validity ?? null, action: inh.decision, effect: inh.effect } : null,
+          previousDecision: inh ? { source: inh.source, version: inh.fromVersion, validity: inh.validity ?? null, action: inh.decision, effect: inh.effect, ...(inh.needsConfirmation ? { needsConfirmation: true, confirmReasons: inh.confirmReasons ?? ["changed"] } : {}) } : null,
         };
       })()),
       reviewReasons: g.reviewReasons,
@@ -1808,32 +1856,79 @@ export class Coordinator {
   private familyStore?: FamilyDecisionStore;
 
   /** Families of a classified test with decisions, merges, detaches and inheritance applied. */
-  async familyViewsFor(testKey?: string): Promise<{ test: TestRecord; cls: ClassificationRecord; views: FamilyView[] }> {
+  async familyViewsFor(testKey?: string): Promise<{ test: TestRecord; cls: ClassificationRecord; views: FamilyView[]; unchanged?: (groupId: string, familyId: string) => boolean }> {
     const { test, cls } = await this.requireClassified(testKey);
     if (!cls.families) throw new CoordError("not_classified", `El test ${test.testKey} se clasificó antes de existir las familias.`, "Vuelve a ejecutar run_classification.");
     const st = await this.families.load(test.projectId, test.modelSetId);
-    return { test, cls, views: familyViews(cls.families, cls.groups, st, await this.familyViewContext(test, cls, st)) };
+    const ctx = await this.familyViewContext(test, cls, st);
+    return { test, cls, views: familyViews(cls.families, cls.groups, ctx.state, ctx), unchanged: ctx.unchanged };
   }
 
-  /** Review fix #1: when may a family decision of another version be inherited by an instance? */
-  async familyViewContext(test: TestRecord, cls: ClassificationRecord, st: ModelSetFamilies): Promise<FamilyViewContext> {
+  /**
+   * Review fix #1: when may a family decision of another version be inherited by an instance?
+   * G7: when every clash is unchanged since the decision AND no policy reason (critical, structural
+   * opening, life safety) forces a human look; rule-only gate reasons (confidence, size, unmatched,
+   * rule conflict) no longer re-ask an unchanged, human-decided instance.
+   * G16: decisions of family ids from an older signature are mapped onto today's families (`state`
+   * carries the non-persisted aliases; disagreeing ones surface as `legacyReview`).
+   */
+  async familyViewContext(test: TestRecord, cls: ClassificationRecord, st: ModelSetFamilies): Promise<FamilyViewContext & { state: ModelSetFamilies; unchanged: (groupId: string, familyId: string) => boolean }> {
     const ledger = await this.ledger.load(test.projectId, test.modelSetId).catch(() => undefined);
     const gById = new Map(cls.groups.map((g) => [g.id, g]));
     const clash = new Map(cls.clashes.map((c) => [c.id, c]));
+    // Parts of decided families that are not in this test, from the classification they were decided on.
+    const current = new Set((cls.families ?? []).map((f) => f.id));
+    const oldParts = new Map<string, SignatureParts>();
+    const decidedOn = new Set(Object.entries(st.families).filter(([id, fs]) => !current.has(id) && fs.versions.length).map(([, fs]) => fs.versions[fs.versions.length - 1]!.testKey));
+    for (const tk of decidedOn) {
+      if (tk === test.testKey) continue;
+      for (const [id, parts] of await this.familyPartsOf(tk)) if (!current.has(id)) oldParts.set(id, parts);
+    }
+    const legacy = legacyFamilyMapping(
+      cls.families ?? [],
+      cls.groups,
+      st,
+      (id) => {
+        const r = ledger?.entries[id]?.decision;
+        return r?.source === "family" ? r.ref : undefined;
+      },
+      (id) => oldParts.get(id),
+    );
+    const state: ModelSetFamilies = Object.keys(legacy.aliases).length ? { ...st, aliases: { ...legacy.aliases, ...st.aliases } } : st;
+    const unchanged = (groupId: string, familyId: string) => {
+      const g = gById.get(groupId);
+      if (!g) return false;
+      // Old family ids carried onto this one (G16) count as the same decision: same fields by construction.
+      const ids = new Set([familyId, ...(legacy.compatible.get(familyId) ?? [])]);
+      const approved = new Set([...ids].flatMap((fid) => (st.families[fid]?.versions ?? []).filter((v) => v.status === "approved").map((v) => `${fid}@v${v.version}`)));
+      return g.clashIds.every((id) => {
+        const r = ledger?.entries[id]?.decision;
+        const c = clash.get(id);
+        // The reference must exist (review fix #8) and the clash must be unchanged.
+        return !!r && !!c && r.source === "family" && approved.has(r.ref) && Math.abs(c.penetrationMm - r.penetrationMm) <= CHANGE_PENETRATION_MM && elementTypesOf(c) === r.elementTypes;
+      });
+    };
     return {
       testKey: test.testKey,
+      state,
+      unchanged,
       stable: (groupId, familyId) => {
         const g = gById.get(groupId);
-        if (!g || g.reviewState === "needs_review") return false;
-        const approved = new Set((st.families[familyId]?.versions ?? []).filter((v) => v.status === "approved").map((v) => `${familyId}@v${v.version}`));
-        return g.clashIds.every((id) => {
-          const r = ledger?.entries[id]?.decision;
-          const c = clash.get(id);
-          // The reference must exist (review fix #8) and the clash must be unchanged.
-          return !!r && !!c && r.source === "family" && approved.has(r.ref) && Math.abs(c.penetrationMm - r.penetrationMm) <= CHANGE_PENETRATION_MM && elementTypesOf(c) === r.elementTypes;
-        });
+        return !!g && inheritPolicyReasons(g).length === 0 && unchanged(groupId, familyId);
       },
+      ...(legacy.review.size ? { legacyReview: legacy.review } : {}),
     };
+  }
+
+  /** Family id → signature parts of a cached classification (60 s memo; G16 old-signature mapping). */
+  private readonly familyPartsMemo = new Map<string, { at: number; parts: Map<string, SignatureParts> }>();
+  private async familyPartsOf(testKey: string): Promise<Map<string, SignatureParts>> {
+    const hit = this.familyPartsMemo.get(testKey);
+    if (hit && Date.now() - hit.at < 60_000) return hit.parts;
+    const cls = await this.store.getClassification(testKey).catch(() => undefined);
+    const parts = new Map((cls?.families ?? []).map((f) => [f.id, f.parts as SignatureParts]));
+    this.familyPartsMemo.set(testKey, { at: Date.now(), parts });
+    return parts;
   }
 
   /** MCP list_families: compact rows; titles/signatures are model-derived (untrusted). */
@@ -1929,6 +2024,8 @@ export class Coordinator {
         return { groupId: i.groupId, title: untrusted(i.title), levels: i.levels, validity: i.validity, band: i.band, uniqueClashes: i.uniqueClashCount, inheritance: i.inheritance.state, ...(g ? { change: info.groupDelta(g).state, humanReview: info.needsHuman(g), inherited: info.inherited.get(g.id)?.source ?? null } : {}) };
       }),
       ...(f.instances.length > 60 ? { truncatedInstances: f.instances.length - 60 } : {}),
+      // G16: older decisions that could not be carried onto this family (previous signature): a human reviews them.
+      ...(f.legacyDecisions?.length ? { legacyDecisions: f.legacyDecisions } : {}),
       note: "Solo lectura. Para sugerir una decisión usa propose_family_decision; un humano la aprueba en la UI.",
     };
   }
@@ -2308,6 +2405,13 @@ export class Coordinator {
     this.checkTexts({ rationale: input.rationale, companyRole: input.action.companyRole as string | undefined });
     await this.checkReferencedIds([input.rationale], cls);
     const a = input.action;
+    if (a.type === "confirm_inherited") {
+      // G7 parity: the agent PROPOSES; only a human confirms (UI "Confirmar heredadas sin cambio").
+      const ids = (a.groupIds as string[] | undefined) ?? [];
+      const ok = new Set((await this.inheritedConfirmables(input.testKey)).items.map((i) => i.groupId));
+      const bad = ids.filter((g) => !ok.has(g));
+      if (bad.length) throw new CoordError("validation_error", `No son heredadas sin cambio pendientes de confirmar: ${bad.slice(0, 10).join(", ")}`, "Usa list_groups / get_group: solo ubicaciones con decisión heredada, sin cambios, que la política vuelve a preguntar.");
+    }
     if (isRegroup(a)) {
       this.checkTexts({ newFamilyLabel: (a as { newFamilyLabel?: string }).newFamilyLabel, newGroupLabel: (a as { newGroupLabel?: string }).newGroupLabel });
       const { views } = await this.familyViewsFor(input.testKey);
@@ -2977,7 +3081,7 @@ export function proposalSummary(p: ProposalRecord): string {
     case "classification": return `validez ${pl.validity}${pl.severity ? `, ${pl.severity}` : ""}${pl.disagreesWithEngine ? " (discrepa)" : ""}`;
     case "status_change": return `${pl.action}${pl.accReason ? ` (${pl.accReason})` : ""}`;
     case "issue_draft": return pl.issue.title;
-    case "group_action": return isRegroup(pl.action) ? regroupSummary(pl.action as unknown as RegroupAction) : `acción ${pl.action.type}`;
+    case "group_action": return isRegroup(pl.action) ? regroupSummary(pl.action as unknown as RegroupAction) : pl.action.type === "confirm_inherited" ? `confirmar ${((pl.action.groupIds as string[] | undefined) ?? []).length} heredadas sin cambio` : `acción ${pl.action.type}`;
     case "rule_change": return pl.title;
     case "family_decision": return `familia ${pl.familyId}: ${pl.validity} / ${pl.action}${pl.responsibleDiscipline ? ` → ${pl.responsibleDiscipline}` : ""}`;
     case "discipline_mapping": return `disciplina ${pl.discipline} → ${pl.fileName ?? pl.rule?.value ?? pl.lineageUrn ?? "?"}${pl.rule ? ` (regla ${pl.rule.match} "${pl.rule.value}")` : ""}`;

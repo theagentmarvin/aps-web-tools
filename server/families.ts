@@ -11,8 +11,9 @@
  *    with the inheritance state of every instance.
  */
 import type { ClassifiedClash } from "../core/classified";
-import { assignFamilies, bucketOf, familyTitle, problemTypeOf, type ClashFamily, type ProblemTypeCode } from "../core/families";
+import { assignFamilies, bucketOf, familyIdOf, familyTitle, problemTypeOf, signatureOfParts, systemDisciplineOf, upgradeParts, type ClashFamily, type ProblemTypeCode, type SignatureParts } from "../core/families";
 import type { ClashGroup as EngineGroup } from "../core/group";
+import { STRUCTURAL_OPENING_TAG } from "../core/group/review";
 import { sha1 } from "../core/util/sha1";
 import { sanitizeModelText } from "./sanitize";
 import type { Store } from "./store";
@@ -116,6 +117,8 @@ export function attachFamilies(input: AttachInput): {
         ruleIds: byFreq(ks.map((k) => classifiedByKey.get(k)?.classification.ruleId).filter((r): r is string => !!r)),
         triageState: dominant(members.map((m) => m.triageState)) ?? g.triageState,
         accStatus: dominant(members.map((m) => m.status)) ?? g.accStatus,
+        // G23: a split part describes ITS members (the parent's pair may be another system's).
+        ...partDisciplines(ks.map((k) => classifiedByKey.get(k)).filter((c): c is ClassifiedClash => !!c), g),
         ...(i === 0 ? {} : { tags: [...new Set([...g.tags, "familia_separada"])] }),
       };
       out.push(tag(split, fid, ks));
@@ -131,11 +134,52 @@ export function attachFamilies(input: AttachInput): {
       const cf = k ? byKey.get(k) : undefined;
       if (c && cf) Object.assign(c, { familyId: cf.familyId, problemType: cf.parts.problemType, signature: sanitizeModelText(cf.signature, 300) });
     }
-    return { ...g, familyId: fid, problemType: f.parts.problemType, signature: sanitizeModelText(f.signature, 300), uniqueClashCount: keys.length, ...(label ? { hostLevelLabel: sanitizeModelText(label, 80) } : {}) };
+    const sp = systemPair(g, f.parts);
+    const { secondaryDiscipline: _sec, ...base } = g;
+    void _sec;
+    return { ...base, ...sp, familyId: fid, problemType: f.parts.problemType, signature: sanitizeModelText(f.signature, 300), uniqueClashCount: keys.length, ...(label ? { hostLevelLabel: sanitizeModelText(label, 80) } : {}) };
   }
 
   const families = aggregateFamilies(out, byKey, classifiedByKey, keyOfMc);
   return { groups: out, families, byKey, parts: splitParts };
+}
+
+const code = (d: string | undefined): string => (!d || d === "UNK" ? "SIN" : d);
+
+/** Pair, responsible and secondary discipline of a split part, from its own members. */
+function partDisciplines(ms: readonly ClassifiedClash[], parent: GroupRecord): Pick<GroupRecord, "pair" | "disciplinePair" | "responsibleDiscipline"> & { secondaryDiscipline?: string } {
+  if (!ms.length) return { pair: parent.pair, disciplinePair: parent.disciplinePair, responsibleDiscipline: parent.responsibleDiscipline, ...(parent.secondaryDiscipline ? { secondaryDiscipline: parent.secondaryDiscipline } : {}) };
+  const pairKey = dominant(ms.map((c) => [code(c.left.discipline), code(c.right.discipline)].sort().join("×")))!;
+  const [p0, p1] = pairKey.split("×") as [string, string];
+  const resp = dominant(ms.map((c) => code(c.classification.responsibleDiscipline)))!;
+  const sec = dominant(ms.map((c) => c.classification.secondaryDiscipline).filter((x): x is string => !!x));
+  return { pair: [p0, p1 ?? p0], disciplinePair: pairKey, responsibleDiscipline: resp, ...(sec ? { secondaryDiscipline: code(sec) } : {}) };
+}
+
+/** Host classes that are themselves MEP runs (PT08 crossings): the host discipline is its system's. */
+const MEP_HOST_CLASSES = new Set(["tub_grav", "tub_pres", "ducto", "elec"]);
+const MEP_CODES = new Set(["AP", "ALL", "ALC", "CAL", "INC", "CLI", "ELE", "CORR", "GAS", "SAN", "SIN"]);
+
+/**
+ * G23: the pair label and the responsible party use the SYSTEM discipline of the MEP element
+ * (AP agua potable, ALL aguas lluvia, ALC alcantarillado; rules/discipline-matrix.yaml), not the
+ * discipline of the file or of the parent group. The non-MEP side (EST, ARQ…) is kept as is.
+ */
+export function systemPair(
+  g: Pick<GroupRecord, "pair" | "responsibleDiscipline" | "secondaryDiscipline">,
+  parts: Pick<ClashFamily["parts"], "systemClass" | "hostClass" | "hostType" | "problemType">,
+): Pick<GroupRecord, "pair" | "disciplinePair" | "responsibleDiscipline"> & { secondaryDiscipline?: string } {
+  const same = { pair: g.pair, disciplinePair: `${g.pair[0]}×${g.pair[1]}`, responsibleDiscipline: g.responsibleDiscipline, ...(g.secondaryDiscipline ? { secondaryDiscipline: g.secondaryDiscipline } : {}) };
+  if (bucketOf(parts.problemType as ProblemTypeCode) !== "pair" || parts.problemType === "PT09") return same;
+  const md = systemDisciplineOf(parts.systemClass);
+  if (!md) return same;
+  const hd = MEP_HOST_CLASSES.has(parts.hostClass) ? systemDisciplineOf(parts.hostType) : g.pair.find((d) => !MEP_CODES.has(d));
+  if (!hd) return same;
+  const map = (d: string) => (d === hd ? d : MEP_CODES.has(d) ? md : d);
+  const pair = [map(g.pair[0]), map(g.pair[1])].sort() as [string, string];
+  if (!pair.includes(hd)) return same;
+  const sec = g.secondaryDiscipline ? map(g.secondaryDiscipline) : undefined;
+  return { pair, disciplinePair: `${pair[0]}×${pair[1]}`, responsibleDiscipline: map(g.responsibleDiscipline), ...(sec && sec !== map(g.responsibleDiscipline) ? { secondaryDiscipline: sec } : {}) };
 }
 
 function byFreq(values: readonly string[]): string[] {
@@ -277,6 +321,12 @@ export interface ModelSetFamilies {
   detached: Record<string, { familyId: string; by: string; at: string }>;
   /** Titles of manual families created by an applied regroup proposal (agent text, untrusted). */
   labels?: Record<string, string>;
+  /**
+   * G7: human confirmations of inherited HUMAN decisions that policy re-asks (critical, structural
+   * opening, life safety), per test: testKey → groupId → the confirmed decision reference.
+   * (Family-decision confirmations live in `families[id].confirmed`.)
+   */
+  inheritConfirmations?: Record<string, Record<string, { ref: string; by: string; at: string; reasons: string[] }>>;
   updatedAt?: string;
   updatedBy?: string;
 }
@@ -367,6 +417,8 @@ export interface FamilyView extends Omit<FamilyRecord, "groupIds"> {
   validityConflicts: Array<{ groupId: string; title: string; from: Validity; to: Validity }>;
   issue?: { mode: "family" | "per_instance" };
   problemTypeName: string;
+  /** G16: decisions of earlier family ids (old signature) that disagree here: a human reviews them. */
+  legacyDecisions?: LegacyFamilyDecision[];
 }
 
 /** Families of one test with merges, detaches, decisions and inheritance applied. */
@@ -380,6 +432,8 @@ export interface FamilyViewContext {
    * instance is "inherited_pending" (a human confirms it). Review fix #1.
    */
   stable: (groupId: string, familyId: string) => boolean;
+  /** G16: old decisions that could not be carried to a new family (shown as "revisar"). */
+  legacyReview?: ReadonlyMap<string, LegacyFamilyDecision[]>;
 }
 
 export function familyViews(families: readonly FamilyRecord[], groups: readonly GroupRecord[], st: ModelSetFamilies, ctx?: FamilyViewContext): FamilyView[] {
@@ -475,9 +529,139 @@ export function familyViews(families: readonly FamilyRecord[], groups: readonly 
       validityConflicts,
       ...(approved && (approved.action === "create_issue" || approved.action === "hygiene_issue") ? { issue: { mode: approved.issueMode } } : {}),
       problemTypeName: problemTypeOf(base.parts.problemType as ProblemTypeCode).nameEs,
+      ...((): Partial<FamilyView> => {
+        const legacy = [id, ...mergedFrom].flatMap((x) => ctx?.legacyReview?.get(x) ?? []);
+        return legacy.length ? { legacyDecisions: legacy } : {};
+      })(),
     });
   }
   return views.sort((a, b) => b.instanceCount - a.instanceCount || b.uniqueClashCount - a.uniqueClashCount || (a.id < b.id ? -1 : 1));
+}
+
+// ── G7: policy that re-asks an inherited decision ───────────────────────────
+
+export type InheritPolicyReason = "critical" | "structural_opening" | "life_safety";
+
+/**
+ * Reasons that force a human look at an inherited decision even when nothing changed
+ * (CLAUDE.md rule 4): critical severity, an opening in structure (calculista), life safety.
+ * Rule-only gate reasons (confidence, group size, unmatched, conflicting rules) are not here.
+ * real → closure is never inherited at all (handled by the inheritance itself).
+ */
+export function inheritPolicyReasons(g: Pick<GroupRecord, "severity" | "tags">): InheritPolicyReason[] {
+  const out: InheritPolicyReason[] = [];
+  if (g.severity === "critical") out.push("critical");
+  if (g.tags.includes(STRUCTURAL_OPENING_TAG)) out.push("structural_opening");
+  if (g.tags.includes("seguridad_personas")) out.push("life_safety");
+  return out;
+}
+
+// ── G16: family decisions across signature changes ──────────────────────────
+
+/** A decision of a family id that no longer exists, shown on its new family for a human to review. */
+export interface LegacyFamilyDecision {
+  familyId: string;
+  version: number;
+  validity: Validity;
+  action: FamilyAction;
+  responsibleDiscipline: string;
+  decidedAt: string;
+}
+
+export interface LegacyFamilyMapping {
+  /** New family id → old (decided) family id: the old decision carries over (merge alias, not persisted). */
+  aliases: Record<string, string>;
+  /** View id (old id) → every old family id whose decision references are accepted as the same decision. */
+  compatible: Map<string, Set<string>>;
+  /** New family id → old decisions that do NOT agree with each other (or split evenly over families): "revisar". */
+  review: Map<string, LegacyFamilyDecision[]>;
+}
+
+const decisionKey = (d: FamilyDecisionFields) => [d.validity, d.action, d.responsibleDiscipline, d.secondaryDiscipline ?? "", d.solutionOption ?? "", d.issueMode].join("|");
+
+/**
+ * Family ids are sha1(signature): when the signature changes (v6 → v7, G16) the decided families
+ * of earlier versions get new ids. Old decisions are mapped to the new families through the ledger
+ * references of the current clashes (`F-old@vN`) and, as a fallback, the groups each decision covered.
+ *
+ *  - every old decision that lands in one new family, all with the same fields → alias (carried over;
+ *    instances still inherit only when unchanged and confirmed by policy, as before);
+ *  - different decisions in one new family, or one old family split evenly over several → "revisar"
+ *    (listed on the family, never applied, never silently lost).
+ * A closure is never carried to a real instance by this mapping: inheritance and the batch keep
+ * their own real → closure guards.
+ */
+export function legacyFamilyMapping(
+  families: readonly FamilyRecord[],
+  groups: readonly GroupRecord[],
+  st: ModelSetFamilies,
+  familyRefOf: (clashId: string) => string | undefined,
+  /** Parts of an old family as recorded in the classification it was decided on (last fallback). */
+  oldParts?: (familyId: string) => SignatureParts | undefined,
+): LegacyFamilyMapping {
+  const out: LegacyFamilyMapping = { aliases: {}, compatible: new Map(), review: new Map() };
+  const current = new Set(families.map((f) => f.id));
+  const isCurrent = (id: string) => current.has(id) || current.has(resolveAlias(st.aliases, id));
+  const decided = (id: string) => {
+    const d = currentDecision(st.families[id]);
+    return d && d.status === "approved" ? d : undefined;
+  };
+  const famOfGroup = new Map<string, string>();
+  for (const f of families) for (const g of f.groupIds) famOfGroup.set(g, f.id);
+  const candidates = new Map<string, Map<string, number>>(); // old id → new id → weight
+  const add = (oldId: string, newId: string | undefined, w = 1) => {
+    if (!newId) return;
+    const target = resolveAlias(st.aliases, oldId);
+    if (isCurrent(target) || !decided(target)) return;
+    const m = candidates.get(target) ?? new Map<string, number>();
+    m.set(newId, (m.get(newId) ?? 0) + w);
+    candidates.set(target, m);
+  };
+  for (const g of groups) {
+    const nf = g.familyId ?? famOfGroup.get(g.id);
+    for (const id of g.clashIds) {
+      const ref = familyRefOf(id);
+      const m = ref ? /^(F-[0-9A-Za-z]+)@v\d+$/.exec(ref) : null;
+      if (m) add(m[1]!, nf);
+    }
+  }
+  const gIds = new Set(groups.map((g) => g.id));
+  for (const [oldId, fs] of Object.entries(st.families)) {
+    if (candidates.has(resolveAlias(st.aliases, oldId))) continue;
+    for (const v of fs.versions) if (v.status === "approved") for (const g of v.coveredGroupIds) if (gIds.has(g)) add(oldId, famOfGroup.get(g));
+  }
+  // Last fallback (no clash and no ubicación left in common): translate the old signature to today's.
+  for (const oldId of Object.keys(st.families)) {
+    const target = resolveAlias(st.aliases, oldId);
+    if (candidates.has(target) || isCurrent(target) || !decided(target)) continue;
+    const parts = oldParts?.(target);
+    if (!parts) continue;
+    const nid = familyIdOf(signatureOfParts(upgradeParts(parts)));
+    if (current.has(nid)) add(target, nid);
+  }
+  // Each old family goes to the new family holding most of its clashes (a clash that moved to another
+  // family since the decision is simply "changed" there, as before). A tie is ambiguous: "revisar".
+  const byNew = new Map<string, string[]>();
+  const spread = new Set<string>();
+  for (const [oldId, m] of candidates) {
+    const ranked = [...m.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
+    const top = ranked.filter((x) => x[1] === ranked[0]![1]);
+    if (top.length > 1) spread.add(oldId);
+    for (const [n] of top) byNew.set(n, [...(byNew.get(n) ?? []), oldId]);
+  }
+  for (const [newId, olds] of byNew) {
+    // A family decided under its new id, or already merged by a human, keeps what it has.
+    if (decided(newId) || st.aliases[newId]) continue;
+    const decs = olds.map((o) => ({ id: o, d: decided(o)! })).sort((a, b) => (a.d.decidedAt < b.d.decidedAt ? 1 : -1));
+    const keys = new Set(decs.map((x) => decisionKey(x.d)));
+    if (keys.size === 1 && !olds.some((o) => spread.has(o))) {
+      out.aliases[newId] = decs[0]!.id;
+      out.compatible.set(decs[0]!.id, new Set(olds));
+    } else {
+      out.review.set(newId, decs.map(({ id, d }) => ({ familyId: id, version: d.version, validity: d.validity, action: d.action, responsibleDiscipline: d.responsibleDiscipline, decidedAt: d.decidedAt })));
+    }
+  }
+  return out;
 }
 
 /** Validity that a family decision would set on an instance (exceptions override). */
