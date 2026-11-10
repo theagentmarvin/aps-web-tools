@@ -1164,8 +1164,8 @@ export class Coordinator {
     const page = paginate(rows, input.limit, input.cursor);
     return {
       testKey: test.testKey,
-      columns: ["questionId", "version", "kind", "state", "question", "options", "answer", "answeredBy", "groupIds", "familyId", "decisionIds"],
-      rows: page.items.map((q) => [q.id, q.version, q.kind, q.state, untrusted(q.question), (q.options ?? []).map((o) => ({ label: untrusted(typeof o === "string" ? o : o.label).untrusted, ...(typeof o !== "string" && o.validity ? { validity: o.validity } : {}), ...(typeof o !== "string" && o.action ? { action: o.action } : {}) })), q.answer ? untrusted(q.answer) : null, q.answeredBy ?? null, q.groupIds.slice(0, 20), q.familyId ?? null, q.decisionIds ?? []]),
+      columns: ["questionId", "version", "kind", "state", "question", "options", "answer", "answeredByHuman", "groupIds", "familyId", "decisionIds"],
+      rows: page.items.map((q) => [q.id, q.version, q.kind, q.state, untrusted(q.question), (q.options ?? []).map((o) => ({ label: untrusted(typeof o === "string" ? o : o.label).untrusted, ...(typeof o !== "string" && o.validity ? { validity: o.validity } : {}), ...(typeof o !== "string" && o.action ? { action: o.action } : {}) })), q.answer ? untrusted(q.answer) : null, q.answeredBy ? true : null, q.groupIds.slice(0, 20), q.familyId ?? null, q.decisionIds ?? []]),
       total: page.total,
       ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
     };
