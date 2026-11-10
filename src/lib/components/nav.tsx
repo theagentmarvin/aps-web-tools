@@ -10,12 +10,9 @@ import { useCoordAuth } from "~/lib/coord-auth";
 import { AgentStatusIndicator, LanguageSwitch } from "./shell-widgets";
 
 const LINKS: { to: string; key: TKey; end?: boolean }[] = [
-  { to: "/", key: "nav.home", end: true },
   { to: "/proyectos", key: "nav.projects" },
   { to: "/aprobaciones", key: "nav.approvals" },
   { to: "/reglas", key: "nav.rules" },
-  { to: "/reportes", key: "nav.reports" },
-  { to: "/auditoria", key: "nav.audit" },
 ];
 
 function useReadyBatchCount(): number {
@@ -97,7 +94,7 @@ export function Nav() {
   const ready = useReadyBatchCount();
   return (
     <nav aria-label={t("nav.mainNav")} className="flex flex-shrink-0 items-center gap-6 border-b border-brand-muted/20 bg-white px-6 py-2 shadow-sm">
-      <Link to="/" className="flex items-center gap-2 whitespace-nowrap text-lg font-bold tracking-tight text-brand">
+      <Link to="/proyectos" className="flex items-center gap-2 whitespace-nowrap text-lg font-bold tracking-tight text-brand">
         <span aria-hidden className="inline-block h-3 w-3 bg-brand" />
         {t("app.company")}
         <span className="font-normal text-gray-300">|</span>

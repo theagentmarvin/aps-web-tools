@@ -4,13 +4,13 @@
  * used when VITE_COORD_API=mock (the dev default until the server lands).
  */
 import { ApiError, type CoordinatorApi } from "../coordinator-api";
-import { effectiveValues, latestDecisions, minConfidence, newId } from "../decision-utils";
+import { latestDecisions, minConfidence, newId } from "../decision-utils";
 import type * as T from "../types";
 import { buildItems, recount } from "./batches";
 import { DISCIPLINES, RULES, USERS } from "./catalog";
 import { HUBS, PROJECTS, SANDBOX_RULES, SANDBOX_SUGGESTIONS, SANDBOX_VIEWS, type MockModelSet, type MockProject } from "./fixtures";
 import { generateTest, rng, type GenerateOptions, type GeneratedTest, type MockDocDef } from "./generate";
-import { buildReport, fakeHash, seedAudit, seedCorrections, seedSuggestions } from "./reports";
+import { fakeHash, seedCorrections, seedSuggestions } from "./reports";
 import { deriveFamilies, refreshFamily } from "./families";
 import { applyM1, type M1Data } from "./m1";
 import { applyM2, type M2Data } from "./m2";
@@ -38,7 +38,6 @@ export class MockCoordinatorApi implements CoordinatorApi {
   private decisions = new Map<string, T.Decision[]>();
   private batches = new Map<string, T.Batch>();
   private applyJobs = new Map<string, ApplyJob>();
-  private audit: T.AuditEvent[] = [];
   private suggestions: T.RuleSuggestion[] = seedSuggestions();
   private corrections: T.CorrectionRow[] = seedCorrections();
   private firstLoad = new Map<string, number>();
@@ -142,16 +141,15 @@ export class MockCoordinatorApi implements CoordinatorApi {
     };
   }
 
-  private log(e: Omit<T.AuditEvent, "id" | "at" | "hash"> & { at?: string }) {
-    const id = `A-${newId().slice(0, 8)}`;
-    this.audit.unshift({ id, at: e.at ?? new Date().toISOString(), ...e, hash: fakeHash(id + (this.audit[0]?.hash ?? "")) });
+  /** The audit trail is the server job (it protects approvals); the mock keeps none since the Auditoría page was removed. */
+  private log(_event: Omit<T.AuditEvent, "id" | "at" | "hash"> & { at?: string }) {
+    void _event;
   }
 
   /** Seed history: earlier decisions, three batches, audit trail. */
   private ensureSeed() {
     if (this.seeded) return;
     this.seeded = true;
-    this.audit = seedAudit();
 
     // Torre B v14: 26 groups decided yesterday, 18 of them already in a ready batch.
     const tb = this.data("T-3f9a21c0");
@@ -301,31 +299,6 @@ export class MockCoordinatorApi implements CoordinatorApi {
       lastRunId: "run-1a2b14",
       running: false,
       currentTask: "Redactó 23 borradores de incidencia para Torre B (v14)",
-    };
-  }
-
-  async getHomeSummary(): Promise<T.HomeSummary> {
-    this.ensureSeed();
-    await delay();
-    const queue: T.HomeSummary["queue"] = [];
-    for (const p of PROJECTS)
-      for (const ms of p.modelSets) {
-        const s = this.modelSetSummary(p, ms);
-        if (s.groupsTotal - s.groupsReviewed > 0)
-          queue.push({ projectId: p.id, projectName: p.name, modelSetId: ms.id, modelSetName: ms.name, pending: s.groupsTotal - s.groupsReviewed });
-      }
-    const report = buildReport(this.reportInput({}));
-    return {
-      user: { id: ME.id, name: ME.name, initials: ME.initials },
-      queue,
-      batches: [...this.batches.values()].filter((b) => b.state === "ready").map((b) => this.summarize(b)),
-      activity: [
-        { at: new Date(Date.now() - 12 * 60000).toISOString(), text: "Agrupó 1.200 interferencias en 150 grupos (Torre B, v14)" },
-        { at: new Date(Date.now() - 65 * 60000).toISOString(), text: "Redactó 23 borradores de incidencia (Torre B, v14)" },
-        { at: new Date(Date.now() - 3 * 3600000).toISOString(), text: "Propuso 2 reglas nuevas a partir de 12 correcciones R02" },
-        { at: new Date(Date.now() - 26 * 3600000).toISOString(), text: "Analizó Hospital Regional de Talca (v9): 38 grupos" },
-      ],
-      kpis: report.kpis,
     };
   }
 
@@ -1412,41 +1385,4 @@ export class MockCoordinatorApi implements CoordinatorApi {
     };
   }
 
-  // ── Reports / audit ─────────────────────────────────────────────
-
-  private reportInput(scope: T.ReportScope) {
-    const testId =
-      scope.projectId && scope.modelSetId
-        ? this.findModelSet(scope.projectId, scope.modelSetId).tests[0].testId
-        : scope.projectId
-          ? this.findProject(scope.projectId).modelSets[0].tests[0].testId
-          : "T-3f9a21c0";
-    const d = this.data(testId);
-    const latest = latestDecisions(this.decisionsOf(testId));
-    const eff = new Map(d.proposals.map((p) => [p.targetId, effectiveValues(p, latest.get(p.targetId))]));
-    return { scope, data: d, decisions: [...latest.values()], effective: eff, corrections: this.corrections };
-  }
-
-  async getReport(scope: T.ReportScope) {
-    this.ensureSeed();
-    await delay(250);
-    return buildReport(this.reportInput(scope));
-  }
-
-  async listAudit(q: T.AuditQuery): Promise<T.Page<T.AuditEvent>> {
-    this.ensureSeed();
-    await delay();
-    const from = q.from ? new Date(q.from).getTime() : -Infinity;
-    const to = q.to ? new Date(q.to).getTime() + 86400000 : Infinity;
-    const list = this.audit.filter((e) => {
-      const at = new Date(e.at).getTime();
-      if (at < from || at > to) return false;
-      if (q.project && e.projectId !== q.project) return false;
-      if (q.user && !e.actor.name.toLowerCase().includes(q.user.toLowerCase())) return false;
-      if (q.action && !e.action.startsWith(q.action)) return false;
-      if (q.batch && e.batchId !== q.batch) return false;
-      return true;
-    });
-    return { items: clone(list), total: list.length };
-  }
 }

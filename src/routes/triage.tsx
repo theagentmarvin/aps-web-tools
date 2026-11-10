@@ -6,6 +6,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router";
 import { useT } from "~/i18n";
 import { ApiError, useApi, useAsync } from "~/lib/api";
 import { TestList } from "./project";
+import { LAST_WORKSPACE_KEY } from "./projects";
 import type { TriagePayload } from "~/lib/api/types";
 import { Modal } from "~/lib/components/Modal";
 import { CopyCommand } from "~/lib/components/shell-widgets";
@@ -24,7 +25,7 @@ import { LensBar } from "~/features/triage/LensBar";
 import { PrintAgenda, printAgenda } from "~/features/triage/MeetingViews";
 import { TriageStore, rowKey, useTriage } from "~/features/triage/store";
 import { useTriageHotkeys } from "~/features/triage/useTriageHotkeys";
-import { SelectionBar, StatusBar, WorkspaceBanners, WorkspaceHeader, useProgress } from "~/features/triage/WorkspaceChrome";
+import { SelectionBar, StatusBar, WorkspaceHeader, useProgress } from "~/features/triage/WorkspaceChrome";
 
 interface LayoutPrefs {
   list: number;
@@ -73,6 +74,12 @@ export function TriageWorkspace() {
     if (settings.autoAcceptInherited) actions.acceptInherited();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, store]);
+
+  // Remember this coordinación for "Continuar donde quedaste" on Proyectos.
+  useEffect(() => {
+    if (!data) return;
+    writeJson(LAST_WORKSPACE_KEY, { url: `/coordinacion/${projectId}/${modelSetId}?test=${encodeURIComponent(data.test.id)}`, label: `${data.project.name} / ${data.modelSet.name}` });
+  }, [data, projectId, modelSetId]);
 
   // M3 (read-only): ACC issue checks + reminders for the "Incidencias" lens. Absent endpoint = lens disabled.
   useEffect(() => {
@@ -247,7 +254,6 @@ function Workspace({ loading, manualOk, onManual, onTestChange, onReload, onQuer
   return (
     <div className="flex h-full flex-col">
       {loading || !payload ? <div className="h-11 flex-shrink-0 border-b border-brand-muted/20 bg-white" /> : <WorkspaceHeader onTestChange={onTestChange} onSend={() => setSendOpen(true)} />}
-      {!loading && <WorkspaceBanners />}
       {!loading && !showNoAnalysis && <FilterBar query={query} onChange={onQueryChange} />}
       <div className="relative flex min-h-0 flex-1">
         <a href="#triage-list" className="sr-only focus:not-sr-only focus:absolute focus:z-20 focus:bg-white focus:px-2">

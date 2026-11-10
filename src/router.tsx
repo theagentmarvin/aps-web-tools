@@ -1,8 +1,7 @@
 import type { ComponentType } from "react";
-import { createBrowserRouter } from "react-router";
+import { Navigate, createBrowserRouter } from "react-router";
 import { AuthGate } from "./lib/components/AuthGate";
 import { Layout } from "./routes/layout";
-import { HomePage } from "./routes/home";
 import { Callback } from "./routes/callback";
 import { DataManagement } from "./routes/data-management";
 import { ProjectsPage } from "./routes/projects";
@@ -12,8 +11,6 @@ import { ApprovalsPage } from "./routes/approvals";
 import { BatchPage } from "./routes/batch";
 import { RulesPage } from "./routes/rules";
 import { RulePage } from "./routes/rule";
-import { ReportsPage } from "./routes/reports";
-import { AuditPage } from "./routes/audit";
 import { SettingsPage } from "./routes/settings";
 import { PasskeyPage } from "./routes/passkey";
 import { NotFoundPage } from "./routes/not-found";
@@ -29,12 +26,16 @@ function gated(C: ComponentType): ComponentType {
   return Gated;
 }
 
+/** Removed pages (Inicio, Reportes, Auditoría): old URLs land on Proyectos. The server audit log is unchanged. */
+const ToProjects = () => <Navigate to="/proyectos" replace />;
+
 export const router = createBrowserRouter([
   {
     path: "/",
     Component: Layout,
     children: [
-      { index: true, Component: HomePage },
+      { index: true, Component: ToProjects },
+      { path: "inicio", Component: ToProjects },
       { path: "auth/callback", Component: Callback },
       { path: "proyectos", Component: gated(ProjectsPage) },
       { path: "proyectos/:projectId", Component: gated(ProjectPage) },
@@ -43,9 +44,8 @@ export const router = createBrowserRouter([
       { path: "aprobaciones/:batchId", Component: gated(BatchPage) },
       { path: "reglas", Component: gated(RulesPage) },
       { path: "reglas/:ruleId", Component: gated(RulePage) },
-      { path: "reportes", Component: gated(ReportsPage) },
-      { path: "reportes/:projectId", Component: gated(ReportsPage) },
-      { path: "auditoria", Component: gated(AuditPage) },
+      { path: "reportes/*", Component: ToProjects },
+      { path: "auditoria/*", Component: ToProjects },
       { path: "ajustes", Component: gated(SettingsPage) },
       { path: "ajustes/passkey", Component: gated(PasskeyPage) },
       { path: "data-management", Component: DataManagement },

@@ -154,10 +154,10 @@ export function useTriageHotkeys(opts: { onSend: () => void }) {
     { keys: ["R"], labelKey: "shortcuts.reload", group: "global", run: () => store.applyProposalUpdates() },
     { keys: ["Ctrl+Enter"], labelKey: "shortcuts.send", group: "global", run: () => opts.onSend() },
     {
-      keys: ["g a", "g i", "g r", "g p"],
+      keys: ["g p", "g a", "g r"],
       labelKey: "shortcuts.goTo",
       group: "global",
-      run: (e) => navigate(({ a: "/aprobaciones", i: "/", r: "/reglas", p: "/reportes" } as Record<string, string>)[e.key] ?? "/"),
+      run: (e) => navigate(({ p: "/proyectos", a: "/aprobaciones", r: "/reglas" } as Record<string, string>)[e.key] ?? "/proyectos"),
     },
     { keys: ["?"], labelKey: "shortcuts.help", group: "global", run: () => store.setDialog(store.state.dialog?.type === "shortcuts" ? null : { type: "shortcuts" }) },
     {

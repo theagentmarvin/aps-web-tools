@@ -29,8 +29,6 @@ import type {
   ApplyStatus,
   ApproveRequest,
   Assignee,
-  AuditEvent,
-  AuditQuery,
   Batch,
   BatchState,
   BatchSummary,
@@ -43,7 +41,6 @@ import type {
   FeedbackInput,
   GroupDetail,
   GroupQuery,
-  HomeSummary,
   Hub,
   IssueDraft,
   ModelSetSummary,
@@ -51,8 +48,6 @@ import type {
   PreflightResult,
   ProjectSummary,
   Proposal,
-  ReportData,
-  ReportScope,
   RuleDetail,
   RuleSuggestion,
   RuleSummary,
@@ -90,7 +85,6 @@ export interface CoordinatorApi {
   getSession(): Promise<SessionInfo>;
   getCurrentUser(): Promise<UserInfo>;
   getAgentStatus(): Promise<AgentStatus>;
-  getHomeSummary(): Promise<HomeSummary>;
 
   // Projects, model sets, tests
   listHubs(): Promise<Hub[]>;
@@ -186,9 +180,6 @@ export interface CoordinatorApi {
   listCorrections(params?: { projectId?: string; limit?: number; cursor?: string }): Promise<Page<CorrectionRow>>;
   getCalibration(): Promise<Calibration>;
 
-  // Reports / audit
-  getReport(scope: ReportScope): Promise<ReportData>;
-  listAudit(query: AuditQuery): Promise<Page<AuditEvent>>;
 }
 
 /** Error with an HTTP-ish status and a stable code for the UI to translate. */

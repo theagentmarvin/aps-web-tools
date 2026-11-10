@@ -11,12 +11,9 @@
     "wrongHostLink": "Ir a localhost"
   },
   "nav": {
-    "home": "Inicio",
     "projects": "Proyectos",
     "approvals": "Aprobaciones",
     "rules": "Reglas",
-    "reports": "Reportes",
-    "audit": "Auditoría",
     "settings": "Ajustes",
     "signOut": "Cerrar sesión",
     "language": "Idioma",
@@ -93,22 +90,6 @@
     "property": "Propiedad",
     "filter": "Filtrar"
   },
-  "home": {
-    "greeting": "Hola, {name}",
-    "subtitle": "Revisa las propuestas del agente y aprueba los cambios hacia ACC.",
-    "myQueue": "Tu cola",
-    "pending_one": "{count} pendiente",
-    "pending_other": "{count} pendientes",
-    "queueEmpty": "No tienes revisiones pendientes.",
-    "batchesToApprove": "Lotes por aprobar",
-    "noBatches": "No hay lotes esperando aprobación.",
-    "agentActivity": "Actividad del agente",
-    "noActivity": "Sin actividad reciente del agente.",
-    "weekKpis": "Esta semana",
-    "signInTitle": "Coordinación BIM asistida por IA",
-    "signInBody": "Conecta tu cuenta de Autodesk para revisar las interferencias de tus proyectos en ACC.",
-    "openQueue": "Abrir"
-  },
   "projects": {
     "title": "Proyectos",
     "hubs": "Hubs",
@@ -119,7 +100,8 @@
     "modelSets_one": "{count} conjunto de modelos",
     "modelSets_other": "{count} conjuntos de modelos",
     "openProject": "Abrir proyecto",
-    "pendingBadge": "{count} pendientes"
+    "pendingBadge": "{count} pendientes",
+    "continue": "Continuar donde quedaste: {label}"
   },
   "modelSets": {
     "title": "Conjuntos de modelos",
@@ -570,7 +552,7 @@
     "toggleDetail": "Panel de detalle",
     "reload": "Cargar propuestas nuevas",
     "send": "Enviar a aprobación",
-    "goTo": "Ir a Aprobaciones / Inicio / Reglas / Reportes",
+    "goTo": "Ir a Proyectos / Aprobaciones / Reglas (g p · g a · g r)",
     "help": "Esta ayuda",
     "escape": "Cerrar / limpiar",
     "closeHint": "Pulsa Esc o ? para cerrar",
@@ -701,29 +683,13 @@
     "waiting": "Esperando confirmación…"
   },
   "audit": {
-    "title": "Auditoría",
     "columns": {
       "date": "Fecha",
-      "actor": "Actor",
-      "action": "Acción",
-      "object": "Objeto",
-      "details": "Detalles"
+      "object": "Objeto"
     },
-    "actor": {
-      "agent": "Agente",
-      "user": "Usuario",
-      "server": "Servidor",
-      "engine": "Motor"
-    },
-    "empty": "Sin eventos para estos filtros.",
-    "chain": "Cadena: ejecución del agente → propuesta → decisión → lote → aprobación → ACC",
-    "allActions": "Todas las acciones",
     "filters": {
-      "user": "Usuario",
-      "action": "Acción",
-      "batch": "Lote"
-    },
-    "accResponse": "Respuesta ACC {id}"
+      "user": "Usuario"
+    }
   },
   "rules": {
     "title": "Reglas y aprendizaje",
@@ -789,50 +755,11 @@
     "evidenceOnlyHeader": "Respaldada por evaluación en datos reales · aún sin correcciones de coordinadores"
   },
   "reports": {
-    "title": "Reportes",
-    "portfolio": "Portafolio",
-    "filters": {
-      "project": "Proyecto",
-      "modelSet": "Conjunto",
-      "from": "Desde",
-      "to": "Hasta"
-    },
-    "kpi": {
-      "activeClashes": "Interferencias activas",
-      "groups": "Grupos",
-      "reduction": "Reducción {pct}",
-      "reviewed": "Revisado",
-      "issuesCreated": "Incidencias creadas",
-      "issuesClosed": "Incidencias cerradas",
-      "aiAcceptance": "Aceptación de propuestas IA",
-      "timeSaved": "Tiempo ahorrado",
-      "timeSavedValue": "≈ {hours} h",
-      "timeSavedFormula": "Interferencias revisadas × {baseline} s (referencia manual) − tiempo real de revisión",
-      "vsPrevious": "{delta} vs. prueba anterior"
-    },
     "chart": {
-      "burndown": "Evolución por versión de prueba",
-      "matrix": "Matriz de pares de disciplinas",
-      "byStatusPair": "Interferencias por estado y par",
-      "newVsResolved": "Nuevas vs. resueltas por prueba",
-      "reasons": "Correcciones por razón",
-      "calibration": "Calibración de confianza",
-      "p1Aging": "Antigüedad de P1 abiertos",
-      "valid": "Válidas"
-    },
-    "aging": {
-      "lt1w": "< 1 semana",
-      "w1to2": "1–2 semanas",
-      "w2to4": "2–4 semanas",
-      "gt4w": "> 4 semanas"
+      "calibration": "Calibración de confianza"
     },
     "empty": "Aún no hay datos suficientes para este reporte.",
-    "print": "Imprimir / PDF",
-    "allProjects": "Todos los proyectos",
-    "allModelSets": "Todos los conjuntos",
-    "count": "Cantidad",
-    "pair": "Par",
-    "test": "Prueba"
+    "count": "Cantidad"
   },
   "settings": {
     "title": "Ajustes",
@@ -1197,7 +1124,22 @@
   "scope": {
     "title": "Cambio de alcance respecto de v{version}",
     "outOfScope": "{count} interferencias fuera de alcance: no se cuentan como resueltas ni se proponen",
-    "outOfScopeTip": "Fuera de alcance: el documento cambió; no se cuenta como resuelta"
+    "outOfScopeTip": "Fuera de alcance: el documento cambió; no se cuenta como resuelta",
+    "line": "Alcance: {parts}",
+    "seeDetail": "Ver detalle",
+    "moreItems": "{count} avisos más",
+    "outOfScopeShort": "{count} fuera de alcance",
+    "kind": {
+      "added_one": "{count} modelo agregado",
+      "added_other": "{count} modelos agregados",
+      "removed_one": "{count} quitado",
+      "removed_other": "{count} quitados",
+      "replaced_one": "{count} reemplazado",
+      "replaced_other": "{count} reemplazados",
+      "config": "configuración de la prueba cambió",
+      "mass": "resolución masiva retenida",
+      "other": "{count} cambios"
+    }
   },
   "header": {
     "preparedBy": "Preparado por el agente · {time}",

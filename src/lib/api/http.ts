@@ -188,7 +188,6 @@ export class HttpCoordinatorApi implements CoordinatorApi {
   getSession() { return this.get<T.SessionInfo>("/session"); }
   getCurrentUser() { return this.get<T.UserInfo>("/me"); }
   getAgentStatus() { return this.get<T.AgentStatus>("/agent/status"); }
-  getHomeSummary() { return this.get<T.HomeSummary>("/home"); }
 
   listHubs() { return this.get<T.Hub[]>("/hubs"); }
   listProjects(p?: { hubId?: string; q?: string }) { return this.get<T.ProjectSummary[]>("/projects", p); }
@@ -349,6 +348,4 @@ export class HttpCoordinatorApi implements CoordinatorApi {
   }
   getCalibration() { return this.get<T.Calibration>("/learning/calibration"); }
 
-  getReport(scope: T.ReportScope) { return this.get<T.ReportData>("/reports", { ...scope }); }
-  listAudit(q: T.AuditQuery) { return this.get<T.Page<T.AuditEvent>>("/audit", { ...q }); }
 }

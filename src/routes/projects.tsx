@@ -13,6 +13,8 @@ import { readJson, readString, writeString } from "~/lib/storage";
 
 export const RECENT_KEY = "coord.recentProjects";
 
+export const LAST_WORKSPACE_KEY = "coord.lastWorkspace";
+
 export function ProjectsPage() {
   const t = useT();
   const api = useApi();
@@ -22,6 +24,8 @@ export function ProjectsPage() {
   const projects = useAsync(() => (hubId ? api.listProjects({ hubId }) : Promise.resolve([] as ProjectSummary[])), [api, hubId]);
   const all = useAsync(() => api.listProjects(), [api]);
   const recentIds = readJson<string[]>(RECENT_KEY, []);
+  // "Continue where you left off" (was on the removed Inicio page): the last coordinación opened.
+  const last = readJson<{ url: string; label: string } | null>(LAST_WORKSPACE_KEY, null);
   const recent = (all.data ?? []).filter((p) => recentIds.includes(p.id)).sort((a, b) => recentIds.indexOf(a.id) - recentIds.indexOf(b.id));
 
   useEffect(() => {
@@ -39,6 +43,13 @@ export function ProjectsPage() {
   return (
     <div>
       <PageHeader title={t("projects.title")} />
+      {last && (
+        <p className="-mt-2 mb-3 text-sm">
+          <Link to={last.url} className="text-brand hover:underline">
+            {t("projects.continue", { label: last.label })} →
+          </Link>
+        </p>
+      )}
       <div className="grid gap-6 md:grid-cols-[240px_1fr]">
         <nav aria-label={t("projects.hubs")}>
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">{t("projects.hubs")}</h2>

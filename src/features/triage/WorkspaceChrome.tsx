@@ -2,7 +2,6 @@
  * Workspace header (breadcrumb, test selector, progress, send CTA), banners,
  * selection bar and status bar (spec §3.1–3.3, §3.9, §4.5).
  */
-import type { ReactNode } from "react";
 import { useMemo } from "react";
 import { useIngest } from "~/features/modelset/useIngest";
 import { useToast } from "~/lib/components/Toast";
@@ -10,12 +9,13 @@ import { Spinner } from "~/lib/components/icons";
 import { useI18n, useT, type TKey } from "~/i18n";
 import type { Priority, Validity } from "~/lib/api/types";
 import { Breadcrumbs } from "~/lib/components/PageHeader";
-import { CopyCommand, useAgentStatus } from "~/lib/components/shell-widgets";
+import { useAgentStatus } from "~/lib/components/shell-widgets";
 import { IconX } from "~/lib/components/icons";
-import { Banner, Kbd, ProgressBar, inputCls } from "~/lib/components/ui";
+import { Kbd, ProgressBar, inputCls } from "~/lib/components/ui";
 import { DECISION_KEY, PRIORITY_KEY, VALIDITY_KEY, VALIDITY_ORDER } from "~/lib/labels";
 import { latestDecisions } from "~/lib/api/decision-utils";
 import { useTriageContext } from "./actions";
+import { StatusLine } from "./StatusLine";
 import { useTriage } from "./store";
 
 /** Counts over the whole test (ignoring filters). */
@@ -108,6 +108,8 @@ export function WorkspaceHeader({ onTestChange, onSend }: { onTestChange: (testI
           {t("header.preparedBy", { time: fmt.time(preparedAt) })}
         </span>
       )}
+      {/* One slim status line (scope / stale / new proposals / pace): replaces the stacked banners. */}
+      <StatusLine />
       <div className="flex min-w-[180px] flex-col gap-0.5" title={tip}>
         <span className="text-xs text-gray-500">{t("workspace.progress", { done: progress.done, total: progress.total })}</span>
         <ProgressBar done={progress.done} total={progress.total} />
@@ -124,65 +126,6 @@ export function WorkspaceHeader({ onTestChange, onSend }: { onTestChange: (testI
       </div>
     </header>
   );
-}
-
-export function WorkspaceBanners() {
-  const t = useT();
-  const { fmt } = useI18n();
-  const { store } = useTriageContext();
-  const payload = useTriage(store, (s) => s.payload);
-  const pending = useTriage(store, (s) => s.pendingProposals.length);
-  const pace = useTriage(store, (s) => s.paceNudge);
-  if (!payload) return null;
-  const ms = payload.modelSet;
-  const newest = payload.tests[0];
-  const staleVersion = ms.analyzedVersion !== undefined && ms.latestVersion > ms.analyzedVersion;
-  const newerTest = newest && newest.id !== payload.test.id;
-  const scope = payload.scopeChanges ?? [];
-  const outOfScope = payload.changeSummary?.outOfScope ?? 0;
-  // At most 2 banners (plan §1.4), by priority: scope change (X6) > stale version > new agent proposals > pace nudge.
-  const banners: ReactNode[] = [];
-  if (scope.length || outOfScope > 0)
-    banners.push(
-      <Banner key="scope" tone="warning" className="flex-shrink-0 border-x-0 border-t-0">
-        <div role="alert">
-          <p className="font-medium">{t("scope.title", { version: payload.changeSummary?.previousVersion ?? "—" })}</p>
-          <ul className="text-xs">
-            {scope.map((c, i) => (
-              <li key={i}>{c.fileName ? <span className="font-medium">{c.fileName}: </span> : null}{c.message}</li>
-            ))}
-            {outOfScope > 0 && <li title={t("scope.outOfScopeTip")}>{t("scope.outOfScope", { count: outOfScope })}</li>}
-          </ul>
-        </div>
-      </Banner>,
-    );
-  if (staleVersion || newerTest)
-    banners.push(
-        <Banner key="stale"
-          tone="warning"
-          className="flex-shrink-0 border-x-0 border-t-0"
-          actions={
-            <>
-              <CopyCommand text={ms.agentCommand} compact />
-            </>
-          }
-        >
-          {staleVersion ? t("stale.banner", { latest: ms.latestVersion, analyzed: ms.analyzedVersion ?? "" }) : t("stale.newerTest", { date: fmt.date(newest.completedOn) })}
-        </Banner>,
-    );
-  if (pending > 0)
-    banners.push(
-        <Banner key="proposals" tone="info" className="flex-shrink-0 border-x-0 border-t-0" actions={<button type="button" onClick={() => store.applyProposalUpdates()} className="rounded border border-brand-light/40 bg-white px-2 py-0.5 text-xs">{t("workspace.refresh")}</button>}>
-          {t("workspace.newProposals", { count: pending })}
-        </Banner>,
-    );
-  if (pace)
-    banners.push(
-        <Banner key="pace" tone="warning" className="flex-shrink-0 border-x-0 border-t-0" actions={<button type="button" onClick={() => store.dismissPace()} className="rounded border border-amber-300 bg-white px-2 py-0.5 text-xs">{t("workspace.paceNudgeDismiss")}</button>}>
-          {t("guard.paceNudge")}
-        </Banner>,
-    );
-  return <>{banners.slice(0, 2)}</>;
 }
 
 /** "Preparado por el agente · hh:mm": newest of the agent's last activity and the newest proposal. */

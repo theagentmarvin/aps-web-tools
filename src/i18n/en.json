@@ -11,12 +11,9 @@
     "wrongHostLink": "Go to localhost"
   },
   "nav": {
-    "home": "Home",
     "projects": "Projects",
     "approvals": "Approvals",
     "rules": "Rules",
-    "reports": "Reports",
-    "audit": "Audit",
     "settings": "Settings",
     "signOut": "Sign out",
     "language": "Language",
@@ -93,22 +90,6 @@
     "property": "Property",
     "filter": "Filter"
   },
-  "home": {
-    "greeting": "Hi, {name}",
-    "subtitle": "Review the agent's proposals and approve changes to ACC.",
-    "myQueue": "Your queue",
-    "pending_one": "{count} pending",
-    "pending_other": "{count} pending",
-    "queueEmpty": "You have no pending reviews.",
-    "batchesToApprove": "Batches to approve",
-    "noBatches": "No batches awaiting approval.",
-    "agentActivity": "Agent activity",
-    "noActivity": "No recent agent activity.",
-    "weekKpis": "This week",
-    "signInTitle": "AI-assisted BIM coordination",
-    "signInBody": "Connect your Autodesk account to review clashes in your ACC projects.",
-    "openQueue": "Open"
-  },
   "projects": {
     "title": "Projects",
     "hubs": "Hubs",
@@ -119,7 +100,8 @@
     "modelSets_one": "{count} model set",
     "modelSets_other": "{count} model sets",
     "openProject": "Open project",
-    "pendingBadge": "{count} pending"
+    "pendingBadge": "{count} pending",
+    "continue": "Continue where you left off: {label}"
   },
   "modelSets": {
     "title": "Model sets",
@@ -570,7 +552,7 @@
     "toggleDetail": "Detail panel",
     "reload": "Load new proposals",
     "send": "Send to approval",
-    "goTo": "Go to Approvals / Home / Rules / Reports",
+    "goTo": "Go to Projects / Approvals / Rules (g p · g a · g r)",
     "help": "This help",
     "escape": "Close / clear",
     "closeHint": "Press Esc or ? to close",
@@ -701,29 +683,13 @@
     "waiting": "Waiting for confirmation…"
   },
   "audit": {
-    "title": "Audit",
     "columns": {
       "date": "Date",
-      "actor": "Actor",
-      "action": "Action",
-      "object": "Object",
-      "details": "Details"
+      "object": "Object"
     },
-    "actor": {
-      "agent": "Agent",
-      "user": "User",
-      "server": "Server",
-      "engine": "Engine"
-    },
-    "empty": "No events for these filters.",
-    "chain": "Chain: agent run → proposal → decision → batch → approval → ACC",
-    "allActions": "All actions",
     "filters": {
-      "user": "User",
-      "action": "Action",
-      "batch": "Batch"
-    },
-    "accResponse": "ACC response {id}"
+      "user": "User"
+    }
   },
   "rules": {
     "title": "Rules and learning",
@@ -789,50 +755,11 @@
     "evidenceOnlyHeader": "Backed by a real-data evaluation · no coordinator corrections yet"
   },
   "reports": {
-    "title": "Reports",
-    "portfolio": "Portfolio",
-    "filters": {
-      "project": "Project",
-      "modelSet": "Model set",
-      "from": "From",
-      "to": "To"
-    },
-    "kpi": {
-      "activeClashes": "Active clashes",
-      "groups": "Groups",
-      "reduction": "Reduction {pct}",
-      "reviewed": "Reviewed",
-      "issuesCreated": "Issues created",
-      "issuesClosed": "Issues closed",
-      "aiAcceptance": "AI proposal acceptance",
-      "timeSaved": "Time saved",
-      "timeSavedValue": "≈ {hours} h",
-      "timeSavedFormula": "Clashes reviewed × {baseline} s (manual baseline) − actual review time",
-      "vsPrevious": "{delta} vs. previous test"
-    },
     "chart": {
-      "burndown": "Trend by test version",
-      "matrix": "Discipline pair matrix",
-      "byStatusPair": "Clashes by status and pair",
-      "newVsResolved": "New vs. resolved per test",
-      "reasons": "Corrections by reason",
-      "calibration": "Confidence calibration",
-      "p1Aging": "Age of open P1",
-      "valid": "Valid"
-    },
-    "aging": {
-      "lt1w": "< 1 week",
-      "w1to2": "1–2 weeks",
-      "w2to4": "2–4 weeks",
-      "gt4w": "> 4 weeks"
+      "calibration": "Confidence calibration"
     },
     "empty": "Not enough data for this report yet.",
-    "print": "Print / PDF",
-    "allProjects": "All projects",
-    "allModelSets": "All model sets",
-    "count": "Count",
-    "pair": "Pair",
-    "test": "Test"
+    "count": "Count"
   },
   "settings": {
     "title": "Settings",
@@ -1197,7 +1124,22 @@
   "scope": {
     "title": "Scope change since v{version}",
     "outOfScope": "{count} clashes out of scope: not counted as resolved, not proposed",
-    "outOfScopeTip": "Out of scope: the document changed; not counted as resolved"
+    "outOfScopeTip": "Out of scope: the document changed; not counted as resolved",
+    "line": "Scope: {parts}",
+    "seeDetail": "See details",
+    "moreItems": "{count} more notices",
+    "outOfScopeShort": "{count} out of scope",
+    "kind": {
+      "added_one": "{count} model added",
+      "added_other": "{count} models added",
+      "removed_one": "{count} removed",
+      "removed_other": "{count} removed",
+      "replaced_one": "{count} replaced",
+      "replaced_other": "{count} replaced",
+      "config": "test configuration changed",
+      "mass": "mass resolution held",
+      "other": "{count} changes"
+    }
   },
   "header": {
     "preparedBy": "Prepared by the agent · {time}",

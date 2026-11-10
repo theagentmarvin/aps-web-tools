@@ -288,3 +288,17 @@ Source: `docs/domain/pilot-readiness-review.md`.
   - "Verificación del {fecha}" and the printed "Coordinación del {fecha}" replace version numbers.
   - Plural fixes: "Abre al menos N ubicaciones", "siguen N · resueltas M", "(+N)".
 - **Not changed here (server text):** the agenda reasons ("ubicación(es)") and the evidence template ("Estado ACC: open").
+
+## Simplification (2026-11-10, product owner)
+
+- **Navigation:** Proyectos · Aprobaciones · Reglas. Ajustes stays in the user menu; the agent status and ES/EN switch are unchanged.
+  - Inicio, Reportes and Auditoría were removed from the UI: route files, nav entries, `features/reports/ReportKpis.tsx`, the API client methods (`getHomeSummary`, `getReport`, `listAudit`), their mock data (`buildReport`, `seedAudit`) and 64 i18n keys only they used.
+  - `/`, `/inicio`, `/reportes/*` and `/auditoria/*` redirect to `/proyectos`. The sign-in card still shows there when logged out (AuthGate).
+  - The **server audit log is untouched** (it protects approvals); only its UI page went away.
+  - `chart.js` stays: the Reglas page and the data-management dashboard still use it.
+  - From Inicio, only "Continuar donde quedaste: {proyecto / conjunto}" survives, as one line on `/proyectos` (the last coordinación opened, kept in localStorage).
+  - Workspace shortcuts: `g p` / `g a` / `g r`.
+- **Banners → one status line** (`StatusLine.tsx`) in the workspace header row: ≤ 28 px, no layout shift.
+  - Only the highest-priority notice shows: scope change > stale version > new agent proposals > pace nudge. The others sit behind "+N".
+  - Scope example: "⚠ Alcance: 2 modelos agregados (MODELING TEST S4.rvt, S3.rvt) · Ver detalle". "Ver detalle" opens a popover with the per-document lines and the out-of-scope count.
+  - On v11 the tree starts 69 px higher (y 273 → 204 at 1600×1000).
