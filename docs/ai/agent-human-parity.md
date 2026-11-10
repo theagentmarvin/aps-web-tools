@@ -1,4 +1,4 @@
-# Paridad híbrida agente ↔ humano
+| 75 | Tarjetas de propuesta en el chat | Tarjeta con acción, validez, destino seleccionable; preguntas respondibles en la tarjeta | Las tarjetas salen de datos del servidor, nunca del texto del modelo | parity (WS-D) || 36 | Familias más gruesas y etiquetas de par | Firma v7 (27 grupos en vez de 83 en fixtures); par por disciplina del sistema; decisiones antiguas «por revisar» | `get_family.legacyDecisions`; mismas familias vía `list_families` | parity (WS-C) || 35 | Plantilla de incidencia por familia, tipo de incidencia, enlaces profundos a ACC | Plantilla PROBLEMA/UBICACIÓN/ACCIÓN en incidencias de grupo; tipo por proyecto (Disciplinas › Incidencias ACC) o al aprobar; «Abrir en ACC» enlazado | `draft_issue` sigue la misma guía; `get_issue_settings` lee el tipo | parity (WS-B) || 25 | Confirmar decisiones heredadas en bloque | `GET`/`POST /tests/:id/inherited-confirmations` · «⋯» › «Confirmar heredadas sin cambio (N)» (lista por motivo, acuse aparte para pasadas en estructura y seguridad de personas, conteo escrito; validado en el servidor) | `propose_group_action` `{type: "confirm_inherited"}`; `get_group.previousDecision.confirmReasons` · CC, Chat | parity (WS-C): el agente propone, el humano confirma |# Paridad híbrida agente ↔ humano
 
 Responsable: especialista IA. Fecha: 2026-11-10. Estado: auditoría; WS-E implementó P0, P1, `propose_family_exception` y la lista de lectura del Chat (filas marcadas «WS-E»).
 
@@ -161,12 +161,14 @@ Estados posibles: **parity** · **agent-missing** · **human-missing** · **inte
 
 | Estado | Filas |
 |---|---|
-| parity | 34 (WS-E: +#24, #30, #33, #37, #43, #54) |
-| intentional | 17 (WS-E: #74 tras corregir el bug) |
-| human-missing | 12 (los bugs de ruta #33 y #74 se corrigieron en WS-E) |
-| agent-missing | 4 (#29, #40, #50, #63: P4) |
-| en curso (WS-A…D) | 8 |
-| **Total** | **75** |
+| parity | 44 |
+| intentional | 21 |
+| human-missing | 3 (#23, #44, #66) |
+| agent-missing | 4 (#29, #40, #50, #63) |
+| en curso | 4 |
+| **Total** | **76** |
+
+Recuento tras integrar WS-A…F (2026-11-10).
 
 ## 3. Hallazgos que no son de herramientas
 
