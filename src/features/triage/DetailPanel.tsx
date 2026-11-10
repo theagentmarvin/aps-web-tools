@@ -46,6 +46,7 @@ import { parseKey, useTriage } from "./store";
 import { Section, useCalibrationText, useSectionPrefs, type SectionId } from "./detail-accordion";
 import { FamilyPanel, NodePanel } from "./FamilyPanel";
 import { IssuePanel, VerificationSection } from "./IssueViews";
+import { MeetingNoteSection } from "./MeetingViews";
 
 // ── Helpers ────────────────────────────────────────────────────────
 
@@ -230,6 +231,7 @@ function InstancePanel() {
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden" id="triage-detail" tabIndex={-1}>
+        {lens === "reunion" && <MeetingNoteSection key={cursorKey} rowKey={cursorKey} />}
         {/* Lens "Incidencias": the verification of this ubicación's issue opens first. */}
         {lens === "incidencias" && issue && <VerificationSection check={issue} />}
         <QuestionCallout groupId={groupId} />

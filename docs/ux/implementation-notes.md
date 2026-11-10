@@ -194,7 +194,7 @@ Plan: `docs/PLAN-core-features-simplified.md` (approved). Contract: `ClashGroup.
 
 | Row | Chip 1 | Chip 2 | Chip 3 (one status chip, by precedence) | State icon (one, by precedence) |
 |---|---|---|---|---|
-| Ubicación | Priority | Discipline pair | Reapareció > Cambió > Nuevo | Your decision in this version (✓ ✎ ✕ ⏸) > open agent question **?** (M2) > ACC: closed ⊘ / assigned or mixed (issue icon; tooltip with issue ids, "siguen" / "resueltas") > exception ⚑ > inherited ↺ (tooltip "Heredada de v10 · decidida por ti / por el grupo / en ACC") / ◌ > pending ○ |
+| Ubicación | Priority | Discipline pair | Reapareció > Cambió > Nuevo | Your decision in this version (✓ ✎ ✕ ⏸) > open agent question **?** (M2) > ACC: closed ⊘ / assigned or mixed (issue icon; tooltip with issue ids, "siguen" / "resueltas") > exception ⚑ > inherited ↺ (tooltip "Heredada de v10 · decidida por ti / por el grupo / en ACC") / ◌ > meeting note (M4, only when nothing above applies) > pending ○ |
 | Grupo | Worst priority | Validity | Reapareció > Cambió > Nuevo > validez mixta > orientación por confirmar > Típico | Decided ✓ > ACC (aggregated) |
 | Interferencia (flat) | Priority | — | Reapareció > Cambió > Nuevo | Same as ubicación (ACC from its group) |
 | Nodes (par / tipo) | Worst priority | — | — | — (counts and "N por revisar" as text) |
@@ -237,3 +237,23 @@ Contract: `GET /tests/:t/issue-checks` (IssueChecksPayload / IssueCheck), `GET /
   - **Rechazar (X):** opens a V01–V05 picker with the suggested code preselected (dice_resuelta → V01, sigue_abierta / no_verificable → V02, resuelta → V03, avance → V05). Keys 1–5 pick a code and Enter confirms, so it takes at most 2 keystrokes.
 - **Viewer:** selecting an issue, discipline or ubicación shows the remaining clashes of its ubicaciones. Resolved elements are not greyed: the payload does not include resolved clashes (deferred).
 - **Not used yet:** `GET /issue-checks/gate` (the M5 evidence gate).
+
+## M4: lens "Reunión" (F4 meeting) (2026-11-10)
+
+Contract: `GET /tests/:t/agenda` (AgendaPayload: `cap`; per discipline `items` + `more` + `summary`; kinds regresion → p1_pendiente → incidencia → nuevo → confirmar_resuelta), `GET /tests/:t/notes` and `PUT /tests/:t/notes/:family|group/:id` (MeetingNote, revisions), `GET/PUT /tests/:t/families/:f/view` (SavedViewerView `camera`, ≤ 20 KB, local only).
+
+- **Lens.**
+  - The tab is enabled when there is an agenda; its count is the number of topics.
+  - Tree: discipline (server order, "N temas · +N más") → agenda items in server order. Each item reuses the existing rows: an issue row when the item has an issue check, otherwise a grupo row, otherwise ubicación rows. Rows expand to ubicaciones and clashes as before.
+  - A row that appears twice is shown once.
+  - The summary line reads "N temas · M disciplinas" in both views. In Interferencias the rows are the clashes of the agenda ubicaciones.
+- **Nota de reunión.**
+  - Opened first in the panel for grupo, ubicación and issue rows, showing "En agenda: {reason}" and a textarea.
+  - **N** focuses it from anywhere in the lens (outside the lens, N still opens the decision note).
+  - Debounced autosave (800 ms): "Guardando…" then "Guardado hh:mm".
+  - Targets: grupo row → family; ubicación → group; issue → its first ubicación (so it does not mix with the agenda item of its grupo).
+  - Rows with a note get the note icon, at the lowest precedence before ○.
+  - Decisions are still taken in "Aprobar grupo"; `/acta` later turns the notes into normal proposals.
+- **Guardar vista** (viewer toolbar, this lens only): `viewer.getState({ viewport: true })` → PUT. Selecting a row whose grupo has a saved view restores the camera (`restoreState` with only the viewport filter). The panel shows "Vista guardada hh:mm" or "Sin vista guardada".
+- **Imprimir agenda** (summary line, this lens): `window.print()` with `body[data-print=agenda]` and `@media print` rules in `src/app.css`. Only the print-only agenda prints: by discipline, with item titles, kinds, reasons and notes; no viewer. There is no HTML exporter.
+- **URLs:** an issue row writes `?incidencia=`, which is restored once the issue checks load.

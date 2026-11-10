@@ -80,3 +80,26 @@ kbd {
     overflow: visible !important;
   }
 }
+
+/* M4 "Imprimir agenda": only the print-only agenda of the Reunión lens (no viewer, no chrome). */
+.print-agenda {
+  display: none;
+}
+@media print {
+  body[data-print="agenda"] * {
+    visibility: hidden;
+  }
+  body[data-print="agenda"] .print-agenda,
+  body[data-print="agenda"] .print-agenda * {
+    visibility: visible;
+  }
+  body[data-print="agenda"] .print-agenda {
+    display: block !important;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    color: #000;
+    background: #fff;
+  }
+}

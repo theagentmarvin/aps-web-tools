@@ -388,6 +388,69 @@ export interface IssueGate {
   ready: boolean;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// M4: the meeting (F4). Agenda = a server table (no LLM); notes per grupo / ubicación;
+// saved viewer views (local only). No screenshots to ACC, no HTML/PNG pack.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Fixed order inside a discipline: regresion → p1_pendiente → incidencia → nuevo → confirmar_resuelta. */
+export type AgendaKind = "regresion" | "p1_pendiente" | "incidencia" | "nuevo" | "confirmar_resuelta";
+export interface AgendaItem {
+  kind: AgendaKind;
+  familyId?: string;
+  groupIds?: string[];
+  issueId?: string;
+  /** Spanish (family title, or the ACC issue title: render as text). */
+  title: string;
+  priority: Priority;
+  /** Spanish, short. */
+  reason: string;
+  counts: { instances?: number; clashes: number; existing?: number; resolved?: number };
+}
+export interface AgendaDiscipline {
+  discipline: string;
+  items: AgendaItem[];
+  /** Items beyond the cap ("+N más"). */
+  more: number;
+  /** Spanish, one line, from a template. */
+  summary: string;
+}
+/** GET /tests/:testId/agenda */
+export interface AgendaPayload {
+  testId: string;
+  version: number;
+  baseVersion?: number;
+  /** Items per discipline before "+N más". */
+  cap: number;
+  disciplines: AgendaDiscipline[];
+}
+
+/** A meeting note on a grupo (family) or an ubicación (group). Human text: render as text. */
+export interface MeetingNote {
+  testKey: string;
+  version: number;
+  targetType: "family" | "group";
+  targetId: string;
+  /** ≤ 2000 characters. */
+  text: string;
+  author: string;
+  updatedAt: string;
+  /** 1, 2, … (every save is a new revision; earlier ones are kept in history). */
+  revision: number;
+  history?: Array<{ revision: number; text: string; author: string; at: string }>;
+}
+/** PUT /tests/:testId/notes/:targetType/:targetId */
+export interface MeetingNoteRequest { text: string }
+
+/** PUT /tests/:testId/families/:familyId/view — the viewer camera state (≤ 20 KB JSON, local only). */
+export interface SavedViewerView {
+  testKey: string;
+  familyId: string;
+  camera: unknown;
+  savedBy: string;
+  savedAt: string;
+}
+
 /** X3: a question the agent asks the coordinator (answered in the UI). */
 export interface CoordinatorQuestion {
   id: string;

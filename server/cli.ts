@@ -29,6 +29,7 @@ import { Coordinator } from "./coordinator";
 import { CoordinatorUi } from "./coordinator-ui";
 import { runSetup, setupCheck } from "./setup";
 import { CoordError } from "./util";
+import { FIXTURE_PROJECT_ID } from "./source/fixtures";
 
 const out = (s: string) => process.stdout.write(s + "\n");
 const err = (s: string) => process.stderr.write(s + "\n");
@@ -44,7 +45,7 @@ function positional(args: string[]): string[] {
   const res: string[] = [];
   for (let i = 0; i < args.length; i++) {
     if (args[i].startsWith("--")) {
-      if (["--project", "--model-set"].includes(args[i])) i++;
+      if (["--project", "--model-set", "--version"].includes(args[i])) i++;
       continue;
     }
     res.push(args[i]);
@@ -150,13 +151,16 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return 0;
     }
     case "ingest": {
-      const project = opt(rest, "--project");
+      // Fixtures mode (evals): the demo project when none is given or active.
+      const project = opt(rest, "--project") ?? (coord.source.kind === "fixtures" && !(await coord.store.getContext())?.projectId ? FIXTURE_PROJECT_ID : undefined);
       const modelSet = opt(rest, "--model-set");
+      const version = opt(rest, "--version");
       let testId = positional(rest)[0];
       if (!testId) {
         const t = await coord.listClashTests({ projectId: project, modelSetId: modelSet });
-        testId = String(t.rows[0]?.[0] ?? "");
-        if (!testId) throw new CoordError("not_found", "No hay clash tests.");
+        const row = version ? t.rows.find((r) => Number(r[2]) === Number(version)) : t.rows[0];
+        testId = String(row?.[0] ?? "");
+        if (!testId) throw new CoordError("not_found", version ? `No hay clash test para la versión ${version}.` : "No hay clash tests.");
       }
       const u = await ui.currentUser();
       const r = await coord.ingest(
@@ -232,8 +236,30 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       out(JSON.stringify(r, null, 2));
       return r.ok ? 0 : 1;
     }
+    case "seed-meeting-notes": {
+      // Evals only (fixtures mode): seed meeting notes on the classified fixture test.
+      if (coord.source.kind !== "fixtures") throw new CoordError("forbidden", "seed-meeting-notes solo funciona con COORD_DATA_SOURCE=fixtures.");
+      const file = positional(rest)[0];
+      if (!file) throw new CoordError("validation_error", "Uso: seed-meeting-notes <archivo.json>");
+      const { readFile } = await import("node:fs/promises");
+      const spec = JSON.parse(await readFile(resolve(root, file), "utf8")) as { notes: Array<{ id: string; target: { validity: string; rank: number } | { familyId: string }; text: string }> };
+      const { test, views } = await coord.familyViewsFor(opt(rest, "--test") ?? (await coord.store.getContext())?.testKey);
+      const ranked = (validity: string) =>
+        views
+          .filter((f) => f.proposed.validity === validity)
+          .sort((a, b) => a.proposed.band - b.proposed.band || b.instanceCount - a.instanceCount || b.uniqueClashCount - a.uniqueClashCount || (a.id < b.id ? -1 : 1));
+      const seeded: Array<{ id: string; familyId: string }> = [];
+      for (const n of spec.notes) {
+        const familyId = "familyId" in n.target ? n.target.familyId : ranked(n.target.validity)[n.target.rank - 1]?.id;
+        if (!familyId) throw new CoordError("not_found", `Nota ${n.id}: no hay familia ${JSON.stringify(n.target)}`);
+        await coord.putMeetingNote(test.testKey, "family", familyId, n.text, { id: "seed", name: "seed" });
+        seeded.push({ id: n.id, familyId });
+      }
+      out(JSON.stringify({ testKey: test.testKey, seeded }, null, 2));
+      return 0;
+    }
     default:
-      out("Comandos: login | logout | status | ingest [testId] | classify [testKey] [--propose] | approvals list | approve <batchId> (fixtures) | passkey-enroll | apply <batchId> [--no-dry-run] | verify-approval <batchId> [--json]");
+      out("Comandos: login | logout | status | ingest [testId] [--version N] | classify [testKey] [--propose] | seed-meeting-notes <file> (fixtures) | approvals list | approve <batchId> (fixtures) | passkey-enroll | apply <batchId> [--no-dry-run] | verify-approval <batchId> [--json]");
       return cmd ? 1 : 0;
   }
 }

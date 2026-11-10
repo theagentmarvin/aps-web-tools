@@ -21,6 +21,7 @@ import { FilterBar } from "~/features/triage/FilterBar";
 import { isDefaultQuery, parseQuery, writeQuery, type ListQuery } from "~/features/triage/filters";
 import { GroupList } from "~/features/triage/GroupList";
 import { LensBar } from "~/features/triage/LensBar";
+import { PrintAgenda, printAgenda } from "~/features/triage/MeetingViews";
 import { TriageStore, rowKey, useTriage } from "~/features/triage/store";
 import { useTriageHotkeys } from "~/features/triage/useTriageHotkeys";
 import { SelectionBar, StatusBar, WorkspaceBanners, WorkspaceHeader, useProgress } from "~/features/triage/WorkspaceChrome";
@@ -42,6 +43,7 @@ export function TriageWorkspace() {
   const { settings } = useSettings();
   const { data, error, loading, reload } = useAsync<TriagePayload>(() => api.getTriage(projectId, modelSetId, testParam), [api, projectId, modelSetId, testParam]);
   const [manualOk, setManualOk] = useState(false);
+  const pendingIssueCursor = useRef<string | null>(null);
 
   useEffect(() => () => store.dispose(), [store]);
   useEffect(() => store.setThresholds(settings.thresholds), [store, settings.thresholds]);
@@ -65,6 +67,8 @@ export function TriageWorkspace() {
     } else if (f && store.state.families.has(f)) {
       store.reveal(`f:${f}`);
     }
+    // ?incidencia= is restored once the issue checks arrive.
+    pendingIssueCursor.current = sp.get("incidencia");
     // Setting "Aceptar decisiones heredadas automáticamente" (default off in v1).
     if (settings.autoAcceptInherited) actions.acceptInherited();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -75,11 +79,26 @@ export function TriageWorkspace() {
     if (!data) return;
     let alive = true;
     api.getIssueChecks(data.test.id).then(
-      (p) => alive && store.setIssueChecks(p.checks, p.version),
+      (p) => {
+        if (!alive) return;
+        store.setIssueChecks(p.checks, p.version);
+        const inc = pendingIssueCursor.current;
+        pendingIssueCursor.current = null;
+        if (inc && store.state.rows.some((r) => r.key === `i:${inc}`)) store.setCursor(`i:${inc}`);
+      },
       () => undefined,
     );
     api.getReminders(data.test.id).then(
       (p) => alive && store.setReminders(p.reminders),
+      () => undefined,
+    );
+    // M4: meeting agenda and notes. Absent endpoint = lens disabled.
+    api.getAgenda(data.test.id).then(
+      (p) => alive && store.setAgenda(p.disciplines),
+      () => undefined,
+    );
+    api.getNotes(data.test.id).then(
+      (p) => alive && store.setNotes(p.notes),
       () => undefined,
     );
     return () => {
@@ -111,7 +130,8 @@ export function TriageWorkspace() {
         url.searchParams.delete("clash");
         url.searchParams.delete("family");
         url.searchParams.delete("grupo");
-        if (key && !key.startsWith("n:")) url.searchParams.set(key.startsWith("g:") ? "group" : key.startsWith("f:") ? "grupo" : "clash", key.slice(2));
+        url.searchParams.delete("incidencia");
+        if (key && !key.startsWith("n:")) url.searchParams.set(key.startsWith("g:") ? "group" : key.startsWith("f:") ? "grupo" : key.startsWith("i:") ? "incidencia" : "clash", key.slice(2));
         if (url.href !== window.location.href) window.history.replaceState(window.history.state, "", url);
       }, 400);
     });
@@ -320,11 +340,18 @@ function ListArea({ onClear, onSend, readyCount, onQueryChange }: { onClear: () 
         {manual && <span className="mr-2 text-amber-800">{t("workspace.manualMode")}</span>}
         {/* Same line in both views for the same filters: grupos · ubicaciones · interferencias (ACC clashes). */}
         <span data-testid="list-summary">
-          {summary.issues
+          {summary.meeting
+            ? t("meeting.summary", { count: summary.meeting.topics, disciplines: summary.meeting.disciplines })
+            : summary.issues
             ? t("issues.summary", { count: summary.issues.total, resolved: summary.issues.resolved, says: summary.issues.saysResolved })
             : t("families.summaryClashes", { count: summary.groups, groups: summary.groups, locations: summary.locations, clashes: summary.clashes })}
           {summary.changed !== undefined && ` ${t("lens.changedBracket", { count: summary.changed })}`}
         </span>
+        {lens === "reunion" && (
+          <button type="button" onClick={printAgenda} className="float-right text-brand hover:underline">
+            {t("meeting.print")}
+          </button>
+        )}
         {lens === "cambios" && summary.locations === 0 && (
           <span className="ml-2">
             {t("lens.empty")}{" "}
@@ -336,6 +363,7 @@ function ListArea({ onClear, onSend, readyCount, onQueryChange }: { onClear: () 
       </div>
       <GroupList />
       <SelectionBar />
+      {lens === "reunion" && <PrintAgenda />}
     </>
   );
 }

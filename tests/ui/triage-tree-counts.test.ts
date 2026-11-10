@@ -11,6 +11,7 @@ import { generateTest } from "../../src/lib/api/mock/generate";
 import { applyM1 } from "../../src/lib/api/mock/m1";
 import { applyM2 } from "../../src/lib/api/mock/m2";
 import { buildIssueChecks } from "../../src/lib/api/mock/m3";
+import { buildAgenda } from "../../src/lib/api/mock/m4";
 import type { Clash, TriagePayloadWithFamilies } from "../../src/lib/api/types";
 
 // The store and the mock families step use browser APIs (window, import.meta.env): they are
@@ -34,7 +35,7 @@ interface StoreLike {
     openQuestionByGroup: Map<string, string>;
     groups: Map<string, { change?: string; inherited?: unknown }>;
     checked: Set<string>;
-    summary: { groups: number; locations: number; clashes: number; changed?: number; issues?: { total: number; resolved: number; saysResolved: number } };
+    summary: { groups: number; locations: number; clashes: number; changed?: number; issues?: { total: number; resolved: number; saysResolved: number }; meeting?: { topics: number; disciplines: number } };
   };
   familiesMode(): boolean;
   effectiveLens(): string;
@@ -43,6 +44,8 @@ interface StoreLike {
   selectionMembers(key: string): { members: unknown[] };
   toggleCheckSubtree(key: string): void;
   setIssueChecks(checks: unknown[], version?: number): void;
+  setAgenda(disciplines: unknown[]): void;
+  agendaSize(): number;
   toggleCheck(key: string): void;
   checkState(key: string): string;
 }
@@ -304,6 +307,37 @@ describe("M3: lens Incidencias", () => {
 
   it("without issue checks the lens falls back to Todo", () => {
     const { tree } = both(sandbox, q({ filters: { decision: [] }, lens: "incidencias" }));
+    expect(tree.effectiveLens()).toBe("todo");
+  });
+});
+
+describe("M4: lens Reunión", () => {
+  it("the agenda tree, the summary and the clash rows agree in both views", () => {
+    const fx = sandbox as unknown as { test: Parameters<typeof buildAgenda>[0]; families: Parameters<typeof buildAgenda>[1]; groups: Parameters<typeof buildAgenda>[2]; proposals: Parameters<typeof buildIssueChecks>[2] };
+    const { checks } = buildIssueChecks(fx.test, fx.groups, fx.proposals);
+    const { disciplines } = buildAgenda(fx.test, fx.families, fx.groups, checks);
+    const topics = disciplines.reduce((n, d) => n + d.items.length, 0);
+    expect(topics).toBeGreaterThan(0);
+    const { tree, list } = both(sandbox, q({ filters: { decision: [] }, lens: "reunion" }));
+    for (const st of [tree, list]) {
+      st.setIssueChecks(checks);
+      st.setAgenda(disciplines);
+    }
+    expect(tree.effectiveLens()).toBe("reunion");
+    expect(tree.state.summary.meeting).toEqual({ topics, disciplines: disciplines.length });
+    expect(list.state.summary.meeting).toEqual(tree.state.summary.meeting);
+    // Interferencias rows = clashes of the agenda ubicaciones = the clashes the tree holds.
+    expect(list.state.rows.length).toBe(tree.state.summary.clashes);
+    // One top-level row per discipline, in the server order; item rows follow the agenda.
+    const l1 = tree.state.rows.filter((r) => r.kind === "node" && r.depth === 0).map((r) => r.id);
+    expect(l1).toEqual(disciplines.map((d) => `agenda:${d.discipline}`));
+    const itemRows = tree.state.rows.filter((r) => r.depth === 1);
+    expect(itemRows.length).toBeGreaterThan(0);
+    expect(itemRows.length).toBeLessThanOrEqual(topics + tree.state.rows.filter((r) => r.kind === "group" && r.depth === 1).length);
+  });
+
+  it("without an agenda the lens falls back to Todo", () => {
+    const { tree } = both(sandbox, q({ filters: { decision: [] }, lens: "reunion" }));
     expect(tree.effectiveLens()).toBe("todo");
   });
 });

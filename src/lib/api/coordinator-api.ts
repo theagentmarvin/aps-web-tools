@@ -60,6 +60,11 @@ import type {
   TriageChanges,
   TriagePayloadWithFamilies,
   AgentQuestion,
+  AgendaPayload,
+  MeetingNote,
+  NoteTargetType,
+  NotesPayload,
+  SavedView,
   IssueChecksPayload,
   IssueCheck,
   IssueVerdictDecisionRequest,
@@ -126,6 +131,14 @@ export interface CoordinatorApi {
   getReminders(testId: string): Promise<RemindersPayload>;
   /** M3: accept / reject a verdict (V01–V05 on reject). READ-ONLY against ACC. */
   decideIssueVerdict(testId: string, issueId: string, req: IssueVerdictDecisionRequest): Promise<IssueCheck>;
+  /** M4: meeting agenda (server order) per responsible discipline. */
+  getAgenda(testId: string): Promise<AgendaPayload>;
+  getNotes(testId: string): Promise<NotesPayload>;
+  /** Save (autosave) a meeting note; empty text clears it. */
+  putNote(testId: string, targetType: NoteTargetType, targetId: string, text: string): Promise<MeetingNote>;
+  getFamilyView(testId: string, familyId: string): Promise<SavedView | null>;
+  /** Stores the viewer camera for the meeting (local only, never sent to ACC). */
+  putFamilyView(testId: string, familyId: string, camera: unknown): Promise<SavedView>;
   /** X3: answer a coordinator question; validity/action answers create the decision server-side. */
   answerQuestion(questionId: string, req: QuestionAnswerRequest): Promise<AgentQuestion>;
   /** Instance exception (mandatory reason) or its removal. PROVISIONAL route (§5.3). */

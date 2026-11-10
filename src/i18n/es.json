@@ -1184,7 +1184,9 @@
     "questionsCount_one": "{count} pregunta",
     "questionsCount_other": "{count} preguntas",
     "incidenciasTip": "Incidencias de ACC verificadas en esta versión (solo lectura)",
-    "noIssues": "No hay incidencias de ACC asignadas a estas interferencias"
+    "noIssues": "No hay incidencias de ACC asignadas a estas interferencias",
+    "reunionTip": "Agenda de la reunión por especialidad responsable",
+    "noAgenda": "No hay agenda para esta versión"
   },
   "scope": {
     "title": "Cambio de alcance respecto de v{version}",
@@ -1284,5 +1286,37 @@
     "reminderTitle": "Recordatorio para la especialidad",
     "noReminder": "Sin recordatorio para esta especialidad.",
     "disciplineNodeTip": "Responsable {discipline}: seguimiento de sus incidencias"
+  },
+  "meeting": {
+    "kind": {
+      "regresion": "Regresión",
+      "p1_pendiente": "P1 pendiente",
+      "incidencia": "Incidencia",
+      "nuevo": "Nuevo",
+      "confirmar_resuelta": "Confirmar resuelta"
+    },
+    "summary_one": "{count} tema · {disciplines} disciplinas",
+    "summary_other": "{count} temas · {disciplines} disciplinas",
+    "nodeCounts_one": "{count} tema",
+    "nodeCounts_other": "{count} temas",
+    "more": "+{count} más",
+    "noteTitle": "Nota de reunión",
+    "notePlaceholder": "Qué se acordó, quién y para cuándo… (se guarda solo)",
+    "noteHint": "Tecla N para escribir. Las decisiones se toman en «Aprobar grupo».",
+    "saving": "Guardando…",
+    "savedAt": "Guardado {time}",
+    "saveFailed": "No se pudo guardar; se reintenta al seguir escribiendo",
+    "onAgenda": "En agenda: {reason}",
+    "noteIcon": "Nota de reunión: {note}",
+    "viewSaved": "Vista guardada {time}",
+    "noView": "Sin vista guardada",
+    "saveView": "Guardar vista",
+    "saveViewTip": "Guarda esta cámara para el grupo (solo local, no va a ACC)",
+    "noViewer": "El visor 3D no está disponible",
+    "viewSavedToast": "Vista guardada para la reunión",
+    "print": "Imprimir agenda",
+    "printTitle": "Agenda de coordinación · {project} · {modelSet} · v{version}",
+    "printDate": "Fecha: {date}",
+    "printNote": "Nota: {note}"
   }
 }

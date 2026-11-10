@@ -8,7 +8,7 @@ import { memo } from "react";
 import { useT } from "~/i18n";
 import type { FamilyGroup, TriageFamily } from "~/lib/api/types";
 import { PriorityChip, ValidityBadge } from "~/lib/components/badges";
-import { IconAlert, IconChevronDown, IconChevronRight, IconFlag, IconClosed, IconInherited, IconIssue } from "~/lib/components/icons";
+import { IconAlert, IconChevronDown, IconChevronRight, IconFlag, IconClosed, IconInherited, IconIssue, IconNote } from "~/lib/components/icons";
 import { problemTypeOf } from "~/lib/problem-types";
 import { useTriageContext } from "./actions";
 import { familyChangeCounts, topChange } from "./change";
@@ -82,7 +82,7 @@ export function useNodeLabel(n: TreeNode | undefined): string {
   if (n.bucket === "model_set") return t("families.bucket.modelSet");
   if (n.bucket === "non_issue") return t("families.bucket.nonIssue");
   if (n.bucket === "loose") return t("families.bucket.loose");
-  if (n.bucket === "discipline") return t("issues.disciplineNode", { discipline: n.discipline ?? "" });
+  if (n.bucket === "discipline" || n.bucket === "agenda") return t("issues.disciplineNode", { discipline: n.discipline ?? "" });
   if (n.bucket === "unchanged") return `↺ ${t("lens.unchangedRow", { count: n.instanceCount })}`;
   return n.pair ? `${n.pair[0]} × ${n.pair[1]}` : n.id;
 }
@@ -94,6 +94,7 @@ export const NodeRow = memo(function NodeRow({ row }: { row: Row }) {
   const open = useTriage(store, (s) => !s.collapsedNodes.has(row.id));
   const n = useTriage(store, (s) => s.nodes.get(row.id));
   const label = useNodeLabel(n);
+  const agendaItems = useTriage(store, (s) => s.agenda.find((d) => `agenda:${d.discipline}` === row.id)?.items.length ?? 0);
   if (!n) return null;
   return (
     <div
@@ -117,7 +118,9 @@ export const NodeRow = memo(function NodeRow({ row }: { row: Row }) {
       {n.needsReview > 0 && n.depth === 0 && <span className="shrink-0 text-[10px] text-amber-800">{t("families.needsReviewCount", { count: n.needsReview })}</span>}
       {n.bucket === "discipline" && n.discipline && <CopyReminderButton discipline={n.discipline} />}
       <span className="shrink-0 whitespace-nowrap text-[11px] text-gray-500">
-        {n.bucket === "discipline"
+        {n.bucket === "agenda"
+          ? `${t("meeting.nodeCounts", { count: agendaItems })}${n.more ? ` · ${t("meeting.more", { count: n.more })}` : ""}`
+          : n.bucket === "discipline"
           ? t("issues.nodeCounts", { count: n.issueIds?.length ?? 0, existing: n.clashCount })
           : n.bucket === "loose" || n.bucket === "unchanged"
           ? t("families.countsLoose", { instances: n.instanceCount, clashes: n.clashCount })
@@ -165,9 +168,11 @@ export const FamilyRow = memo(function FamilyRow({ row }: { row: Row }) {
   const open = useTriage(store, (s) => s.expanded.has(row.id));
   const f = useTriage(store, (s) => s.families.get(row.id));
   useTriage(store, (s) => s.latest);
+  useTriage(store, (s) => s.notes);
   if (!f) return null;
   const worst = store.familyWorst(f);
   const st = store.state.familyStats.get(f.id);
+  const note = store.state.notes.get(`family:${f.id}`)?.text;
   const decided = f.decision?.status === "approved";
   return (
     <div
@@ -200,6 +205,8 @@ ${f.levels.join(", ")}`}>
             <IconInherited size={13} label={t("families.decided")} className="shrink-0 text-green-700" />
           ) : f.acc ? (
             f.acc.status === "closed" ? <IconClosed size={13} label={accTooltip(t, f.acc)} className="shrink-0 text-gray-500" /> : <IconIssue size={13} label={accTooltip(t, f.acc)} className="shrink-0 text-brand" />
+          ) : note ? (
+            <IconNote size={13} label={t("meeting.noteIcon", { note: note.slice(0, 120) })} className="shrink-0 text-violet-700" />
           ) : null}
         </div>
         <div className="truncate text-sm font-medium text-gray-900" title={f.title}>

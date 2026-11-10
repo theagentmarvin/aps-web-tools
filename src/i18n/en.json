@@ -1184,7 +1184,9 @@
     "questionsCount_one": "{count} question",
     "questionsCount_other": "{count} questions",
     "incidenciasTip": "ACC issues verified in this version (read-only)",
-    "noIssues": "No ACC issues are assigned to these clashes"
+    "noIssues": "No ACC issues are assigned to these clashes",
+    "reunionTip": "Meeting agenda by responsible discipline",
+    "noAgenda": "No agenda for this version"
   },
   "scope": {
     "title": "Scope change since v{version}",
@@ -1284,5 +1286,37 @@
     "reminderTitle": "Reminder for the discipline",
     "noReminder": "No reminder for this discipline.",
     "disciplineNodeTip": "Responsible {discipline}: follow-up of its issues"
+  },
+  "meeting": {
+    "kind": {
+      "regresion": "Regression",
+      "p1_pendiente": "Pending P1",
+      "incidencia": "Issue",
+      "nuevo": "New",
+      "confirmar_resuelta": "Confirm resolved"
+    },
+    "summary_one": "{count} topic · {disciplines} disciplines",
+    "summary_other": "{count} topics · {disciplines} disciplines",
+    "nodeCounts_one": "{count} topic",
+    "nodeCounts_other": "{count} topics",
+    "more": "+{count} more",
+    "noteTitle": "Meeting note",
+    "notePlaceholder": "What was agreed, who and by when… (saves automatically)",
+    "noteHint": "Press N to write. Decisions are taken in \"Approve group\".",
+    "saving": "Saving…",
+    "savedAt": "Saved {time}",
+    "saveFailed": "Could not save; it retries as you keep typing",
+    "onAgenda": "On the agenda: {reason}",
+    "noteIcon": "Meeting note: {note}",
+    "viewSaved": "View saved {time}",
+    "noView": "No saved view",
+    "saveView": "Save view",
+    "saveViewTip": "Save this camera for the group (local only, not sent to ACC)",
+    "noViewer": "The 3D viewer is not available",
+    "viewSavedToast": "View saved for the meeting",
+    "print": "Print agenda",
+    "printTitle": "Coordination agenda · {project} · {modelSet} · v{version}",
+    "printDate": "Date: {date}",
+    "printNote": "Note: {note}"
   }
 }

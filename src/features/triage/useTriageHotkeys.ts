@@ -93,7 +93,15 @@ export function useTriageHotkeys(opts: { onSend: () => void }) {
       },
     },
     { keys: ["s"], labelKey: "shortcuts.postpone", group: "decisions", run: () => actions.postpone() },
-    { keys: ["n"], labelKey: "shortcuts.note", group: "decisions", run: () => current() && store.setDialog({ type: "note", key: current()! }) },
+    {
+      keys: ["n"],
+      labelKey: "shortcuts.note",
+      group: "decisions",
+      run: () => {
+        if (store.effectiveLens() === "reunion") return document.getElementById("meeting-note")?.focus();
+        if (current()) store.setDialog({ type: "note", key: current()! });
+      },
+    },
     { keys: ["p"], labelKey: "shortcuts.compare", group: "decisions", run: () => {
       const k = current();
       if (!k) return;

@@ -25,6 +25,7 @@ import {
   type ClashSide,
 } from "~/lib/viewer-tools/clash-highlight";
 import { useTriageContext } from "./actions";
+import { SaveViewButton, restoreSavedView } from "./MeetingViews";
 import { rowKey, useTriage, type TriageStore, type ViewerMode } from "./store";
 
 const COLOR_A = "#0072B2";
@@ -146,6 +147,12 @@ export function ClashViewerPane() {
       const { a, b } = sidesFor(target);
       showClashPair(a, b, { mode: viewer.mode, colorA: COLOR_A, colorB: COLOR_B });
       if (viewer.side !== "both") setSideVisibility(viewer.side);
+      // Lens Reunión: a grupo with a saved camera opens on it.
+      if (store.effectiveLens() === "reunion") {
+        const fid = store.viewFamilyOf(cursorKey);
+        const saved = fid ? store.state.savedViews.get(fid) : undefined;
+        if (saved?.camera) window.setTimeout(() => restoreSavedView(saved.camera), 250);
+      }
       if (viewer.markers) {
         const specs = members.slice(0, MAX_MARKERS).flatMap((c, i) => {
           const s = sidesFor([c]);
@@ -315,6 +322,7 @@ function ClashViewerToolbar() {
   const t = useT();
   const { store } = useTriageContext();
   const v = useTriage(store, (s) => s.viewer);
+  const lens = useTriage(store, () => store.effectiveLens());
   const btn = (active: boolean) => `h-8 rounded px-2 text-xs ${active ? "bg-brand text-white" : "text-gray-700 hover:bg-brand-surface"}`;
   const modes: { m: ViewerMode; label: string }[] = [
     { m: "isolate", label: t("viewer.isolate") },
@@ -330,6 +338,7 @@ function ClashViewerToolbar() {
           </button>
         ))}
       </div>
+      {lens === "reunion" && <SaveViewButton className={btn(false)} />}
       <button type="button" title={t("viewer.fit")} aria-label={t("viewer.fit")} className={btn(false)} onClick={() => store.setViewer({ fitNonce: v.fitNonce + 1 })}>
         <IconFit />
       </button>

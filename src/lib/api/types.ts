@@ -262,3 +262,15 @@ export interface RemindersPayload {
   testId: string;
   reminders: DisciplineReminder[];
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M4 (F4 meeting): agenda, meeting notes, saved viewer views — wire types from the contract.
+// ─────────────────────────────────────────────────────────────────────────────
+export type { AgendaDiscipline, AgendaItem, AgendaKind, AgendaPayload, MeetingNote, MeetingNoteRequest, SavedViewerView } from "../../../server/api/contract";
+export type NoteTargetType = import("../../../server/api/contract").MeetingNote["targetType"];
+export type SavedView = import("../../../server/api/contract").SavedViewerView;
+/** GET /tests/:t/notes (normalised by the client: the server may send the array or an envelope). */
+export interface NotesPayload {
+  testId: string;
+  notes: import("../../../server/api/contract").MeetingNote[];
+}

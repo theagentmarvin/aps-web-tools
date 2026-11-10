@@ -18,6 +18,7 @@ import { Button, EmptyState, Kbd } from "~/lib/components/ui";
 import { useTriageContext } from "./actions";
 import { Section, useSectionPrefs } from "./detail-accordion";
 import { indent } from "./FamilyRows";
+import { MeetingNoteSection } from "./MeetingViews";
 import { useTriage, type Row } from "./store";
 
 const VERDICT_CLS: Record<IssueVerdict, string> = {
@@ -246,6 +247,7 @@ export function IssuePanel({ issueId }: { issueId: string }) {
   const t = useT();
   const { store } = useTriageContext();
   const c = useTriage(store, (s) => s.issueChecks.get(issueId));
+  const lens = useTriage(store, () => store.effectiveLens());
   if (!c) return <EmptyState title={t("detail.noSelection")} />;
   const groups = c.groupIds.filter((g) => store.state.groups.has(g));
   return (
@@ -269,6 +271,7 @@ export function IssuePanel({ issueId }: { issueId: string }) {
         </p>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden" id="triage-detail" tabIndex={-1}>
+        {lens === "reunion" && <MeetingNoteSection key={c.issueId} rowKey={`i:${c.issueId}`} />}
         <VerificationSection check={c} />
         <section className="border-t border-brand-muted/20 px-4 py-2 text-xs">
           <h3 className="mb-1 font-semibold uppercase tracking-wide text-gray-500">{t("issues.locations", { count: groups.length })}</h3>

@@ -22,6 +22,10 @@ import type {
   ChangeKind,
   DisciplineReminder,
   IssueCheck,
+  AgendaDiscipline,
+  AgendaItem,
+  MeetingNote,
+  SavedViewerView,
   Discipline,
   FamilyAction,
   FamiliesPayload,
@@ -74,7 +78,9 @@ export interface Row {
 export interface TreeNode {
   id: string;
   depth: 0 | 1;
-  bucket: TriageFamily["bucket"] | "loose" | "unchanged" | "discipline";
+  bucket: TriageFamily["bucket"] | "loose" | "unchanged" | "discipline" | "agenda";
+  /** Lens "Reunión": agenda items beyond the server cap. */
+  more?: number;
   /** Lens "Incidencias": the responsible discipline of this top-level node. */
   discipline?: string;
   /** Lens "Incidencias": the issues under this discipline. */
@@ -110,6 +116,8 @@ export interface ListSummary {
   changed?: number;
   /** Lens "Incidencias": "N incidencias · M resueltas · K dicen resuelta". */
   issues?: { total: number; resolved: number; saysResolved: number };
+  /** Lens "Reunión": "N temas · M disciplinas". */
+  meeting?: { topics: number; disciplines: number };
 }
 
 /** Family decision as edited in the family panel ("Cambiar"). */
@@ -194,6 +202,12 @@ export interface TriageState {
   reminders: Map<string, DisciplineReminder>;
   /** Test version the checks verify ("Verificación en vNN"). */
   issueVersion?: number;
+  /** M4: the meeting agenda (server order), meeting notes ("family:F-…" / "group:G-…") and saved views per grupo (null = none). */
+  agenda: AgendaDiscipline[];
+  notes: Map<string, MeetingNote>;
+  savedViews: Map<string, SavedViewerView | null>;
+  /** Agenda item reason per row key (shown in the panel). */
+  agendaReason: Map<string, string>;
   collapsedNodes: Set<string>;
   /** Instances (group ids) opened this session, per family: the spot-check record. */
   familyVisits: Map<string, Set<string>>;
@@ -287,6 +301,10 @@ export class TriageStore {
       issueChecks: new Map(),
       issueByGroup: new Map(),
       reminders: new Map(),
+      agenda: [],
+      notes: new Map(),
+      savedViews: new Map(),
+      agendaReason: new Map(),
       collapsedNodes: new Set(["unchanged"]),
       familyVisits: new Map(),
       familyExceptions: new Map(),
@@ -522,6 +540,10 @@ export class TriageStore {
     if (key.startsWith("i:")) return (s.issueChecks.get(key.slice(2))?.groupIds ?? []).filter((g) => s.groups.has(g));
     const node = s.nodes.get(key.slice(2));
     if (!node) return [];
+    if (node.bucket === "agenda") {
+      const d = s.agenda.find((x) => `agenda:${x.discipline}` === node.id);
+      return [...new Set((d?.items ?? []).flatMap((i) => this.agendaGroups(i)))];
+    }
     if (node.bucket === "discipline") return (node.issueIds ?? []).flatMap((id) => (s.issueChecks.get(id)?.groupIds ?? []).filter((g) => s.groups.has(g)));
     if (node.bucket === "loose") return [...s.visibleByGroup.keys()].filter((g) => !s.familyOf.has(g));
     if (node.bucket === "unchanged") return [...s.hiddenByGroup.keys()];
@@ -556,6 +578,7 @@ export class TriageStore {
     const l = this.state.query.lens ?? (this.hasPrevious() ? "cambios" : "todo");
     if (l === "cambios" && this.hasPrevious()) return "cambios";
     if (l === "incidencias" && this.state.issueChecks.size > 0) return "incidencias";
+    if (l === "reunion" && this.agendaSize() > 0) return "reunion";
     return "todo";
   }
 
@@ -641,6 +664,129 @@ export class TriageStore {
     const issueChecks = new Map(this.state.issueChecks);
     issueChecks.set(issueId, { ...c, decision });
     this.set({ issueChecks });
+  }
+
+  // ── M4: meeting (agenda, notes, saved views) ─────────────────────
+
+  agendaSize(): number {
+    return this.state.agenda.reduce((n, d) => n + d.items.length, 0);
+  }
+
+  setAgenda(disciplines: AgendaDiscipline[]) {
+    this.set({ agenda: disciplines });
+    this.recompute();
+    if (!this.state.rows.some((r) => r.key === this.state.cursorKey)) this.setCursor(this.firstKey());
+  }
+
+  setNotes(list: MeetingNote[]) {
+    this.set({ notes: new Map(list.map((n) => [`${n.targetType}:${n.targetId}`, n])) });
+  }
+
+  upsertNote(n: MeetingNote) {
+    const notes = new Map(this.state.notes);
+    if (n.text.trim()) notes.set(`${n.targetType}:${n.targetId}`, n);
+    else notes.delete(`${n.targetType}:${n.targetId}`);
+    this.set({ notes });
+  }
+
+  setSavedView(familyId: string, v: SavedViewerView | null) {
+    const savedViews = new Map(this.state.savedViews);
+    savedViews.set(familyId, v);
+    this.set({ savedViews });
+  }
+
+  /** Note target of a row: grupo → family; ubicación → group; issue → its first ubicación, else its grupo. */
+  noteTargetOf(key: string | null): { targetType: "family" | "group"; targetId: string } | null {
+    if (!key) return null;
+    if (key.startsWith("f:")) return { targetType: "family", targetId: key.slice(2) };
+    if (key.startsWith("g:")) return { targetType: "group", targetId: key.slice(2) };
+    if (key.startsWith("c:")) {
+      const g = this.state.clashes.get(key.slice(2))?.groupId;
+      return g ? { targetType: "group", targetId: g } : null;
+    }
+    if (key.startsWith("i:")) {
+      const c = this.state.issueChecks.get(key.slice(2));
+      // An issue is noted on its first ubicación, so it never mixes with the agenda item of its grupo.
+      if (c?.groupIds[0]) return { targetType: "group", targetId: c.groupIds[0] };
+      if (c?.familyId) return { targetType: "family", targetId: c.familyId };
+    }
+    return null;
+  }
+
+  /** Grupo whose saved view applies to a row (grupo row, issue with a grupo, or an ubicación's grupo). */
+  viewFamilyOf(key: string | null): string | undefined {
+    if (!key) return undefined;
+    if (key.startsWith("f:")) return key.slice(2);
+    if (key.startsWith("i:")) return this.state.issueChecks.get(key.slice(2))?.familyId;
+    if (key.startsWith("g:")) return this.state.familyOf.get(key.slice(2));
+    return undefined;
+  }
+
+  /** Ubicaciones of an agenda item. */
+  private agendaGroups(item: AgendaItem): string[] {
+    const s = this.state;
+    const ids = new Set<string>(item.groupIds ?? []);
+    if (item.familyId) for (const g of s.families.get(item.familyId)?.groupIds ?? []) ids.add(g);
+    if (item.issueId) for (const g of s.issueChecks.get(item.issueId)?.groupIds ?? []) ids.add(g);
+    return [...ids].filter((g) => s.groups.has(g));
+  }
+
+  /** Lens "Reunión": discipline → agenda items (server order) reusing the grupo / issue / ubicación rows. */
+  private buildAgendaTree(rows: Row[]) {
+    const s = this.state;
+    const nodes = new Map<string, TreeNode>();
+    const familyStats = new Map<string, FamilyStats>();
+    const agendaReason = new Map<string, string>();
+    const used = new Set<string>();
+    const pushGroup = (gid: string, depth: number, parent: string) => {
+      const key = rowKey("group", gid);
+      if (used.has(key)) return;
+      used.add(key);
+      rows.push({ key, kind: "group", id: gid, groupId: gid, nested: false, depth, parent });
+      if (s.expanded.has(gid)) for (const c of s.visibleByGroup.get(gid) ?? s.clashesByGroup.get(gid) ?? []) rows.push({ key: rowKey("clash", c.id), kind: "clash", id: c.id, groupId: gid, nested: true, depth: depth + 1, parent: key });
+    };
+    for (const d of s.agenda) {
+      const id = `agenda:${d.discipline}`;
+      const groups = new Set(d.items.flatMap((i) => this.agendaGroups(i)));
+      const worst = d.items.reduce<Priority | null>((w, i) => (i.priority && (!w || i.priority < w) ? i.priority : w), null);
+      nodes.set(id, { id, depth: 0, bucket: "agenda", discipline: d.discipline, familyIds: [], issueIds: [], instanceCount: groups.size, clashCount: [...groups].reduce((n, g) => n + (s.visibleByGroup.get(g)?.length ?? 0), 0), worst, needsReview: 0, reappeared: 0, more: d.more });
+      const k1 = `n:${id}`;
+      rows.push({ key: k1, kind: "node", id, groupId: "", nested: false, depth: 0 });
+      if (s.collapsedNodes.has(id)) continue;
+      for (const item of d.items) {
+        const gids = this.agendaGroups(item);
+        if (item.issueId && s.issueChecks.has(item.issueId)) {
+          const key = `i:${item.issueId}`;
+          if (used.has(key)) continue;
+          used.add(key);
+          agendaReason.set(key, item.reason);
+          rows.push({ key, kind: "issue", id: item.issueId, groupId: "", nested: false, depth: 1, parent: k1 });
+          if (s.expanded.has(item.issueId)) for (const g of gids) pushGroup(g, 2, key);
+        } else if (item.familyId && s.families.has(item.familyId)) {
+          const key = `f:${item.familyId}`;
+          if (used.has(key)) continue;
+          used.add(key);
+          agendaReason.set(key, item.reason);
+          const vis = gids.filter((g) => s.visibleByGroup.has(g));
+          familyStats.set(item.familyId, {
+            instanceCount: vis.length,
+            clashCount: vis.reduce((n, g) => n + (s.visibleByGroup.get(g)?.length ?? 0), 0),
+            worst: item.priority ?? null,
+            needsReview: vis.filter((g) => s.groups.get(g)?.reviewState === "needs_review").length,
+            reappeared: vis.filter((g) => groupChange(s.groups.get(g)) === "reappeared").length,
+            levels: levelsOf(s.families.get(item.familyId)!, vis.map((g) => this.evaluate("group", g)).filter((e): e is Evaluated => !!e)),
+          });
+          rows.push({ key, kind: "family", id: item.familyId, groupId: "", nested: false, depth: 1, parent: k1 });
+          if (s.expanded.has(item.familyId)) for (const g of vis) pushGroup(g, 2, key);
+        } else {
+          for (const g of gids) {
+            agendaReason.set(rowKey("group", g), item.reason);
+            pushGroup(g, 1, k1);
+          }
+        }
+      }
+    }
+    return { nodes, familyStats, agendaReason };
   }
 
   /** Lens "Incidencias": discipline → issue → ubicaciones (→ clashes). Issues show even with 0 remaining clashes. */
@@ -796,8 +942,32 @@ export class TriageStore {
     const isChangedClash = (e: Evaluated) => !!e.s.clash && CHANGED.has(clashChange(e.s.clash) ?? "unchanged");
     const lensCounts = { cambios: base.filter(isChangedClash).length, todo: base.length, incidencias: s.issueChecks.size };
     const inIssue = (e: Evaluated) => s.issueByGroup.has(e.s.kind === "group" ? e.s.id : (e.s.clash?.groupId ?? ""));
-    const items = lens === "cambios" ? base.filter((e) => keepIds.has(e.s.id) || this.inChangesLens(e)) : lens === "incidencias" ? base.filter((e) => keepIds.has(e.s.id) || inIssue(e)) : base;
+    const agendaGroupIds = lens === "reunion" ? new Set(s.agenda.flatMap((d) => d.items.flatMap((i) => this.agendaGroups(i)))) : new Set<string>();
+    const inAgenda = (e: Evaluated) => agendaGroupIds.has(e.s.kind === "group" ? e.s.id : (e.s.clash?.groupId ?? ""));
+    const meeting = lens === "reunion" ? { topics: this.agendaSize(), disciplines: s.agenda.length } : undefined;
+    const items =
+      lens === "cambios"
+        ? base.filter((e) => keepIds.has(e.s.id) || this.inChangesLens(e))
+        : lens === "incidencias"
+          ? base.filter((e) => keepIds.has(e.s.id) || inIssue(e))
+          : lens === "reunion"
+            ? base.filter((e) => keepIds.has(e.s.id) || inAgenda(e))
+            : base;
     const rows: Row[] = [];
+    if (lens === "reunion" && this.familiesMode()) {
+      const visibleByGroup = new Map<string, Clash[]>();
+      for (const e of items) {
+        const c = e.s.clash;
+        if (!c) continue;
+        const l = visibleByGroup.get(c.groupId);
+        if (l) l.push(c);
+        else visibleByGroup.set(c.groupId, [c]);
+      }
+      this.state = { ...this.state, visibleByGroup, hiddenByGroup: new Map() };
+      const { nodes, familyStats, agendaReason } = this.buildAgendaTree(rows);
+      this.set({ rows, nodes, familyStats, agendaReason, visibleByGroup, hiddenByGroup: new Map(), lensCounts, summary: { groups: 0, locations: visibleByGroup.size, clashes: items.length, meeting }, dirty: false });
+      return;
+    }
     if (lens === "incidencias" && this.familiesMode()) {
       const visibleByGroup = new Map<string, Clash[]>();
       for (const e of items) {
@@ -852,7 +1022,7 @@ export class TriageStore {
     if (clashLevel) {
       const locs = new Set(items.map((e) => e.s.clash?.groupId ?? ""));
       const fams = new Set([...locs].map((g) => s.familyOf.get(g) ?? g));
-      summary = { groups: fams.size, locations: locs.size, clashes: items.length, ...(lens === "cambios" ? { changed: items.filter(isChangedClash).length } : {}), ...(lens === "incidencias" ? { issues: this.issueSummary() } : {}) };
+      summary = { groups: fams.size, locations: locs.size, clashes: items.length, ...(lens === "cambios" ? { changed: items.filter(isChangedClash).length } : {}), ...(lens === "incidencias" ? { issues: this.issueSummary() } : {}), ...(meeting ? { meeting } : {}) };
     } else {
       summary = { groups: items.length, locations: items.length, clashes: items.reduce((n, e) => n + (e.s.group?.clashIds.length ?? 0), 0) };
     }

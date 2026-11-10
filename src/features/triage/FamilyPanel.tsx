@@ -22,6 +22,7 @@ import { oneLine } from "./pair-summary";
 import { familyChangeCounts, topChange } from "./change";
 import { ChangeChip } from "./RowMarks";
 import { CopyReminderButton } from "./IssueViews";
+import { MeetingNoteSection } from "./MeetingViews";
 import { rowKey, useTriage, type FamilyDraft, type TriageStore } from "./store";
 
 export const FAMILY_ACTION_KEY: Record<FamilyAction, TKey> = {
@@ -102,6 +103,7 @@ export function FamilyPanel({ familyId }: { familyId: string }) {
   useTriage(store, (s) => s.groups);
   useTriage(store, (s) => s.latest);
   const { prefs, set } = useSectionPrefs();
+  const lens = useTriage(store, () => store.effectiveLens());
   if (!f) return <EmptyState title={t("detail.noSelection")} />;
   const draft = store.familyDraft(f.id)!;
   const pt = problemTypeOf(pts, f.parts.problemType);
@@ -147,6 +149,7 @@ ${f.signature}`}>
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden" id="triage-detail" tabIndex={-1}>
+        {lens === "reunion" && <MeetingNoteSection key={f.id} rowKey={`f:${f.id}`} />}
         <FamilyProposal f={f} draft={draft} options={pt?.options ?? []} impact={impact} />
 
         <FamilyChangeLine f={f} />

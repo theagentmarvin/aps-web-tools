@@ -6,7 +6,7 @@
  *   (grupo rows only) validez mixta > orientación por confirmar > Típico.
  * State icon precedence (one icon): your decision in this version (✓ ✎ ✕ ⏸)
  *   > open agent question ? > ACC (closed ⊘, assigned/mixed 🗎) > exception ⚑
- *   > inherited ↺ / ◌ > pending ○.
+ *   > inherited ↺ / ◌ > meeting note ✎n (M4) > pending ○.
  * Everything else (confidence, spot-check, agent-updated, no-viewer) lives in
  * the row tooltip or the panel; the spot-check guard still applies.
  */
@@ -14,7 +14,7 @@ import { useT, type TFunction } from "~/i18n";
 import type { AccState, AgentQuestion, ChangeKind, DecisionState, FamilyGroup, InheritedDecision } from "~/lib/api/types";
 import { inheritedTooltip } from "./questions";
 import { DecisionStateIcon } from "~/lib/components/badges";
-import { IconCircle, IconClosed, IconFlag, IconInherited, IconIssue } from "~/lib/components/icons";
+import { IconCircle, IconClosed, IconFlag, IconInherited, IconIssue, IconNote } from "~/lib/components/icons";
 
 const CHANGE_CLS: Record<Exclude<ChangeKind, "unchanged">, string> = {
   reappeared: "bg-red-50 text-red-800 border-red-200",
@@ -42,6 +42,7 @@ export function RowStateIcon({
   pendingException,
   question,
   inherited,
+  note,
 }: {
   state: DecisionState;
   acc?: AccState;
@@ -49,6 +50,7 @@ export function RowStateIcon({
   pendingException?: boolean;
   question?: AgentQuestion;
   inherited?: InheritedDecision;
+  note?: string;
 }) {
   const t = useT();
   const own = state === "accepted" || state === "corrected" || state === "rejected" || state === "postponed";
@@ -72,5 +74,6 @@ export function RowStateIcon({
         ◌
       </span>
     );
+  if (note) return <IconNote size={13} label={t("meeting.noteIcon", { note: note.slice(0, 120) })} className="shrink-0 text-violet-700" />;
   return <IconCircle size={13} label={t("decision.pending")} className="shrink-0 text-gray-400" />;
 }

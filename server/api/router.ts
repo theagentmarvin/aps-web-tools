@@ -432,6 +432,22 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
   add("POST", "/families/:familyId/detach", async ({ params, body, user }) => ui.detachInstance(params.familyId, z.strictObject({ testId: TestIdZ, groupId: GroupIdZ }).parse(body), await user()), true);
   add("POST", "/families/:familyId/confirm-inherited", async ({ params, body, user }) => ui.confirmInherited(params.familyId, z.strictObject({ testId: TestIdZ, groupIds: z.array(GroupIdZ).max(500).optional() }).parse(body), await user()), true);
 
+  // ── M4 the meeting ────────────────────────────────────────────────────────
+  add("GET", "/tests/:testId/agenda", async ({ params, query }) => coord.agendaFor(params.testId, query.get("cap") ? z.coerce.number().int().min(1).max(200).parse(query.get("cap")) : undefined));
+  add("GET", "/tests/:testId/notes", async ({ params }) => coord.notesFor((await coord.loadTest(params.testId)).test));
+  add(
+    "PUT",
+    "/tests/:testId/notes/:targetType/:targetId",
+    async ({ params, body, user }) => {
+      const targetType = z.enum(["family", "group"]).parse(params.targetType);
+      const { text } = z.strictObject({ text: z.string().max(2000) }).parse(body);
+      return coord.putMeetingNote(params.testId, targetType, params.targetId, text, await user());
+    },
+    true,
+  );
+  add("GET", "/tests/:testId/families/:familyId/view", async ({ params }) => coord.getFamilyView(params.testId, params.familyId));
+  add("PUT", "/tests/:testId/families/:familyId/view", async ({ params, body, user }) => coord.saveFamilyView(params.testId, params.familyId, z.strictObject({ camera: z.unknown() }).parse(body).camera, await user()), true);
+
   // ── M3 issue checks (read-only against ACC) ─────────────────────────────
   add("GET", "/tests/:testId/issue-checks", async ({ params }) => ui.issueChecks(params.testId));
   add("GET", "/tests/:testId/reminders", async ({ params }) => ui.reminders(params.testId));

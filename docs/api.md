@@ -190,7 +190,7 @@ If any edit happens after step 2 (exclusions, issue text), the approve call is r
 
 ## MCP server `coord`
 
-There are 35 tools, with names and inputs as in `docs/ai/mcp-tool-contracts.ts`. Outputs are one compact JSON envelope `{ok,data?,error?,truncated?,hint?}` capped at `agent.maxResponseTokens` (6,000 tokens × 4 chars); when the cap is hit, the largest array is cut. Model-derived text is returned as `{untrusted, flagged?}`, sanitised and limited to 120 characters; this covers group labels, element family/type/system, rule rationales and document names. Agent-written text is rejected when it contains URLs outside `issues.urlAllowlist`, emails, @mentions, control characters, or G-/C-/E-/P- ids that do not exist. Every tool call is audited (`tool.call`). No tool can approve. `apply_approved_proposals` takes `{batchId, dryRun=true}` and refuses without a valid HMAC approval.
+There are 36 tools, with names and inputs as in `docs/ai/mcp-tool-contracts.ts`. Outputs are one compact JSON envelope `{ok,data?,error?,truncated?,hint?}` capped at `agent.maxResponseTokens` (6,000 tokens × 4 chars); when the cap is hit, the largest array is cut. Model-derived text is returned as `{untrusted, flagged?}`, sanitised and limited to 120 characters; this covers group labels, element family/type/system, rule rationales and document names. Agent-written text is rejected when it contains URLs outside `issues.urlAllowlist`, emails, @mentions, control characters, or G-/C-/E-/P- ids that do not exist. Every tool call is audited (`tool.call`). No tool can approve. `apply_approved_proposals` takes `{batchId, dryRun=true}` and refuses without a valid HMAC approval.
 
 ### MCP deviations from `docs/ai/mcp-tool-contracts.ts`
 
@@ -224,6 +224,14 @@ There are 35 tools, with names and inputs as in `docs/ai/mcp-tool-contracts.ts`.
 - **Qué cambió:** `ClashGroup.change`, `FamilyInstance.change`, `TriageFamily.changeCounts` and `TriagePayload.changeSummary`, all against the previous cached version.
   - Per raw clash: `new`, `reappeared` (from the ledger), `changed` (|Δpenetration| > 10 mm or different element types), otherwise `unchanged`.
   - Per item: reappeared if any clash reappeared; new if every clash is new; changed if any clash is new or changed; otherwise unchanged.
+
+### M4: the meeting (F4)
+
+- **`GET /tests/:testId/agenda[?cap]`:** a server table, no LLM. Per responsible discipline, in fixed order: `regresion` (families with a reappeared instance) → `p1_pendiente` (P1 families still needing a human) → `incidencia` (issues `dice_resuelta`, stuck ≥ 2 or overdue) → `nuevo` (families with new pending instances) → `confirmar_resuelta` (resuelta verdicts without a decision). Each family or issue appears once. Cap 15 per discipline (`more` = "+N más"); one summary line per discipline from a template.
+- **Notes:** `GET /tests/:testId/notes`; `PUT H /tests/:testId/notes/:targetType(family|group)/:targetId` `{text ≤ 2000}`. Versioned (revision + history), audited, stored as untrusted text in `.coordinator/meeting/<p>/<m>.json`. MCP `list_meeting_notes` returns the text as untrusted, without authors.
+- **`propose_family_decision`:** optional `dueDate` (AAAA-MM-DD) needs `dueDateQuote`, a verbatim substring of the family`s note or one of its ubicaciones` notes; otherwise it is rejected. A closure (`close` / `mark_reviewed`) is rejected for any family with real members, whatever validity is claimed.
+- **Saved view:** `GET` / `PUT H /tests/:testId/families/:familyId/view` `{camera}` (≤ 20 KB JSON, local only).
+- **CLI (evals):** `ingest --version N` (picks the fixture project when none is active), `classify --propose`, and `seed-meeting-notes <file>` (fixtures only; resolves `{validity, rank}` to family ids by priority, then instances).
 
 ### M3: issue verification (F2) and follow-up (F5), read-only against ACC
 

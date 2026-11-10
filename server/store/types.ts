@@ -294,6 +294,9 @@ export type ProposalPayload =
       secondaryDiscipline?: string;
       solutionOption?: string;
       issueMode: "family" | "per_instance";
+      /** F4: only with a verbatim quote of the meeting note (dueDateQuote). */
+      dueDate?: string;
+      dueDateQuote?: string;
     }
   | {
       kind: "discipline_mapping";

@@ -129,6 +129,7 @@ const GroupRow = memo(function GroupRow({ row }: { row: Row }) {
     return !!fid && !!s.familyExceptions.get(fid)?.has(row.id);
   });
   const question = useTriage(store, (s) => (s.openQuestionByGroup.has(row.id) ? s.questions.get(s.openQuestionByGroup.get(row.id)!) : undefined));
+  const note = useTriage(store, (s) => s.notes.get(`group:${row.id}`)?.text);
   if (!e?.s.group) return null;
   const g = e.s.group;
   const decided = e.d.state !== "pending" && e.d.state !== "inherited";
@@ -168,7 +169,7 @@ const GroupRow = memo(function GroupRow({ row }: { row: Row }) {
           <ChangeChip change={groupChange(g)} />
           <GroupCount groupId={g.id} total={g.clashIds.length} unique={(g as FamilyGroup).uniqueClashCount} />
           <span className="ml-auto flex items-center">
-            <RowStateIcon state={e.d.state} acc={g.acc} inheritance={g.inheritance} pendingException={pendingException} question={question} inherited={g.inherited} />
+            <RowStateIcon state={e.d.state} acc={g.acc} inheritance={g.inheritance} pendingException={pendingException} question={question} inherited={g.inherited} note={note} />
           </span>
         </div>
         <div className={`truncate text-sm ${g.elementMissing ? "text-gray-400" : ""}`}>

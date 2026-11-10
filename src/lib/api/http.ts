@@ -231,6 +231,28 @@ export class HttpCoordinatorApi implements CoordinatorApi {
     return this.req<T.IngestStart>("POST", `/projects/${enc(projectId)}/model-sets/${enc(modelSetId)}/tests/${enc(accTestId)}/ingest`, { refresh: opts?.refresh ?? false, classify: true });
   }
 
+  getAgenda(testId: string) {
+    return this.get<T.AgendaPayload>(`/tests/${enc(testId)}/agenda`);
+  }
+  async getNotes(testId: string): Promise<T.NotesPayload> {
+    const res = await this.get<T.NotesPayload | T.MeetingNote[]>(`/tests/${enc(testId)}/notes`);
+    return Array.isArray(res) ? { testId, notes: res } : res;
+  }
+  putNote(testId: string, targetType: T.NoteTargetType, targetId: string, text: string) {
+    const body: T.MeetingNoteRequest = { text };
+    return this.req<T.MeetingNote>("PUT", `/tests/${enc(testId)}/notes/${enc(targetType)}/${enc(targetId)}`, body);
+  }
+  async getFamilyView(testId: string, familyId: string): Promise<T.SavedView | null> {
+    try {
+      return await this.get<T.SavedView>(`/tests/${enc(testId)}/families/${enc(familyId)}/view`);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) return null;
+      throw e;
+    }
+  }
+  putFamilyView(testId: string, familyId: string, camera: unknown) {
+    return this.req<T.SavedView>("PUT", `/tests/${enc(testId)}/families/${enc(familyId)}/view`, { camera });
+  }
   getIssueChecks(testId: string) {
     return this.get<T.IssueChecksPayload>(`/tests/${enc(testId)}/issue-checks`);
   }

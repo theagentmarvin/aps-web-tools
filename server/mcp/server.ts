@@ -58,6 +58,7 @@ export function toolHandlers(coord: Coordinator): Record<string, (a: Args, extra
     list_families: async (a) => coord.listFamilies(a as never),
     ask_coordinator: async (a) => coord.askCoordinator(a as never, ctx),
     list_issue_checks: async (a) => coord.listIssueChecks(a as never),
+    list_meeting_notes: async (a) => coord.listMeetingNotes(a as never),
     list_questions: async (a) => coord.listQuestions(a as never),
     get_family: async (a) => coord.getFamily(a as never),
     propose_family_decision: async (a) => coord.proposeFamilyDecision(a as never, ctx),

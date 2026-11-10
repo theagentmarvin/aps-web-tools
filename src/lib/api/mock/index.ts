@@ -15,6 +15,7 @@ import { deriveFamilies, refreshFamily } from "./families";
 import { applyM1, type M1Data } from "./m1";
 import { applyM2, type M2Data } from "./m2";
 import { buildIssueChecks } from "./m3";
+import { AGENDA_CAP, buildAgenda } from "./m4";
 import { PROBLEM_TYPES } from "~/lib/problem-types";
 
 const ME = USERS[0];
@@ -808,6 +809,53 @@ export class MockCoordinatorApi implements CoordinatorApi {
       this.issueChecks.set(testId, c);
     }
     return c;
+  }
+
+  /** M4 agenda, notes and saved views per test (built once; notes/views are editable). */
+  private meetings = new Map<string, ReturnType<typeof buildAgenda>>();
+  private meetingOf(testId: string) {
+    let m = this.meetings.get(testId);
+    if (!m) {
+      const f = this.familiesOf(testId);
+      m = buildAgenda(this.data(testId).test, f.families, f.groups, this.checksOf(testId).checks);
+      this.meetings.set(testId, m);
+    }
+    return m;
+  }
+
+  async getAgenda(testId: string): Promise<T.AgendaPayload> {
+    await delay(150);
+    const v = this.data(testId).test.modelSetVersion;
+    return clone({ testId, version: v, baseVersion: v - 1, cap: AGENDA_CAP, disciplines: this.meetingOf(testId).disciplines });
+  }
+
+  async getNotes(testId: string): Promise<T.NotesPayload> {
+    await delay(80);
+    return clone({ testId, notes: this.meetingOf(testId).notes });
+  }
+
+  async putNote(testId: string, targetType: T.NoteTargetType, targetId: string, text: string): Promise<T.MeetingNote> {
+    await delay(120);
+    const m = this.meetingOf(testId);
+    const prev = this.meetingOf(testId).notes.find((n) => n.targetType === targetType && n.targetId === targetId);
+    const note: T.MeetingNote = { testKey: testId, version: this.data(testId).test.modelSetVersion, targetType, targetId, text: text.slice(0, 2000), author: ME.name, updatedAt: new Date().toISOString(), revision: (prev?.revision ?? 0) + 1 };
+    m.notes = m.notes.filter((n) => !(n.targetType === targetType && n.targetId === targetId));
+    if (text.trim()) m.notes.push(note);
+    return clone(note);
+  }
+
+  async getFamilyView(testId: string, familyId: string): Promise<T.SavedView | null> {
+    await delay(60);
+    return clone(this.meetingOf(testId).views.find((v) => v.familyId === familyId) ?? null);
+  }
+
+  async putFamilyView(testId: string, familyId: string, camera: unknown): Promise<T.SavedView> {
+    await delay(100);
+    if (JSON.stringify(camera ?? null).length > 20_000) throw new ApiError("La vista supera 20 KB.", 400, "validation");
+    const m = this.meetingOf(testId);
+    const v: T.SavedView = { testKey: testId, familyId, camera, savedAt: new Date().toISOString(), savedBy: ME.name };
+    m.views = [...m.views.filter((x) => x.familyId !== familyId), v];
+    return clone(v);
   }
 
   async getIssueChecks(testId: string): Promise<T.IssueChecksPayload> {
