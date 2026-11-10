@@ -26,6 +26,7 @@ import {
 } from "~/lib/viewer-tools/clash-highlight";
 import { useTriageContext } from "./actions";
 import { SaveViewButton, restoreSavedView } from "./MeetingViews";
+import { registerModel } from "./viewer-selection";
 import { rowKey, useTriage, type TriageStore, type ViewerMode } from "./store";
 
 const COLOR_A = "#0072B2";
@@ -229,7 +230,10 @@ export function ClashViewerPane() {
           onProgress={(loaded, total) => store.setViewer({ status: "loading", loaded, total })}
           onModelsLoaded={(map, failed) => {
             // Keep every model loaded so far (hidden ones are cached by ForgeViewer).
-            for (const [urn, m] of map) modelsRef.current.set(urn, m);
+            for (const [urn, m] of map) {
+              modelsRef.current.set(urn, m);
+              registerModel(urn, m); // chat context: viewer selection → document
+            }
             store.setViewer({
               status: map.size ? "ready" : "failed",
               loaded: map.size,

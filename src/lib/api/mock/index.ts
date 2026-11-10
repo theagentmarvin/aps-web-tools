@@ -16,6 +16,7 @@ import { applyM1, type M1Data } from "./m1";
 import { applyM2, type M2Data } from "./m2";
 import { buildIssueChecks } from "./m3";
 import { AGENDA_CAP, buildAgenda } from "./m4";
+import { MockChat } from "./chat";
 import { PROBLEM_TYPES } from "~/lib/problem-types";
 
 const ME = USERS[0];
@@ -28,6 +29,9 @@ interface ApplyJob {
   statusTotal: number;
   failures: T.ApplyStatus["failures"];
 }
+
+/** Read once at load: the workspace rewrites the URL query after it opens. */
+const MOCK_CHAT_FLAG = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("chat") : null;
 
 export class MockCoordinatorApi implements CoordinatorApi {
   readonly mode = "mock" as const;
@@ -802,6 +806,30 @@ export class MockCoordinatorApi implements CoordinatorApi {
       this.meetings.set(testId, m);
     }
     return m;
+  }
+
+  // ── Agent chat (mock streaming agent) ──
+  private mockChat = new MockChat();
+  async chat(req: T.ChatRequest, onEvent: (e: T.ChatEvent) => void, signal?: AbortSignal): Promise<void> {
+    await this.mockChat.run(req, onEvent, signal);
+  }
+  async getChat(testId: string, chatId?: string): Promise<T.ChatHistory> {
+    await delay(60);
+    return clone(chatId ? this.mockChat.get(chatId) : { chatId: "", testId, messages: [] });
+  }
+  async cancelChat(chatId: string): Promise<void> {
+    this.mockChat.cancel(chatId);
+  }
+  async getChatStatus(): Promise<T.ChatStatus> {
+    await delay(80);
+    // ?chat=no_claude / ?chat=no_login in the page URL simulates the preflight failures (mock only).
+    const flag = MOCK_CHAT_FLAG;
+    return { installed: flag !== "no_claude", loggedIn: flag !== "no_login" && flag !== "no_claude", version: "2.1.267 (mock)" };
+  }
+  async applyRegroup(proposalId: string): Promise<unknown> {
+    await delay(200);
+    this.log({ actor: { type: "user", id: ME.id, name: ME.short }, action: "regroup.applied", projectId: "", targetIds: [proposalId], details: {} });
+    return { ok: true, proposalId };
   }
 
   async getAgenda(testId: string): Promise<T.AgendaPayload> {

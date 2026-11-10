@@ -65,6 +65,8 @@
  *   GET    /api/coord/audit?project=&user=&action=&from=&to=&batch=&limit=&cursor= → Page<AuditEvent>
  */
 import { ApiError, type CoordinatorApi } from "./coordinator-api";
+import { SseParser, toChatEvent } from "./sse";
+import { CHAT_ERROR_CODES } from "./types";
 import type * as T from "./types";
 
 const BASE = "/api/coord";
@@ -230,6 +232,131 @@ export class HttpCoordinatorApi implements CoordinatorApi {
     return this.req<T.IngestStart>("POST", `/projects/${enc(projectId)}/model-sets/${enc(modelSetId)}/tests/${enc(accTestId)}/ingest`, { refresh: opts?.refresh ?? false, classify: true });
   }
 
+  /** Last message id of a running turn (cancel targets it). */
+  private chatMessageId: string | null = null;
+
+  async chat(req: T.ChatRequest, onEvent: (e: T.ChatEvent) => void, signal?: AbortSignal): Promise<void> {
+    // Wire body (docs/ai/chat-agent-design.md): structured context only; selection ≤ 50.
+    // Final contract (server/api/contract.ts ChatMessageRequest, strict): focus is {familyId?, groupIds?, clashIds?}.
+    const f = req.context.focus;
+    const selection = req.context.selection?.slice(0, 50).map((e) => ({ documentId: e.documentId, dbId: e.dbId }));
+    const wire = {
+      testKey: req.testId,
+      message: req.message,
+      context: {
+        lens: req.context.lens,
+        focus: f ? (f.kind === "family" ? { familyId: f.id } : f.kind === "group" ? { groupIds: [f.id] } : f.kind === "clash" ? { clashIds: [f.id] } : undefined) : undefined,
+        selection: selection?.length ? selection : undefined,
+      },
+      ...(req.newSession ? { newSession: true } : {}),
+    };
+    // Earlier draft (POST /chat): focus {familyId?, groupId?, clashId?}, chatId "C" + 12 hex.
+    const legacy = {
+      testKey: req.testId,
+      ...(req.chatId && /^C[0-9a-f]{12}$/.test(req.chatId) && !req.newSession ? { chatId: req.chatId } : {}),
+      message: req.message,
+      context: {
+        lens: req.context.lens,
+        focus: f ? (f.kind === "family" ? { familyId: f.id } : f.kind === "group" ? { groupId: f.id } : f.kind === "clash" ? { clashId: f.id } : undefined) : undefined,
+        selection: wire.context.selection,
+      },
+    };
+    let res: Response;
+    try {
+      const start = await fetch(`${BASE}/chat/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Coord-CSRF": await this.token() },
+        body: JSON.stringify(wire),
+        credentials: "same-origin",
+        signal,
+      });
+      if (start.ok) {
+        const { messageId, sessionId } = (await start.json()) as { messageId: string; sessionId?: string };
+        this.chatMessageId = messageId;
+        onEvent({ type: "status", text: "phase:starting", chatId: sessionId });
+        res = await fetch(`${BASE}/chat/${enc(messageId)}/events`, { headers: { Accept: "text/event-stream" }, credentials: "same-origin", signal });
+      } else if (start.status === 404) {
+        // Earlier contract draft: POST /chat streams directly.
+        res = await fetch(`${BASE}/chat`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "text/event-stream", "X-Coord-CSRF": await this.token() },
+          body: JSON.stringify(legacy),
+          credentials: "same-origin",
+          signal,
+        });
+      } else res = start;
+    } catch (err) {
+      if ((err as Error).name === "AbortError") return;
+      throw new ApiError(String(err), 0, "network");
+    }
+    if (!res.ok || !res.body) {
+      let message = `${res.status} ${res.statusText}`;
+      let code: T.ChatErrorCode = res.status === 409 ? "busy" : "failed";
+      try {
+        const j = (await res.json()) as { error?: { code?: string; message?: string } };
+        if (j.error?.message) message = j.error.message;
+        if (j.error?.code && CHAT_ERROR_CODES.includes(j.error.code as T.ChatErrorCode)) code = j.error.code as T.ChatErrorCode;
+      } catch {
+        /* non-JSON */
+      }
+      onEvent({ type: "error", code, message });
+      return;
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    const parser = new SseParser();
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        for (const m of parser.push(decoder.decode(value, { stream: true }))) {
+          const e = toChatEvent(m);
+          if (e) onEvent(e);
+        }
+      }
+    } catch (err) {
+      if ((err as Error).name !== "AbortError") throw err;
+    }
+  }
+  async getChat(testId: string, chatId?: string): Promise<T.ChatHistory> {
+    // GET /chat/history?testKey (final contract); earlier draft: GET /chat/:chatId.
+    type Wire = { sessionId?: string; chatId?: string; testKey?: string; messages: Array<{ role: string; text: string; at: string; proposalIds?: string[]; questionIds?: string[]; costUsd?: number; cost?: number; durationMs?: number }> };
+    let s: Wire;
+    try {
+      s = await this.get<Wire>(`/chat/history?testKey=${enc(testId)}`);
+    } catch (err) {
+      if (!chatId) throw err;
+      s = await this.get<Wire>(`/chat/${enc(chatId)}`);
+    }
+    return {
+      chatId: s.sessionId ?? s.chatId ?? chatId ?? "",
+      testId: s.testKey ?? testId,
+      messages: s.messages.map((m) => ({
+        role: m.role === "user" ? "user" : "agent",
+        text: m.text,
+        at: m.at,
+        cost: m.costUsd ?? m.cost,
+        durationMs: m.durationMs,
+        // Cards come from server ids only (never from the history text).
+        proposals: [...(m.proposalIds ?? []).map((id) => ({ id, kind: "other", summary: id })), ...(m.questionIds ?? []).map((id) => ({ id, kind: "question", summary: id, questionId: id }))],
+      })),
+    };
+  }
+  async cancelChat(chatId: string) {
+    const messageId = this.chatMessageId;
+    try {
+      if (!messageId) throw new Error("no message");
+      await this.req<unknown>("DELETE", `/chat/${enc(messageId)}`);
+    } catch {
+      await this.req<unknown>("DELETE", `/chat/${enc(chatId)}/run`);
+    }
+  }
+  getChatStatus() {
+    return this.get<T.ChatStatus>("/chat/status");
+  }
+  applyRegroup(proposalId: string) {
+    return this.req<unknown>("POST", `/proposals/${enc(proposalId)}/regroup/apply`, {});
+  }
   getAgenda(testId: string) {
     return this.get<T.AgendaPayload>(`/tests/${enc(testId)}/agenda`);
   }

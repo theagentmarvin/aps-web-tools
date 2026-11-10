@@ -1179,3 +1179,79 @@ export interface Endpoints {
 }
 
 export type EndpointKey = keyof Endpoints;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Chat panel (docs/ai/chat-agent-design.md): domain agent `coordinador-chat`, propose-only,
+// run as a local headless Claude Code (`claude -p`) with the coordinator's own login.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Structured UI state; the server turns it into the <contexto_ui> block (free text never pasted in). */
+export interface ChatContext {
+  /** Active lens (cambios | todo | incidencias | reunion …). */
+  lens?: string;
+  /** Selected family / ubicaciones / clashes in the tree. */
+  focus?: { familyId?: string; groupIds?: string[]; clashIds?: string[] };
+  /** Viewer selection (≤ 50 elements are resolved; more are counted only). */
+  selection?: Array<{ documentId: number; dbId: number }>;
+}
+/** POST /chat/messages (human-only, CSRF) → ChatMessageAccepted. */
+export interface ChatMessageRequest {
+  testKey: string;
+  /** ≤ 4000 characters. */
+  message: string;
+  context?: ChatContext;
+  /** true = "Nueva conversación" (new Claude session for this test). */
+  newSession?: boolean;
+}
+export interface ChatMessageAccepted {
+  messageId: string;
+  /** (user, project, model set, test) session. */
+  sessionId: string;
+}
+/**
+ * GET /chat/:messageId/events → `text/event-stream`. Each event: `event: <type>\ndata: <JSON>\n\n`.
+ * Events emitted before the client connects are replayed. Always ends with one `done` or `error`.
+ */
+export type ChatEvent =
+  | { type: "status"; phase: "starting" | "thinking" | "retrying" | "rate_limited"; detail?: string }
+  /** Token text of the main agent (append to the bubble). */
+  | { type: "delta"; text: string }
+  /** The agent is calling a tool (chip "consultando G-…"). */
+  | { type: "tool"; name: string; target?: string }
+  /** A proposal the agent created, extracted by the server from the tool result. */
+  | { type: "proposal"; id: string; kind: string; summary: string }
+  /** A question the agent asked (ask_coordinator). */
+  | { type: "question"; id: string; question: string }
+  | { type: "done"; messageId: string; costUsd?: number; durationMs: number; stoppedBy?: "timeout" | "tool_cap" | "proposal_cap" | "budget" }
+  | { type: "error"; code: "claude_not_found" | "not_logged_in" | "busy" | "cancelled" | "timeout" | "mcp_unavailable" | "rate_limited" | "failed"; message: string };
+/** GET /chat/status: pre-flight (cached 5 min). Never contains the account email. */
+export interface ChatStatus {
+  installed: boolean;
+  version?: string;
+  loggedIn: boolean;
+  authMethod?: string;
+  subscriptionType?: string;
+  /** Where the agent definition came from: installed in .claude/agents, the staged copy (inline), or none. */
+  agentSource: "installed" | "staged" | "none";
+  /** A message is running for this user. */
+  running: boolean;
+}
+export interface ChatHistoryMessage {
+  messageId: string;
+  role: "user" | "assistant";
+  text: string;
+  at: string;
+  context?: ChatContext;
+  proposalIds?: string[];
+  questionIds?: string[];
+  costUsd?: number;
+  durationMs?: number;
+  error?: { code: string; message: string };
+}
+/** GET /chat/history?testKey */
+export interface ChatHistory {
+  sessionId: string;
+  testKey: string;
+  messages: ChatHistoryMessage[];
+  running?: string;
+}

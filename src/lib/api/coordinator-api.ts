@@ -55,6 +55,10 @@ import type {
   TriageChanges,
   TriagePayloadWithFamilies,
   AgentQuestion,
+  ChatEvent,
+  ChatHistory,
+  ChatStatus,
+  ChatRequest,
   AgendaPayload,
   MeetingNote,
   NoteTargetType,
@@ -133,6 +137,19 @@ export interface CoordinatorApi {
   getFamilyView(testId: string, familyId: string): Promise<SavedView | null>;
   /** Stores the viewer camera for the meeting (local only, never sent to ACC). */
   putFamilyView(testId: string, familyId: string, camera: unknown): Promise<SavedView>;
+  /**
+   * Agent chat (propose-only): POST /chat streams SSE events (status / delta /
+   * proposal / done / error). Resolves when the stream ends; abort with `signal`.
+   */
+  chat(req: ChatRequest, onEvent: (e: ChatEvent) => void, signal?: AbortSignal): Promise<void>;
+  /** History of a conversation (one per test, chatId kept by the UI). */
+  getChat(testId: string, chatId?: string): Promise<ChatHistory>;
+  /** Cancel the running agent turn. */
+  cancelChat(chatId: string): Promise<void>;
+  /** Claude Code installed / signed in (checked before the first message; no email). */
+  getChatStatus(): Promise<ChatStatus>;
+  /** Human-only: apply a regroup proposal (after an explicit confirmation). PROVISIONAL route. */
+  applyRegroup(proposalId: string): Promise<unknown>;
   /** X3: answer a coordinator question; validity/action answers create the decision server-side. */
   answerQuestion(questionId: string, req: QuestionAnswerRequest): Promise<AgentQuestion>;
   /** Instance exception (mandatory reason) or its removal. PROVISIONAL route (§5.3). */

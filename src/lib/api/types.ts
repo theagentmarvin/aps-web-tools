@@ -274,3 +274,78 @@ export interface NotesPayload {
   testId: string;
   notes: import("../../../server/api/contract").MeetingNote[];
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Agent chat (owner decision 2026-11-10): propose-only domain agent spawned by
+// the server as a local Claude Code sub-agent. PROVISIONAL — built from the
+// orchestrator brief while Coder C writes server/api/contract.ts.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** An element selected in the viewer, resolved to a model-set document. */
+export interface ChatSelectedElement {
+  documentId: number;
+  dbId: number;
+}
+/** What is sent with a message (auto-filled from the workspace; the user can drop chips). */
+export interface ChatContext {
+  lens?: string;
+  view?: string;
+  /** Focused row: grupo (family), ubicación (group), clash, issue or tree node. */
+  focus?: { kind: "family" | "group" | "clash" | "issue" | "node"; id: string; label?: string };
+  /** Viewer selection, capped at 200. */
+  selection?: ChatSelectedElement[];
+  selectionTruncated?: boolean;
+}
+export interface ChatRequest {
+  projectId: string;
+  modelSetId: string;
+  testId: string;
+  /** Continue an existing conversation (history per test). */
+  chatId?: string;
+  message: string;
+  context: ChatContext;
+  /** "Nueva conversación": start a new Claude session for this test. */
+  newSession?: boolean;
+}
+export type ChatErrorCode = "claude_not_found" | "not_logged_in" | "timeout" | "busy" | "failed" | "cancelled" | "mcp_unavailable" | "rate_limited";
+export const CHAT_ERROR_CODES: readonly ChatErrorCode[] = ["claude_not_found", "not_logged_in", "timeout", "busy", "failed", "cancelled", "mcp_unavailable", "rate_limited"];
+/** A proposal the agent created (propose-only): applied by a human through the existing paths. */
+export interface ChatProposal {
+  id: string;
+  kind: "decision" | "family_decision" | "regroup" | "question" | (string & {});
+  summary: string;
+  targetCount?: number;
+  familyId?: string;
+  groupIds?: string[];
+  clashIds?: string[];
+  questionId?: string;
+}
+/** SSE events of POST /chat. */
+export type ChatEvent =
+  | { type: "status"; text: string; chatId?: string }
+  | { type: "delta"; text: string }
+  | { type: "proposal"; proposal: ChatProposal }
+  | { type: "done"; chatId?: string; cost?: number; durationMs?: number }
+  | { type: "error"; code: ChatErrorCode; message: string };
+export interface ChatMessage {
+  role: "user" | "agent";
+  text: string;
+  at: string;
+  proposals?: ChatProposal[];
+  context?: ChatContext;
+  /** Agent turns: USD cost and duration (shown small and muted). */
+  cost?: number;
+  durationMs?: number;
+}
+/** GET /chat/status: is Claude Code installed and signed in (no email). */
+export interface ChatStatus {
+  installed: boolean;
+  loggedIn: boolean;
+  version?: string;
+}
+/** GET /chat/:chatId */
+export interface ChatHistory {
+  chatId: string;
+  testId: string;
+  messages: ChatMessage[];
+}

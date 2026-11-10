@@ -23,6 +23,7 @@ import { familyChangeCounts, topChange } from "./change";
 import { ChangeChip } from "./RowMarks";
 import { CopyReminderButton } from "./IssueViews";
 import { MeetingNoteSection } from "./MeetingViews";
+import { AskAgentLink } from "./DetailPanel";
 import { rowKey, useTriage, type FamilyDraft, type TriageStore } from "./store";
 
 export const FAMILY_ACTION_KEY: Record<FamilyAction, TKey> = {
@@ -321,6 +322,7 @@ function FamilyProposal({ f, draft, options, impact }: { f: TriageFamily; draft:
               {hint}
             </p>
           )}
+          <AskAgentLink />
         </div>
       )}
     </section>

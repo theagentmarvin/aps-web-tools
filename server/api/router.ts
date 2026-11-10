@@ -16,6 +16,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { brotliCompressSync, constants as zlibConstants, gzipSync } from "node:zlib";
 import { z } from "zod";
 import { isFrozen } from "./frozen";
+import { ChatService } from "../chat/service";
 import { ApsAuth } from "../aps/auth";
 import { Coordinator, type CoordinatorOptions } from "../coordinator";
 import { CoordinatorUi, type HumanUser } from "../coordinator-ui";
@@ -246,6 +247,8 @@ const FeedbackSchema = z.object({
 
 export interface CoordApiOptions extends CoordinatorOptions {
   coordinator?: Coordinator;
+  /** Chat agent timeout (tests). */
+  chatTimeoutMs?: number;
 }
 
 export interface CoordApi {
@@ -410,6 +413,8 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
   const FamilyIdZ = z.string().regex(/^F-[0-9A-Za-z]{6,16}$/);
   add("GET", "/tests/:testId/families", async ({ params }) => ui.families(params.testId));
   add("GET", "/tests/:testId/families/:familyId", async ({ params }) => ui.family(params.testId, params.familyId));
+  // Chat panel regroup proposals (move_groups / detach_clashes / merge_families / split_family): human applies or rejects.
+  add("POST", "/proposals/:proposalId/regroup", async ({ params, body, user }) => ui.decideRegroup(params.proposalId, z.strictObject({ testId: TestIdZ, decision: z.enum(["apply", "reject"]) }).parse(body), await user()), true);
   add("POST", "/families/merge", async ({ body, user }) => ui.mergeFamilies(z.strictObject({ testId: TestIdZ, from: FamilyIdZ, into: FamilyIdZ }).parse(body), await user()), true);
   add("POST", "/families/:familyId/decision-preview", async ({ params, body }) => ui.familyDecisionPreview(params.familyId, DecisionFieldsZ.extend({ testId: TestIdZ }).parse(body)), true);
   add(
@@ -439,6 +444,63 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
   add("DELETE", "/families/:familyId/exceptions/:groupId", async ({ params, query, user }) => ui.removeFamilyException(params.familyId, TestIdZ.parse(query.get("testId")), params.groupId, await user()), true);
   add("POST", "/families/:familyId/detach", async ({ params, body, user }) => ui.detachInstance(params.familyId, z.strictObject({ testId: TestIdZ, groupId: GroupIdZ }).parse(body), await user()), true);
   add("POST", "/families/:familyId/confirm-inherited", async ({ params, body, user }) => ui.confirmInherited(params.familyId, z.strictObject({ testId: TestIdZ, groupIds: z.array(GroupIdZ).max(500).optional() }).parse(body), await user()), true);
+
+  // ── Chat panel (domain agent, propose-only, local `claude -p`) ─────────
+  // POST /chat/messages → {messageId}; GET /chat/:messageId/events (SSE, replayable); status; history; cancel.
+  const chat = new ChatService(coord, { ...(opts.chatTimeoutMs ? { timeoutMs: opts.chatTimeoutMs } : {}) });
+  const ChatContextZ = z.strictObject({
+    lens: z.string().max(40).optional(),
+    focus: z
+      .strictObject({ familyId: z.string().max(40).optional(), groupIds: z.array(z.string().max(40)).max(50).optional(), clashIds: z.array(z.string().max(40)).max(200).optional() })
+      .optional(),
+    selection: z.array(z.strictObject({ documentId: z.number().int().min(0), dbId: z.number().int().min(0) })).max(200).optional(),
+  });
+  const MessageIdZ = z.string().regex(/^M-[0-9a-f-]{12}$/);
+  add("GET", "/chat/status", async ({ user }) => chat.status(await user()));
+  add("GET", "/chat/history", async ({ query, user }) => chat.history(TestIdZ.parse(query.get("testKey") ?? query.get("testId")), await user()));
+  add(
+    "POST",
+    "/chat/messages",
+    async ({ body, user }) =>
+      chat.send(z.strictObject({ testKey: TestIdZ, message: z.string().min(1).max(4000), context: ChatContextZ.optional(), newSession: z.boolean().optional() }).parse(body), await user()),
+    true,
+  );
+  add("POST", "/chat/:messageId/cancel", async ({ params, user }) => chat.cancel(MessageIdZ.parse(params.messageId), await user()), true);
+  // SSE (EventSource cannot send the CSRF header): same-origin checks + the message belongs to the user.
+  add("GET", "/chat/:messageId/events", async ({ req, res, params, user }) => {
+    const id = MessageIdZ.parse(params.messageId);
+    const u = await user();
+    const after = Number(req.headers["last-event-id"] ?? -1);
+    let n = -1;
+    let open = true;
+    const write = (chunk: string) => {
+      if (open && !res.writableEnded) res.write(chunk);
+    };
+    const listener = (e: import("./contract").ChatEvent, last: boolean) => {
+      n++;
+      if (!res.headersSent) return;
+      if (n > after) write(`id: ${n}\nevent: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`);
+      if (last) {
+        open = false;
+        clearInterval(ping);
+        if (!res.writableEnded) res.end();
+      }
+    };
+    // Validate ownership before writing headers (a 404 stays a JSON error).
+    const unsubscribe = chat.subscribe(id, u, () => undefined);
+    unsubscribe();
+    res.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", Connection: "keep-alive", "X-Accel-Buffering": "no" });
+    res.write(": ok\n\n");
+    const ping = setInterval(() => write(": ping\n\n"), 15_000);
+    ping.unref?.();
+    const off = chat.subscribe(id, u, listener);
+    req.on("close", () => {
+      open = false;
+      clearInterval(ping);
+      off();
+    });
+    return undefined;
+  });
 
   // ── M4 the meeting ────────────────────────────────────────────────────────
   add("GET", "/tests/:testId/agenda", async ({ params, query }) => coord.agendaFor(params.testId, query.get("cap") ? z.coerce.number().int().min(1).max(200).parse(query.get("cap")) : undefined));
@@ -678,11 +740,14 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
         const params = Object.fromEntries(route.keys.map((k, i) => [k, decodeURIComponent(m[i + 1]!)]));
         const body = method === "GET" ? undefined : await readBody(req);
         const result = await route.handler({ req, res, params, query: url.searchParams, body, user: userOf });
-        send(res, 200, result ?? { ok: true }, {}, req);
+        // Streaming handlers (SSE) write the response themselves.
+        if (!res.headersSent) send(res, 200, result ?? { ok: true }, {}, req);
       } catch (err) {
         const { status, body } = errorBody(err);
         if (status >= 500) log.warn("api.error", { path: url.pathname, message: (err as Error).message });
-        send(res, status, body);
+        if (res.headersSent) {
+          if (!res.writableEnded) res.end();
+        } else send(res, status, body);
       }
     })();
   };

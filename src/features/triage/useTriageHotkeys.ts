@@ -129,6 +129,7 @@ export function useTriageHotkeys(opts: { onSend: () => void }) {
     { keys: ["F"], labelKey: "shortcuts.filters", group: "selection", run: () => document.getElementById("add-filter-btn")?.click() },
     // Viewer
     { keys: ["c"], labelKey: "shortcuts.cycleMode", group: "viewer", run: () => store.cycleViewerMode() },
+    { keys: ["C"], labelKey: "shortcuts.agentTab", group: "global", run: () => store.toggleRightTab() },
     { keys: ["z"], labelKey: "shortcuts.fit", group: "viewer", run: () => store.setViewer({ fitNonce: store.state.viewer.fitNonce + 1 }) },
     { keys: ["b"], labelKey: "shortcuts.sectionBox", group: "viewer", run: () => store.setViewer({ section: !store.state.viewer.section }) },
     { keys: ["m"], labelKey: "shortcuts.markers", group: "viewer", run: () => store.setViewer({ markers: !store.state.viewer.markers }) },

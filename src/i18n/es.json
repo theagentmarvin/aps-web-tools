@@ -558,7 +558,8 @@
     "closeHint": "Pulsa Esc o ? para cerrar",
     "compare": "Comparar propiedades",
     "split": "Separar de la ubicación",
-    "keepInherited": "Mantener decisión heredada (si no, desplegar)"
+    "keepInherited": "Mantener decisión heredada (si no, desplegar)",
+    "agentTab": "Alternar Detalle / Agente"
   },
   "approvals": {
     "title": "Aprobaciones",
@@ -1293,5 +1294,82 @@
       "phone": "Parece un número de teléfono: no guardes datos personales en la nota.",
       "name": "Parece un nombre de persona: usa la disciplina o la empresa en su lugar."
     }
+  },
+  "chat": {
+    "title": "Chat con el agente",
+    "tabsLabel": "Panel derecho",
+    "tabDetail": "Detalle",
+    "tabAgent": "Agente",
+    "tabAgentTip": "Preguntar al agente (tecla C). Solo propone: nada se aplica sin tu clic.",
+    "badge_one": "{count} propuesta nueva del agente",
+    "badge_other": "{count} propuestas nuevas del agente",
+    "askAbout": "Preguntar al agente sobre esto →",
+    "empty": "Pregunta sobre el grupo, la ubicación o los elementos que selecciones en el visor. El agente solo propone: tú decides.",
+    "thinking": "Pensando…",
+    "cancel": "Cancelar",
+    "send": "Enviar",
+    "placeholder": "Escribe tu pregunta (Enter envía, Shift+Enter salto de línea)",
+    "footer": "Se envía con el contexto de las etiquetas de arriba; quita las que no quieras.",
+    "contextLabel": "Contexto que se enviará",
+    "ctx": {
+      "lens": "Lente: {lens}",
+      "family": "Grupo: {label}",
+      "group": "Ubicación: {label}",
+      "clash": "Interferencia {label}",
+      "issue": "Incidencia: {label}",
+      "node": "Nodo {label}",
+      "selection_one": "{count} elemento seleccionado en el visor",
+      "selection_other": "{count} elementos seleccionados en el visor",
+      "selectionCapped": "{cap} de {count} elementos seleccionados en el visor",
+      "drop": "Quitar «{label}» del contexto"
+    },
+    "prompt": {
+      "why": "¿Por qué es {validity}?",
+      "regroup": "Agrupa estas interferencias con su grupo",
+      "issue": "Redacta la incidencia",
+      "verdict": "¿Por qué este veredicto?",
+      "changed": "¿Qué cambió desde la versión anterior?",
+      "p1": "¿Qué P1 debería revisar primero?",
+      "summary": "Resume este grupo en 3 líneas"
+    },
+    "kind": {
+      "decision": "Decisión",
+      "family_decision": "Decisión de grupo",
+      "regroup": "Reagrupar",
+      "question": "Pregunta",
+      "other": "Propuesta"
+    },
+    "targets_one": "{count} objetivo",
+    "targets_other": "{count} objetivos",
+    "apply": "Aplicar",
+    "confirm": "Confirmar",
+    "dismiss": "Descartar",
+    "see": "Ver",
+    "applied": "Abierta en el flujo normal: revisa y decide ahí.",
+    "dismissed": "Descartada.",
+    "regroupConfirm": "¿Confirmas reagrupar {count} interferencias? Se registra como decisión humana.",
+    "regroupApplied": "Reagrupamiento aplicado: actualiza la prueba para verlo.",
+    "error": {
+      "claude_not_found": "No se encontró Claude Code. Instala Claude Code y abre una sesión (`claude` en una terminal).",
+      "not_logged_in": "Claude Code no tiene sesión. Inicia sesión en Claude Code (`claude` → /login) y vuelve a preguntar.",
+      "timeout": "El agente tardó demasiado. Vuelve a intentar con una pregunta más acotada.",
+      "busy": "El agente está ocupado con otra respuesta. Espera a que termine o cancélala.",
+      "failed": "No se pudo obtener respuesta del agente.",
+      "cancelled": "Respuesta cancelada.",
+      "mcp_unavailable": "El servidor de herramientas del agente no está disponible. Reinicia el servidor de la app y vuelve a intentarlo.",
+      "rate_limited": "Claude alcanzó el límite de uso. Espera unos minutos y vuelve a intentarlo."
+    },
+    "status": {
+      "starting": "Iniciando el agente…",
+      "tool": "Consultando {tool}…",
+      "retrying": "Reintentando…",
+      "rateLimited": "Límite de uso de Claude: esperando…"
+    },
+    "notice": "Este chat envía datos del modelo a Claude; uso sujeto al Procedimiento Acceso Herramientas IA de SalfaCorp.",
+    "noticeOk": "Entendido",
+    "cost": "US$ {usd}",
+    "duration": "{s} s",
+    "newSession": "Nueva conversación",
+    "noTarget": "La propuesta aún no aparece en la prueba; actualiza las propuestas y vuelve a intentarlo."
   }
 }

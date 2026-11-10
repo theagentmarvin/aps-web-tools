@@ -302,3 +302,48 @@ Source: `docs/domain/pilot-readiness-review.md`.
   - Only the highest-priority notice shows: scope change > stale version > new agent proposals > pace nudge. The others sit behind "+N".
   - Scope example: "⚠ Alcance: 2 modelos agregados (MODELING TEST S4.rvt, S3.rvt) · Ver detalle". "Ver detalle" opens a popover with the per-document lines and the out-of-scope count.
   - On v11 the tree starts 69 px higher (y 273 → 204 at 1600×1000).
+
+## Agent chat: "Agente" tab in the right panel (2026-11-10)
+
+Propose-only domain agent (docs/ai/chat-agent-design.md). The UI never applies anything on its own.
+
+- **Placement.** The right column has a 32 px tab bar, "Detalle" | "Agente" (`RightTabs` in `src/routes/triage.tsx`). The viewer width never changes.
+  - **Shift+C** or the header button "Agente" toggles the tab. Lowercase `c` stays the viewer mode.
+  - The active tab is remembered in `coord.layout.rightTab`.
+  - Both tabs stay mounted, so the scroll and the draft survive a switch.
+  - When a proposal arrives while "Detalle" is showing, a violet badge appears on "Agente" (`store.noteChatProposal`).
+  - "Preguntar al agente sobre esto" (`AskAgentLink`, at the end of the decision block in the ubicación and grupo panels) opens the tab, restores the focus chip and focuses the input.
+- **Panel (`src/features/triage/ChatPanel.tsx`).**
+  - **Notice.** It is shown once per browser session (`sessionStorage coord.chat.notice`): "Este chat envía datos del modelo a Claude; uso sujeto al Procedimiento Acceso Herramientas IA de SalfaCorp."
+  - **Preflight.** `GET /chat/status` runs before the first message. If Claude Code is not installed or not signed in, the input and prompts are disabled and the fix text is shown.
+  - **Text.** Markdown-lite rendering, built from React elements only (no raw HTML).
+  - **Status line.** Shows `phase` / `tool` (+ target) in Spanish, with a Cancel button.
+  - **Per-message footer.** Cost and duration are shown small and muted ("US$ 0.03 · 2,7 s").
+  - **"Nueva conversación"** sends `newSession: true` on the next message.
+  - **Context chips (each one has an ×).**
+    - lens;
+    - focus (family / grupo / ubicación);
+    - viewer selection. It comes from `viewer.getAggregateSelection()`, mapped model → URN → `documentId` in `viewer-selection.ts`, capped at **50**, and shown as "50 de N" when more are selected.
+  - **Prompts.** Three suggested prompts, which depend on the context.
+- **Cards come only from the server's `proposal` / `question` SSE events** (never from the model's text).
+  - When the event has only `{id, kind, summary}`, the card resolves the target once with `listProposals({ids:[id]})` and queues it into the triage.
+  - "Aplicar" stays disabled until a target exists.
+  - Aplicar = the existing human paths:
+    - decision → the guarded accept;
+    - family_decision → the "Aprobar grupo" dialog;
+    - regroup → a confirm step, then the human-only regroup apply;
+    - question → reveals the ubicación's callout.
+  - "Ver" switches to "Detalle", focused on the item.
+- **HTTP (`src/lib/api/http.ts`, `sse.ts`).**
+  - `POST /chat/messages` {testKey, message, context: {lens, focus: {familyId | groupIds | clashIds}, selection ≤ 50}, newSession?} returns `{messageId, sessionId}`.
+  - `GET /chat/:messageId/events` is SSE over fetch (`SseParser`), mapped to UI events by `toChatEvent`. `done.costUsd` maps to cost; unknown error codes map to `failed`.
+  - History: `GET /chat/history?testKey`.
+  - Cancel: `DELETE /chat/:messageId`.
+  - A 404 on `/chat/messages` falls back to the earlier draft (`POST /chat` streaming, `DELETE /chat/:chatId/run`).
+- **Errors in Spanish, with the fix:** claude_not_found, not_logged_in, busy, timeout, cancelled, mcp_unavailable, rate_limited, failed.
+- **Mock (`src/lib/api/mock/chat.ts`).**
+  - It streams word by word with tool status lines.
+  - It emits one proposal: regroup when there is a selection, family_decision for a family focus, otherwise decision.
+  - It reports cost and duration.
+  - `/error <code>` forces an error; `?chat=no_login` / `?chat=no_claude` simulate the preflight states.
+- **Tests:** `tests/ui/chat-client.test.ts` covers SSE chunking at every boundary, CRLF / comments / multi-line data, event mapping (question → card, costUsd, error codes), and selection mapping (dedupe, unknown models, the cap of 50 with its total).

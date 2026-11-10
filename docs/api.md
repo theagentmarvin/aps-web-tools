@@ -293,3 +293,34 @@ There are 36 tools, with names and inputs as in `docs/ai/mcp-tool-contracts.ts`.
 ### Document discipline
 
 Precedence: user assignment (by lineage URN) > first matching user rule (case- and accent-insensitive) > discipline matrix file-name tokens (only when `disciplines.fileNameDetection` is `"matrix"`; default `"off"`) > dominant element discipline with share ≥ 80 % > `SIN`. Element disciplines come from the Revit category (`rules/discipline-matrix.yaml` category defaults); pipes and plumbing need a system classification, otherwise they stay `SIN`. Mappings are stored in `.coordinator/projects/<projectId>/disciplines.json` (versioned; every change audited with before/after hashes). Outputs never show `UNK`.
+
+### Chat panel (domain agent `coordinador-chat`, propose-only)
+
+Design: `docs/ai/chat-agent-design.md`. Types: `ChatContext`, `ChatMessageRequest`, `ChatMessageAccepted`, `ChatEvent`, `ChatStatus`, `ChatHistoryMessage` and `ChatHistory` in `server/api/contract.ts`. Code: `server/chat/{agent,bridge,context,service,store}.ts` and `server/regroup.ts`.
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/chat/status` | – | `ChatStatus` (`claude --version` + `claude auth status --json`; a logged-in result is cached for 5 min, a logged-out one for 15 s; never the email or organisation) |
+| GET | `/chat/history?testKey` | – | `ChatHistory` (the caller's session for that test; `running` = the messageId in flight) |
+| POST H | `/chat/messages` | `ChatMessageRequest` | `ChatMessageAccepted`; 409 `conflict` if the session already has a running message |
+| GET | `/chat/:messageId/events` | – | SSE: `id: n`, `event: <ChatEvent.type>`, `data: ChatEvent`. Replays from the start, or after `Last-Event-ID`. Closes after `done` or `error`. Not CSRF-checked because EventSource cannot send headers; it is same-origin and owner-only (404 otherwise) |
+| POST H | `/chat/:messageId/cancel` | – | `{cancelled}`. Sends SIGINT, then SIGTERM after 5 s; the stream ends with `error{code:"cancelled"}` |
+| POST H | `/proposals/:proposalId/regroup` | `{testId, decision: "apply"\|"reject"}` | `FamiliesPayload`. Applies a regroup proposal with the family merge/detach mechanics (local only) |
+
+- **Sessions:** one per (user, project, model set, test), stored in `.coordinator/chat/<p>/<m>/<testKey>/<sha(userId)>.json`. A session keeps at most 200 messages. The session id doubles as the Claude session UUID: the first message uses `--session-id`, later ones use `--resume`. If the Claude transcript is gone, the server starts a new session once. `newSession: true` starts over.
+- **Run:**
+  - `claude -p` (prompt on stdin), `--agent coordinador-chat`, stream-json with partial messages, `--strict-mcp-config` with an inline coord server (`COORD_CHAT=1`, the server's home and data source), `--tools ""`, the agent's `mcp__coord__*` allow-list, the disallow list (apply, ingest, classification and built-ins), `--permission-mode dontAsk`, `--permission-prompts none` and `--max-budget-usd 0.50`.
+  - The agent definition comes from the installed agents folder when it is there. Otherwise the staged copy (`harness-staging/`) is passed inline with `--agents` (`ChatStatus.agentSource`).
+  - The child environment drops `CLAUDECODE`, `CLAUDE_CODE_*`, `CLAUDE_PID`, `CLAUDE_PROJECT_DIR`, `BUN_INSPECT`, `NODE_OPTIONS`, `COORD_HARNESS_DEV` and `ANTHROPIC_API_KEY`.
+  - Binary resolution: `COORD_CLAUDE_BIN`, then `PATH`, then `~/.local/bin`.
+- **Caps:** 120 s, 25 tool calls and 10 created proposals or questions. Hitting one stops the run (SIGINT, then SIGTERM) and ends it with `done{stoppedBy}`. A budget stop gives `stoppedBy:"budget"`.
+- **Errors:** `claude_not_found`, `not_logged_in`, `mcp_unavailable` (coord not `connected` at init), `cancelled`, `failed` (redacted last 300 characters of stderr).
+- **Cards:** `proposal` and `question` events come only from the tool results of creating tools (`{ok, data:{proposalId|questionId}}`), checked against the store. Ids in the model's text never create a card.
+- **MCP in chat mode (`COORD_CHAT=1`):** `apply_approved_proposals` is not registered, and proposals are `createdBy {type:"agent", id:"agent-chat"}`. A new tool, `get_selection_context {testKey?, elements[1..50]}`, returns elements, clashes (≤ 100 rows), groups and families, with model text wrapped as untrusted.
+- **`propose_group_action` regroup variants:**
+  - `move_groups {groupIds ≤ 20, toFamilyId | newFamilyLabel}`;
+  - `detach_clashes {clashIds ≤ 200, newGroupLabel?}`: whole groups only, because families are made of groups. A partial group is refused; use `split`;
+  - `merge_families {familyIds 2..10}`: the first family is kept, and the others must not have an approved decision;
+  - `split_family {familyId, groupPartitions}`: the first part keeps the family.
+
+  Ids are validated when proposing and again when applying. A real group or family is never moved or merged into a family whose validity (approved, else proposed) is closable.

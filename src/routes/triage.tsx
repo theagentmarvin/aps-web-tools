@@ -11,7 +11,7 @@ import type { TriagePayload } from "~/lib/api/types";
 import { Modal } from "~/lib/components/Modal";
 import { CopyCommand } from "~/lib/components/shell-widgets";
 import { useToast } from "~/lib/components/Toast";
-import { Button, EmptyState, ErrorState, SkeletonRows } from "~/lib/components/ui";
+import { Button, EmptyState, ErrorState, Kbd, SkeletonRows } from "~/lib/components/ui";
 import { useSettings } from "~/lib/settings";
 import { readJson, writeJson } from "~/lib/storage";
 import { TriageContext, useCreateActions, useTriageContext } from "~/features/triage/actions";
@@ -22,6 +22,7 @@ import { FilterBar } from "~/features/triage/FilterBar";
 import { isDefaultQuery, parseQuery, writeQuery, type ListQuery } from "~/features/triage/filters";
 import { GroupList } from "~/features/triage/GroupList";
 import { LensBar } from "~/features/triage/LensBar";
+import { ChatPanel } from "~/features/triage/ChatPanel";
 import { PrintAgenda, printAgenda } from "~/features/triage/MeetingViews";
 import { TriageStore, rowKey, useTriage } from "~/features/triage/store";
 import { useTriageHotkeys } from "~/features/triage/useTriageHotkeys";
@@ -215,6 +216,11 @@ function Workspace({ loading, manualOk, onManual, onTestChange, onReload, onQuer
   const payload = useTriage(store, (s) => s.payload);
   const manual = useTriage(store, (s) => s.manual);
   const collapsed = useTriage(store, (s) => s.detailCollapsed);
+  const rightTab = useTriage(store, (s) => s.rightTab);
+  const [chatMounted, setChatMounted] = useState(rightTab === "agent");
+  useEffect(() => {
+    if (rightTab === "agent") setChatMounted(true);
+  }, [rightTab]);
   const progress = useProgress();
   const [sendOpen, setSendOpen] = useState(false);
   const [sending, setSending] = useState(false);
@@ -281,7 +287,10 @@ function Workspace({ loading, manualOk, onManual, onTestChange, onReload, onQuer
           <>
             {!narrow && <ResizeHandle label={t("workspace.resizeDetail")} value={layout.detail} onChange={(v) => resize("detail", v)} invert />}
             <aside style={{ width: layout.detail }} className={`flex flex-shrink-0 flex-col border-l border-brand-muted/20 bg-white ${narrow ? "absolute inset-y-0 right-0 z-20 shadow-xl" : ""}`}>
-              {loading ? <DetailSkeleton /> : <DetailPanel />}
+              <RightTabs />
+              <div className={`min-h-0 flex-1 flex-col ${rightTab === "detail" ? "flex" : "hidden"}`}>{loading ? <DetailSkeleton /> : <DetailPanel />}</div>
+              {/* Mounted once opened and kept: switching tabs keeps the chat scroll and draft. */}
+              {(rightTab === "agent" || chatMounted) && <div className={`min-h-0 flex-1 flex-col ${rightTab === "agent" ? "flex" : "hidden"}`}>{!loading && <ChatPanel />}</div>}
             </aside>
           </>
         )}
@@ -371,6 +380,26 @@ function ListArea({ onClear, onSend, readyCount, onQueryChange }: { onClear: () 
       <SelectionBar />
       {lens === "reunion" && <PrintAgenda />}
     </>
+  );
+}
+
+/** "Detalle" | "Agente" tabs of the right column (same width; the viewer never shrinks). Key C toggles. */
+function RightTabs() {
+  const t = useT();
+  const { store } = useTriageContext();
+  const tab = useTriage(store, (s) => s.rightTab);
+  const badge = useTriage(store, (s) => s.chatBadge);
+  const btn = (on: boolean) => `relative flex h-8 flex-1 items-center justify-center gap-1 border-b-2 text-xs font-medium ${on ? "border-brand text-brand" : "border-transparent text-gray-500 hover:text-brand"}`;
+  return (
+    <div role="tablist" aria-label={t("chat.tabsLabel")} className="flex flex-shrink-0 border-b border-brand-muted/20">
+      <button type="button" role="tab" aria-selected={tab === "detail"} onClick={() => store.setRightTab("detail")} className={btn(tab === "detail")}>
+        {t("chat.tabDetail")}
+      </button>
+      <button type="button" role="tab" aria-selected={tab === "agent"} title={t("chat.tabAgentTip")} onClick={() => store.setRightTab("agent")} className={btn(tab === "agent")}>
+        {t("chat.tabAgent")} <Kbd>C</Kbd>
+        {badge > 0 && <span aria-label={t("chat.badge", { count: badge })} className="ml-1 rounded-full bg-violet-600 px-1.5 text-[10px] leading-4 text-white">{badge}</span>}
+      </button>
+    </div>
   );
 }
 

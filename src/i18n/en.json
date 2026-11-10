@@ -558,7 +558,8 @@
     "closeHint": "Press Esc or ? to close",
     "compare": "Compare properties",
     "split": "Split from group",
-    "keepInherited": "Keep inherited decision (else expand)"
+    "keepInherited": "Keep inherited decision (else expand)",
+    "agentTab": "Toggle Details / Agent"
   },
   "approvals": {
     "title": "Approvals",
@@ -1293,5 +1294,82 @@
       "phone": "Looks like a phone number: do not keep personal data in the note.",
       "name": "Looks like a person's name: use the discipline or company instead."
     }
+  },
+  "chat": {
+    "title": "Chat with the agent",
+    "tabsLabel": "Right panel",
+    "tabDetail": "Details",
+    "tabAgent": "Agent",
+    "tabAgentTip": "Ask the agent (key C). It only proposes: nothing applies without your click.",
+    "badge_one": "{count} new agent proposal",
+    "badge_other": "{count} new agent proposals",
+    "askAbout": "Ask the agent about this →",
+    "empty": "Ask about the group, the location or the elements you select in the viewer. The agent only proposes: you decide.",
+    "thinking": "Thinking…",
+    "cancel": "Cancel",
+    "send": "Send",
+    "placeholder": "Type your question (Enter sends, Shift+Enter new line)",
+    "footer": "Sent with the context chips above; remove the ones you don't want.",
+    "contextLabel": "Context to be sent",
+    "ctx": {
+      "lens": "Lens: {lens}",
+      "family": "Group: {label}",
+      "group": "Location: {label}",
+      "clash": "Clash {label}",
+      "issue": "Issue: {label}",
+      "node": "Node {label}",
+      "selection_one": "{count} element selected in the viewer",
+      "selection_other": "{count} elements selected in the viewer",
+      "selectionCapped": "{cap} of {count} elements selected in the viewer",
+      "drop": "Remove \"{label}\" from the context"
+    },
+    "prompt": {
+      "why": "Why is it {validity}?",
+      "regroup": "Group these clashes with their group",
+      "issue": "Draft the issue",
+      "verdict": "Why this verdict?",
+      "changed": "What changed since the previous version?",
+      "p1": "Which P1 should I review first?",
+      "summary": "Summarise this group in 3 lines"
+    },
+    "kind": {
+      "decision": "Decision",
+      "family_decision": "Group decision",
+      "regroup": "Regroup",
+      "question": "Question",
+      "other": "Proposal"
+    },
+    "targets_one": "{count} target",
+    "targets_other": "{count} targets",
+    "apply": "Apply",
+    "confirm": "Confirm",
+    "dismiss": "Dismiss",
+    "see": "See",
+    "applied": "Opened in the normal flow: review and decide there.",
+    "dismissed": "Dismissed.",
+    "regroupConfirm": "Confirm regrouping {count} clashes? It is recorded as a human decision.",
+    "regroupApplied": "Regroup applied: refresh the test to see it.",
+    "error": {
+      "claude_not_found": "Claude Code was not found. Install Claude Code and open a session (`claude` in a terminal).",
+      "not_logged_in": "Claude Code is not signed in. Sign in to Claude Code (`claude` → /login) and ask again.",
+      "timeout": "The agent took too long. Try again with a narrower question.",
+      "busy": "The agent is busy with another answer. Wait for it to finish or cancel it.",
+      "failed": "Could not get an answer from the agent.",
+      "cancelled": "Answer cancelled.",
+      "mcp_unavailable": "The agent's tool server is unavailable. Restart the app server and try again.",
+      "rate_limited": "Claude hit its usage limit. Wait a few minutes and try again."
+    },
+    "status": {
+      "starting": "Starting the agent…",
+      "tool": "Querying {tool}…",
+      "retrying": "Retrying…",
+      "rateLimited": "Claude usage limit: waiting…"
+    },
+    "notice": "This chat sends model data to Claude; use is subject to SalfaCorp's Procedimiento Acceso Herramientas IA.",
+    "noticeOk": "Understood",
+    "cost": "US$ {usd}",
+    "duration": "{s} s",
+    "newSession": "New conversation",
+    "noTarget": "The proposal is not in the test yet; refresh proposals and try again."
   }
 }

@@ -275,6 +275,8 @@ export interface ModelSetFamilies {
   aliases: Record<string, string>;
   /** Detached instances: groupId → manual family id. */
   detached: Record<string, { familyId: string; by: string; at: string }>;
+  /** Titles of manual families created by an applied regroup proposal (agent text, untrusted). */
+  labels?: Record<string, string>;
   updatedAt?: string;
   updatedBy?: string;
 }
@@ -402,7 +404,7 @@ export function familyViews(families: readonly FamilyRecord[], groups: readonly 
     if (!g) continue;
     const src = families.find((f) => f.groupIds.includes(gid));
     if (!src) continue;
-    const e = members.get(d.familyId) ?? { base: { ...src, id: d.familyId, title: `${src.title} (separada)`, groupIds: [], tags: src.tags.filter((t) => t !== "tipico") }, ids: new Set<string>(), mergedFrom: new Set<string>() };
+    const e = members.get(d.familyId) ?? { base: { ...src, id: d.familyId, title: st.labels?.[d.familyId] ?? `${src.title} (separada)`, groupIds: [], tags: src.tags.filter((t) => t !== "tipico") }, ids: new Set<string>(), mergedFrom: new Set<string>() };
     e.ids.add(gid);
     members.set(d.familyId, e);
   }

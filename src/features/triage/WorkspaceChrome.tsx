@@ -52,6 +52,7 @@ export function WorkspaceHeader({ onTestChange, onSend }: { onTestChange: (testI
   const progress = useProgress();
   const agent = useAgentStatus();
   const preparedAt = usePreparedAt();
+  const rightTab = useTriage(store, (s) => s.rightTab);
   const toast = useToast();
   const uncached = payload?.tests.find((x) => !x.cached);
   const ingest = useIngest(payload?.project.id ?? "", payload?.modelSet.id ?? "", {
@@ -115,6 +116,9 @@ export function WorkspaceHeader({ onTestChange, onSend }: { onTestChange: (testI
         <ProgressBar done={progress.done} total={progress.total} />
       </div>
       <div className="ml-auto flex items-center gap-2">
+        <button type="button" onClick={() => store.toggleRightTab()} title={t("chat.tabAgentTip")} aria-pressed={rightTab === "agent"} className={`rounded border px-2 py-1 text-xs ${rightTab === "agent" ? "border-violet-400 bg-violet-50 text-violet-900" : "border-brand-muted/30 text-gray-700 hover:text-brand"}`}>
+          {t("chat.tabAgent")}
+        </button>
         {inheritedCount > 0 && (
           <button type="button" onClick={actions.acceptInherited} className="rounded border border-brand-muted/30 px-2 py-1 text-xs text-gray-700 hover:text-brand">
             {t("workspace.acceptInherited", { count: inheritedCount })}

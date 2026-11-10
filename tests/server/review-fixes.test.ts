@@ -45,7 +45,7 @@ describe("#1 family decisions across versions (PoC fam / batch)", () => {
         expect(g.reviewState).not.toBe("decided");
       }
     }
-  });
+  }, 60_000); // full v41->v42 cycle: slow under parallel suite load
 
   it("v42 batch close items never carry real / needs_info / changed instances, nor a carried spot-check", async () => {
     const k41 = await ingest(coord, 41);

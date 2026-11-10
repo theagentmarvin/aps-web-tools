@@ -43,6 +43,7 @@ import type {
   TestRecord,
 } from "./store/types";
 import { REASON_CODES } from "./store/types";
+import { applyPlan, isRegroup, planRegroup, type RegroupAction } from "./regroup";
 import { pathSegment } from "./store";
 import { bareProjectId, CoordError, nowIso, paginate, plural, round, sha256, uuidFromHash } from "./util";
 
@@ -1977,6 +1978,34 @@ export class CoordinatorUi {
     await this.core.families.update(test.projectId, test.modelSetId, user, (st) => {
       st.aliases[from.id] = into.id;
     }, { action: "family.merged", testKey: test.testKey, targetIds: [from.id, into.id] });
+    return this.families(test.testKey);
+  }
+
+  /**
+   * Chat panel: a human applies (or rejects) a regroup proposal (propose_group_action move_groups /
+   * detach_clashes / merge_families / split_family) with the family merge / detach mechanics.
+   * Re-validated against the current families. Local only; nothing goes to ACC.
+   */
+  async decideRegroup(proposalId: string, body: { testId: string; decision: "apply" | "reject" }, user: HumanUser): Promise<C.FamiliesPayload> {
+    const p = await this.store.getProposal(proposalId);
+    if (!p || p.payload.kind !== "group_action" || !isRegroup(p.payload.action)) throw new CoordError("not_found", `Propuesta de reagrupación ${proposalId} no existe`);
+    if (p.state !== "draft" && p.state !== "pending_review") throw new CoordError("invalid_state", `La propuesta ${p.id} está ${p.state}.`);
+    const { test, cls, views } = await this.core.familyViewsFor(body.testId);
+    if (p.testKey && p.testKey !== test.testKey) throw new CoordError("validation_error", `La propuesta ${p.id} es del test ${p.testKey}.`);
+    if (body.decision === "reject") {
+      await this.store.transitionProposal(p.id, "rejected", user.name);
+      return this.families(test.testKey);
+    }
+    const plan = planRegroup(p.payload.action as unknown as RegroupAction, cls, views, p.id);
+    const at = nowIso(this.core.now());
+    await this.core.families.update(test.projectId, test.modelSetId, user, (st) => applyPlan(st, plan, user.name, at), {
+      action: "family.regrouped",
+      testKey: test.testKey,
+      targetIds: [p.id, ...plan.targetIds.slice(0, 20)],
+      details: { type: p.payload.action.type, aliases: Object.keys(plan.aliases).length, detached: Object.keys(plan.detached).length },
+    });
+    await this.store.transitionProposal(p.id, "approved", user.name);
+    await this.store.transitionProposal(p.id, "applied", user.name, "reagrupación aplicada (local)");
     return this.families(test.testKey);
   }
 

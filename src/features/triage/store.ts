@@ -208,6 +208,12 @@ export interface TriageState {
   savedViews: Map<string, SavedViewerView | null>;
   /** Agenda item reason per row key (shown in the panel). */
   agendaReason: Map<string, string>;
+  /** Right column tab: "Detalle" (default) or "Agente" (remembered per user). */
+  rightTab: "detail" | "agent";
+  /** Proposals the agent created while the user was on "Detalle" (badge on the Agente tab). */
+  chatBadge: number;
+  /** Bumped by "Preguntar al agente sobre esto": the chat restores the focus chip. */
+  chatAskNonce: number;
   collapsedNodes: Set<string>;
   /** Instances (group ids) opened this session, per family: the spot-check record. */
   familyVisits: Map<string, Set<string>>;
@@ -305,6 +311,9 @@ export class TriageStore {
       notes: new Map(),
       savedViews: new Map(),
       agendaReason: new Map(),
+      rightTab: readJson<{ rightTab?: "detail" | "agent" }>("coord.layout", {}).rightTab === "agent" ? "agent" : "detail",
+      chatBadge: 0,
+      chatAskNonce: 0,
       collapsedNodes: new Set(["unchanged"]),
       familyVisits: new Map(),
       familyExceptions: new Map(),
@@ -1578,6 +1587,27 @@ export class TriageStore {
   toggleRationale(defaultOpen: boolean) {
     const cur = this.state.rationaleOpen ?? defaultOpen;
     this.set({ rationaleOpen: !cur });
+  }
+
+  setRightTab(tab: "detail" | "agent") {
+    writeJson("coord.layout", { ...readJson<object>("coord.layout", {}), rightTab: tab });
+    this.set({ rightTab: tab, chatBadge: tab === "agent" ? 0 : this.state.chatBadge, detailCollapsed: false });
+  }
+
+  toggleRightTab() {
+    this.setRightTab(this.state.rightTab === "agent" ? "detail" : "agent");
+  }
+
+  /** A proposal arrived: badge it when the Agente tab is not visible. */
+  noteChatProposal() {
+    if (this.state.rightTab !== "agent") this.set({ chatBadge: this.state.chatBadge + 1 });
+  }
+
+  /** "Preguntar al agente sobre esto": open the Agente tab with the current row as the focus chip. */
+  askAgent() {
+    this.setRightTab("agent");
+    this.set({ chatAskNonce: this.state.chatAskNonce + 1 });
+    window.setTimeout(() => document.getElementById("chat-input")?.focus(), 50);
   }
 
   toggleDetail() {

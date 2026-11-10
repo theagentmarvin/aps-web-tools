@@ -19,6 +19,7 @@ import { WebAuthnService } from "./approval/webauthn";
 import { loadOrCreateSecret, readSecret, secureDir } from "./secure/keystore";
 import { ClashCache, type CacheKey } from "./cache/clash-cache";
 import { loadConfig, MAX_SUPPORTED_LEVEL, type AutonomyLevel, type CoordinatorConfig, type LoadedConfig } from "./config";
+import { isRegroup, planRegroup, regroupSummary, type RegroupAction } from "./regroup";
 import { CLOSABLE, ENGINE_NAME, ENGINE_VERSION, loadRules, runEngine } from "./engine";
 import { fixtureLedgerSeed, LedgerService, recordAccInLedger } from "./ledger";
 import { QuestionStore, type StoredQuestion } from "./questions";
@@ -111,6 +112,8 @@ export interface CallerContext {
 }
 
 export const AGENT_ACTOR: Actor = { type: "agent", id: "claude-code", name: "Agente (Claude Code)" };
+/** The chat panel's agent (MCP server started with COORD_CHAT=1): proposals are tagged createdBy agent-chat. */
+export const CHAT_AGENT_ACTOR: Actor = { type: "agent", id: "agent-chat", name: "Agente chat (Claude Code)" };
 export const ENGINE_ACTOR: Actor = { type: "engine", id: "engine", name: "Motor determinístico" };
 
 export interface Table {
@@ -159,6 +162,8 @@ function penBucket(mm: number): string {
 
 export class Coordinator {
   readonly root: string;
+  /** COORDINATOR_HOME / opts.home when given (child processes such as the chat agent get the same). */
+  readonly homeOverride?: string;
   readonly store: Store;
   readonly cache: ClashCache;
   readonly source: DataSource;
@@ -170,6 +175,7 @@ export class Coordinator {
     this.root = opts.root ?? process.cwd();
     this.now = opts.now ?? Date.now;
     const homeOverride = opts.home ?? process.env.COORDINATOR_HOME;
+    this.homeOverride = homeOverride;
     // Secrets (approval key, audit key, passkeys, APS token) live OUTSIDE the repo.
     this.secureDir = secureDir({ homeOverride });
     const sd = this.secureDir;
@@ -2302,7 +2308,12 @@ export class Coordinator {
     this.checkTexts({ rationale: input.rationale, companyRole: input.action.companyRole as string | undefined });
     await this.checkReferencedIds([input.rationale], cls);
     const a = input.action;
-    const groupIds = [a.groupId as string | undefined, a.toGroupId as string | undefined, ...((a.groupIds as string[] | undefined) ?? [])].filter((x): x is string => !!x);
+    if (isRegroup(a)) {
+      this.checkTexts({ newFamilyLabel: (a as { newFamilyLabel?: string }).newFamilyLabel, newGroupLabel: (a as { newGroupLabel?: string }).newGroupLabel });
+      const { views } = await this.familyViewsFor(input.testKey);
+      planRegroup(a as unknown as RegroupAction, cls, views, "validate");
+    }
+    const groupIds = [a.groupId as string | undefined, a.toGroupId as string | undefined, ...((a.groupIds as string[] | undefined) ?? []), ...(((a.groupPartitions as string[][] | undefined) ?? []).flat())].filter((x): x is string => !!x);
     const clashIds = [...((a.clashIds as string[] | undefined) ?? []), ...(((a.partitions as string[][] | undefined) ?? []).flat())];
     const knownG = new Set(cls.groups.map((g) => g.id));
     const missingG = groupIds.filter((g) => !knownG.has(g));
@@ -2966,7 +2977,7 @@ export function proposalSummary(p: ProposalRecord): string {
     case "classification": return `validez ${pl.validity}${pl.severity ? `, ${pl.severity}` : ""}${pl.disagreesWithEngine ? " (discrepa)" : ""}`;
     case "status_change": return `${pl.action}${pl.accReason ? ` (${pl.accReason})` : ""}`;
     case "issue_draft": return pl.issue.title;
-    case "group_action": return `acción ${pl.action.type}`;
+    case "group_action": return isRegroup(pl.action) ? regroupSummary(pl.action as unknown as RegroupAction) : `acción ${pl.action.type}`;
     case "rule_change": return pl.title;
     case "family_decision": return `familia ${pl.familyId}: ${pl.validity} / ${pl.action}${pl.responsibleDiscipline ? ` → ${pl.responsibleDiscipline}` : ""}`;
     case "discipline_mapping": return `disciplina ${pl.discipline} → ${pl.fileName ?? pl.rule?.value ?? pl.lineageUrn ?? "?"}${pl.rule ? ` (regla ${pl.rule.match} "${pl.rule.value}")` : ""}`;

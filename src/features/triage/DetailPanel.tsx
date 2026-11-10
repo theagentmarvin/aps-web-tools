@@ -446,6 +446,19 @@ function InheritedCallout({ targetKey, inherited }: { targetKey: string; inherit
   );
 }
 
+/** Switches to the Agente tab with this row as the focus chip. */
+export function AskAgentLink() {
+  const t = useT();
+  const { store } = useTriageContext();
+  return (
+    <p className="mt-2 text-right">
+      <button type="button" onClick={() => store.askAgent()} className="text-[11px] text-violet-800 hover:underline">
+        {t("chat.askAbout")}
+      </button>
+    </p>
+  );
+}
+
 /** One line under the header when the item changed: "Antes (v10): … → ahora: …", or "Nueva" / "Reapareció". */
 function ChangeLine({ e, members }: { e: Evaluated; members: Clash[] }) {
   const t = useT();
@@ -610,6 +623,7 @@ function ProposalBlock({
         </>
       )}
       <DecisionActions e={e} />
+      <AskAgentLink />
     </section>
   );
 }

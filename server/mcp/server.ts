@@ -8,7 +8,9 @@
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { applyApproved, type ApplyResult } from "../approval";
-import { AGENT_ACTOR, SERVER_VERSION, type Coordinator } from "../coordinator";
+import { AGENT_ACTOR, CHAT_AGENT_ACTOR, SERVER_VERSION, type Coordinator } from "../coordinator";
+import { selectionContext } from "../chat/context";
+import type { Actor } from "../store/types";
 import { hashOf, CoordError } from "../util";
 import { TOOLS, type ToolSpec } from "./contracts";
 import { capResponse, errorEnvelope, okEnvelope } from "./format";
@@ -16,10 +18,13 @@ import { capResponse, errorEnvelope, okEnvelope } from "./format";
 type Args = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 type Extra = { _meta?: { progressToken?: string | number }; sendNotification?: (n: { method: "notifications/progress"; params: { progressToken: string | number; progress: number; total?: number; message?: string } }) => Promise<void> };
 
-const ctx = { actor: AGENT_ACTOR };
+/** Chat panel mode (COORD_CHAT=1): no apply tool, proposals tagged createdBy agent-chat. */
+export const isChatMode = (env: NodeJS.ProcessEnv = process.env) => env.COORD_CHAT === "1";
 
-export function toolHandlers(coord: Coordinator): Record<string, (a: Args, extra: Extra) => Promise<unknown>> {
+export function toolHandlers(coord: Coordinator, actor: Actor = AGENT_ACTOR): Record<string, (a: Args, extra: Extra) => Promise<unknown>> {
+  const ctx = { actor };
   return {
+    get_selection_context: async (a) => selectionContext(coord, a as never),
     get_session_status: async () => coord.sessionStatus(),
     set_active_context: async (a) => coord.setActiveContext(a as { projectId: string; modelSetId?: string; testKey?: string }),
     list_projects: async (a) => coord.listProjects(a as never),
@@ -106,16 +111,23 @@ async function applyTool(coord: Coordinator, a: { batchId: string; dryRun?: bool
 export interface CreateServerOptions {
   /** Audit every tool call (default true). */
   audit?: boolean;
+  /** Chat panel mode (default: COORD_CHAT=1). */
+  chat?: boolean;
 }
 
 export function createCoordServer(coord: Coordinator, opts: CreateServerOptions = {}): McpServer {
   const server = new McpServer({ name: "coord", version: SERVER_VERSION }, { capabilities: { logging: {} } });
-  const handlers = toolHandlers(coord);
-  for (const spec of TOOLS) registerOne(server, coord, spec, handlers[spec.name]!, opts.audit !== false);
+  const chat = opts.chat ?? isChatMode();
+  const actor = chat ? CHAT_AGENT_ACTOR : AGENT_ACTOR;
+  const handlers = toolHandlers(coord, actor);
+  for (const spec of TOOLS) {
+    if (chat && spec.family === "apply") continue;
+    registerOne(server, coord, spec, handlers[spec.name]!, opts.audit !== false, actor);
+  }
   return server;
 }
 
-function registerOne(server: McpServer, coord: Coordinator, spec: ToolSpec, handler: (a: Args, extra: Extra) => Promise<unknown>, audit: boolean): void {
+function registerOne(server: McpServer, coord: Coordinator, spec: ToolSpec, handler: (a: Args, extra: Extra) => Promise<unknown>, audit: boolean, actor: Actor): void {
   server.registerTool(
     spec.name,
     { title: spec.title, description: spec.description, inputSchema: spec.input, annotations: spec.annotations },
@@ -135,7 +147,7 @@ function registerOne(server: McpServer, coord: Coordinator, spec: ToolSpec, hand
       if (audit) {
         await coord.store
           .audit({
-            actor: AGENT_ACTOR,
+            actor,
             action: "tool.call",
             details: { tool: spec.name, inputHash: hashOf(args ?? {}).slice(0, 16), ok: env.ok, error: env.ok ? null : env.error?.code ?? null, bytes: text.length, truncated: text.includes("\"truncated\":true") },
           })
