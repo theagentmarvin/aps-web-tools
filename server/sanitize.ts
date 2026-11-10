@@ -32,6 +32,22 @@ export function cleanText(s: string): string {
   return s.replace(CONTROL, "").replace(/\s+/g, " ").trim();
 }
 
+/**
+ * Multi-line variant for chat messages: same control-character stripping, but keeps line
+ * breaks (lists and paragraphs), collapses runs of spaces/tabs and of 3+ blank lines.
+ */
+export function sanitizeMultilineText(v: unknown, max = UNTRUSTED_MAX): string {
+  if (v === null || v === undefined) return "";
+  const s = String(v)
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.replace(CONTROL, "").replace(/[^\S\n]+/g, " ").trimEnd())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return s.length > max ? s.slice(0, max - 1) + "…" : s;
+}
+
 /** Sanitise model text to a plain string (truncated). */
 export function sanitizeModelText(v: unknown, max = UNTRUSTED_MAX): string {
   if (v === null || v === undefined) return "";

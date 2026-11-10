@@ -7,7 +7,7 @@
 import { randomUUID } from "node:crypto";
 import type * as C from "../api/contract";
 import { proposalSummary, type Coordinator } from "../coordinator";
-import { sanitizeModelText } from "../sanitize";
+import { sanitizeModelText, sanitizeMultilineText } from "../sanitize";
 import { bareProjectId, CoordError, log, nowIso } from "../util";
 import { loadChatAgent, type ChatAgentDef } from "./agent";
 import { authStatus, ChatRunError, childEnv, claudeArgs, mcpConfigJson, resolveClaudeBin, runClaude, type AuthStatus, type ResolvedBin } from "./bridge";
@@ -135,7 +135,7 @@ export class ChatService {
     const run: MessageRun = { messageId, sessionKey: key, userId: user.id, events: [], listeners: new Set(), finished: false };
     this.messages.set(messageId, run);
     this.running.set(key, messageId);
-    session.messages.push({ messageId, role: "user", text: sanitizeModelText(message, CHAT_MESSAGE_MAX), at: now, ...(req.context ? { context: req.context } : {}) });
+    session.messages.push({ messageId, role: "user", text: sanitizeMultilineText(message, CHAT_MESSAGE_MAX), at: now, ...(req.context ? { context: req.context } : {}) });
     session.updatedAt = now;
     await this.chats.put(session);
     void this.execute(run, session, message, req.context ?? {}, user).catch((err) => log.warn("chat.unhandled", { message: (err as Error).message }));
@@ -247,7 +247,7 @@ export class ChatService {
       session.messages.push({
         messageId: run.messageId,
         role: "assistant",
-        text: sanitizeModelText(text, 20_000),
+        text: sanitizeMultilineText(text, 20_000),
         at: nowIso(this.coord.now()),
         ...(proposalIds.length ? { proposalIds } : {}),
         ...(questionIds.length ? { questionIds } : {}),

@@ -434,3 +434,13 @@ describe("HTTP /api/coord/chat (two-step)", () => {
     expect(await cancel.json()).toEqual({ cancelled: false });
   }, 60_000);
 });
+
+describe("chat text keeps its line breaks (lists render after a reload)", () => {
+  it("sanitizeMultilineText keeps newlines, strips control chars, collapses blank runs", async () => {
+    const { sanitizeMultilineText } = await import("../../server/sanitize");
+    const raw = "**Por qué**\r\n- uno\u0007\n- dos   con  espacios\n\n\n\nFin​";
+    const out = sanitizeMultilineText(raw);
+    expect(out).toBe("**Por qué**\n- uno\n- dos con espacios\n\nFin");
+    expect(out.split("\n").filter((l) => l.startsWith("- "))).toHaveLength(2);
+  });
+});
