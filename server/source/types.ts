@@ -130,5 +130,7 @@ export interface DataSource {
   /** Clash ids currently in assigned / closed groups for a test (preflight). */
   triageState(projectId: string, testId: string): Promise<{ assigned: Set<string>; closed: Set<string> }>;
   listAssignees(projectId: string): Promise<Array<{ id: string; name: string; kind: "user" | "role" | "company" }>>;
+  /** G4: ACC issue types with subtypes (Issues v1, GET only). Optional for test doubles. */
+  listIssueTypes?(projectId: string): Promise<Array<{ id: string; title: string; subtypes: Array<{ id: string; title: string }> }>>;
   readonly writer: ClashWriter;
 }

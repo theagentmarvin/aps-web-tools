@@ -25,6 +25,7 @@ import { pathSegment } from "./store";
 import { readJsonFile, writeJsonAtomic } from "./store/fs";
 import type { ClashRecord, ClassificationRecord, GroupRecord, TestRecord } from "./store/types";
 import { bareProjectId } from "./util";
+import { accIssueUrl } from "../core/issues/acc-links";
 
 /** ACC issue status in Spanish for server text (raw value when unknown). */
 export function accStatusEs(status: string): string {
@@ -208,6 +209,7 @@ export function computeIssueChecks(input: IssueCheckInput, history: Record<strin
       stuckCycles,
       stuck: band === 1 && stuckCycles >= 2,
       ...(band ? { priority: band } : {}),
+      ...(accIssueUrl(test.projectId, agg.issueId) ? { accUrl: accIssueUrl(test.projectId, agg.issueId)! } : {}),
     });
   }
   const order: Record<C.IssueVerdict, number> = { dice_resuelta: 0, sigue_abierta: 1, avance: 2, no_verificable: 3, resuelta: 4 };

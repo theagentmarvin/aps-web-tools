@@ -10,7 +10,7 @@ import { applyApproved, approvalOptions, approveBatch, verifyBatchApproval, with
 import type { AssignedGroupCreate, CloseReason, ClosedGroupCreate } from "./aps/types";
 import { AGENT_ACTOR, type Coordinator, proposalSummary, type ReviewState } from "./coordinator";
 import { CLOSABLE, loadRules } from "./engine";
-import { assertCode, modelLevelDiscipline, outCode, ruleMatches, SIN, suggestedToken, validCodes, type DisciplineRule } from "./disciplines";
+import { assertCode, inCode, modelLevelDiscipline, outCode, ruleMatches, SIN, suggestedToken, validCodes, type DisciplineRule } from "./disciplines";
 import { sanitizeModelText } from "./sanitize";
 import { PROBLEM_TYPES } from "../core/families";
 import { aggregateAcc, emptyCounts, itemChange, mergeAcc, type AccIndex } from "./cycle";
@@ -30,7 +30,8 @@ interface CycleCtx {
   diff?: ClashDiff;
   previous?: TestRecord;
 }
-import { assertFamilyInTest, familyIssueDescription, type FamilyDecisionFields, type FamilyView } from "./families";
+import { assertFamilyInTest, familyIssueContent, type FamilyDecisionFields, type FamilyView } from "./families";
+import { accAssigneeType, UUID_RE, type AccIssueTypeInfo, type MappedAssignee } from "./issue-settings";
 import type {
   Actor,
   BatchItemRecord,
@@ -68,6 +69,12 @@ function initials(name: string): string {
 function withB(p: string): string {
   return p.startsWith("b.") ? p : `b.${p}`;
 }
+
+/** Issue type + discipline → ACC assignee a new batch uses (Coordinator.resolveIssueDefaults). */
+type IssueDefaults = { issueType?: { typeId: string; subtypeId: string; label?: string }; assignees: Readonly<Record<string, MappedAssignee>> };
+
+/** Conflict reason when no ACC issue type is known; updateIssue clears it ("Falta el tipo…" prefix). */
+const MISSING_ISSUE_TYPE = "Falta el tipo/subtipo de incidencia ACC: elígelo en la incidencia o define el predeterminado del proyecto (Disciplinas › Incidencias ACC)";
 
 function confBand(conf: number, t: { high: number; medium: number }): C.ConfidenceBandName {
   return conf >= t.high ? "alta" : conf >= t.medium ? "media" : "baja";
@@ -275,7 +282,77 @@ export class CoordinatorUi {
   }
 
   async assignees(projectId: string): Promise<C.Assignee[]> {
-    return this.core.source.listAssignees(withB(projectId));
+    return this.ttl(`assignees:${bareProjectId(projectId)}`, 300_000, () => this.core.source.listAssignees(withB(projectId)));
+  }
+
+  // ── G4/G5: project ACC issue settings (type default + discipline → assignee) ──
+
+  async issueTypes(projectId: string): Promise<C.AccIssueType[]> {
+    return (await this.core.accIssueTypes(withB(projectId))) as AccIssueTypeInfo[];
+  }
+
+  async issueSettings(projectId: string): Promise<C.IssueSettings> {
+    const { issueType, settings } = await this.core.resolveIssueDefaults(withB(projectId));
+    const pending = await this.store.listProposals((p) => p.payload.kind === "issue_settings" && p.projectId !== undefined && bareProjectId(p.projectId) === bareProjectId(projectId) && (p.state === "pending_review" || p.state === "draft"));
+    return {
+      projectId: bareProjectId(projectId),
+      version: settings.version,
+      issueType: settings.issueType ?? null,
+      effectiveIssueType: issueType ?? null,
+      assignees: Object.entries(settings.assignees).map(([discipline, a]) => ({ discipline, ...a })).sort((a, b) => (a.discipline < b.discipline ? -1 : 1)),
+      codes: validCodes(loadRules()),
+      ...(settings.updatedAt ? { updatedAt: settings.updatedAt } : {}),
+      ...(settings.updatedBy ? { updatedBy: settings.updatedBy } : {}),
+      pendingProposals: pending.map((p) => ({ id: p.id, summary: proposalSummary(p), rationale: p.rationale, createdAt: p.createdAt, payload: p.payload as unknown as Record<string, unknown> })),
+    };
+  }
+
+  /** Human-only: project default issue type (ids must exist in the project's ACC list when it can be read). */
+  async setIssueType(projectId: string, input: { typeId: string; subtypeId: string; label: string } | { clear: true }, user: HumanUser): Promise<C.IssueSettings> {
+    if ("clear" in input) {
+      await this.core.issueSettings.update(withB(projectId), user, (s) => void delete s.issueType, "issue_settings.type_cleared");
+      return this.issueSettings(projectId);
+    }
+    if (!UUID_RE.test(input.typeId) || !UUID_RE.test(input.subtypeId)) throw new CoordError("validation_error", "typeId y subtypeId deben ser ids de ACC.");
+    const types = await this.core.accIssueTypes(withB(projectId));
+    const t = types.find((x) => x.id === input.typeId);
+    if (types.length && !t?.subtypes.some((s) => s.id === input.subtypeId)) throw new CoordError("validation_error", "El tipo/subtipo no existe en el proyecto ACC.");
+    const s = t?.subtypes.find((x) => x.id === input.subtypeId);
+    const label = t && s ? `${t.title} / ${s.title}` : sanitizeModelText(input.label, 120);
+    await this.core.issueSettings.update(withB(projectId), user, (cfg) => void (cfg.issueType = { typeId: input.typeId, subtypeId: input.subtypeId, label }), "issue_settings.type_set");
+    return this.issueSettings(projectId);
+  }
+
+  /** Human-only: discipline → ACC assignee (null removes it). The label is UI metadata, never issue text. */
+  async setIssueAssignee(projectId: string, discipline: string, assignee: { id: string; type: "user" | "role" | "company"; label: string } | null, user: HumanUser): Promise<C.IssueSettings> {
+    const code = assertCode(loadRules(), inCode(discipline));
+    await this.core.issueSettings.update(
+      withB(projectId),
+      user,
+      (cfg) => {
+        if (assignee) cfg.assignees[code] = { id: assignee.id.trim(), type: assignee.type, label: sanitizeModelText(assignee.label || assignee.id, 120) };
+        else delete cfg.assignees[code];
+      },
+      assignee ? "issue_settings.assignee_set" : "issue_settings.assignee_removed",
+      { discipline: code, type: assignee?.type ?? null },
+    );
+    return this.issueSettings(projectId);
+  }
+
+  /** Human decision on an agent's propose_issue_assignee proposal. */
+  async decideIssueSettingsProposal(projectId: string, proposalId: string, decision: "accept" | "reject", user: HumanUser): Promise<C.IssueSettings> {
+    const p = await this.store.getProposal(proposalId);
+    if (!p || p.payload.kind !== "issue_settings" || !p.projectId || bareProjectId(p.projectId) !== bareProjectId(projectId)) throw new CoordError("not_found", `Propuesta ${proposalId} no existe`);
+    if (p.state !== "pending_review" && p.state !== "draft") throw new CoordError("invalid_state", `La propuesta ${proposalId} está ${p.state}.`);
+    if (decision === "reject") {
+      await this.store.transitionProposal(p.id, "rejected", user.name);
+      return this.issueSettings(projectId);
+    }
+    const pl = p.payload;
+    await this.setIssueAssignee(projectId, pl.discipline, pl.assignee, user);
+    await this.store.transitionProposal(p.id, "approved", user.name);
+    await this.store.transitionProposal(p.id, "applied", user.name, "responsable ACC aplicado (local)");
+    return this.issueSettings(projectId);
   }
 
   /** Human-started ingest + classification from the UI. */
@@ -826,7 +903,7 @@ export class CoordinatorUi {
     };
   }
 
-  private buildItems(batchId: string, test: TestRecord, cls: ClassificationRecord, g: GroupRecord, view: C.Proposal, d: DecisionRecord, accReason?: string): BatchItemRecord[] {
+  private buildItems(batchId: string, test: TestRecord, cls: ClassificationRecord, g: GroupRecord, view: C.Proposal, d: DecisionRecord, accReason?: string, defaults?: IssueDefaults): BatchItemRecord[] {
     const eff = this.effective(view, d);
     const members = cls.clashes.filter((c) => c.groupId === g.id).filter(this.notInAcc(test.testKey));
     const origin: BatchItemRecord["origin"] = d.kind === "accept" ? "ai_accepted" : "ai_corrected";
@@ -864,13 +941,22 @@ export class CoordinatorUi {
           chunk.find((c) => c.id === g.representativeClashId) ??
           [...chunk].sort((a, b) => b.penetrationMm - a.penetrationMm || (a.id < b.id ? -1 : 1))[0]!;
         const doc = test.documents.find((x) => x.documentId === rep.a.documentId);
-        const typeId = issue.issueType && /^[0-9a-f-]{36}$/i.test(issue.issueType) ? issue.issueType : this.core.config.issues.issueTypeId ?? (this.core.source.kind === "fixtures" ? "00000000-0000-4000-a000-00000000f1a7" : undefined);
-        const subId = issue.issueSubtype && /^[0-9a-f-]{36}$/i.test(issue.issueSubtype) ? issue.issueSubtype : this.core.config.issues.issueSubtypeId ?? (this.core.source.kind === "fixtures" ? "00000000-0000-4000-a000-00000000f1a8" : undefined);
+        const explicitType = !!issue.issueType && UUID_RE.test(issue.issueType) && !!issue.issueSubtype && UUID_RE.test(issue.issueSubtype);
+        const typeId = explicitType ? issue.issueType : defaults?.issueType?.typeId;
+        const subId = explicitType ? issue.issueSubtype : defaults?.issueType?.subtypeId;
+        const typeLabel = explicitType ? issue.issueTypeLabel : defaults?.issueType?.label;
+        // G5: discipline → ACC assignee (project mapping) unless the draft names one. Metadata only.
+        const mapped = !issue.assigneeId ? defaults?.assignees[eff.owner] : undefined;
+        const assignee = issue.assigneeId
+          ? { id: issue.assigneeId, type: issue.assigneeType ?? ("user" as const), label: issue.assigneeLabel ?? issue.assigneeRole }
+          : mapped
+            ? { id: mapped.id, type: mapped.type, label: mapped.label }
+            : undefined;
         const body: AssignedGroupCreate = {
           id: uuidFromHash(sha256(`${batchId}|${g.id}|${ci}|assign`)),
           title: fitTitle(issue.title, suffix, 100),
           description: issue.description.slice(0, 1000),
-          ...(issue.assigneeId ? { assignedTo: issue.assigneeId, assignedToType: (issue.assigneeType === "company" ? "Company" : issue.assigneeType === "role" ? "Role" : "User") as "User" | "Role" | "Company" } : {}),
+          ...(assignee ? { assignedTo: assignee.id, assignedToType: accAssigneeType(assignee.type) } : {}),
           dueDate: issue.dueDate,
           status: "Open",
           pushpin: {
@@ -886,7 +972,7 @@ export class CoordinatorUi {
           ...(doc ? { viewableName: doc.viewableName } : {}),
         };
         const conflict = !typeId || !subId
-          ? { reason: "Falta el tipo/subtipo de incidencia ACC (issues.issueTypeId / issueSubtypeId en coordinator.config.local.json)", accValueNow: null }
+          ? { reason: MISSING_ISSUE_TYPE, accValueNow: null }
           : !doc || doc.urn.length > 80
             ? { reason: "documentVersionUrn ausente o > 80 caracteres", accValueNow: null }
             : undefined;
@@ -906,7 +992,16 @@ export class CoordinatorUi {
           accNew: body,
           excluded: !!conflict,
           ...(conflict ? { conflict } : {}),
-          issue: { ...issue, ownerDiscipline: eff.owner, priorityLabel: `P${eff.priority}` },
+          issue: {
+            ...issue,
+            ownerDiscipline: eff.owner,
+            priorityLabel: `P${eff.priority}`,
+            // G4: the card counts what this item links (its chunk), not the draft's sample.
+            linkClashIds: chunk.map((c) => `C-${c.id}`),
+            ...(typeId && subId ? { issueType: typeId, issueSubtype: subId } : {}),
+            ...(typeLabel ? { issueTypeLabel: typeLabel } : {}),
+            ...(assignee ? { assigneeId: assignee.id, assigneeType: assignee.type, ...(assignee.label ? { assigneeLabel: assignee.label } : {}) } : {}),
+          },
         });
       } else if (eff.action.setStatus === "closed" || eff.action.setStatus === "reviewed") {
         const body: ClosedGroupCreate = {
@@ -959,7 +1054,8 @@ export class CoordinatorUi {
     const items: BatchItemRecord[] = [];
     const usedDecisions: string[] = [];
     // Family decisions first: one assign / one close per family; their instances skip the group flow.
-    const fam = await this.familyBatchItems(batchId, test, cls, user);
+    const defaults = await this.core.resolveIssueDefaults(test.projectId);
+    const fam = await this.familyBatchItems(batchId, test, cls, user, defaults);
     items.push(...fam.items);
     for (const g of cls.groups) {
       if (fam.covered.has(g.id)) continue;
@@ -968,7 +1064,7 @@ export class CoordinatorUi {
       const view = this.proposalView(g, test, cls, byGroup.get(g.id) ?? []);
       const st = (byGroup.get(g.id) ?? []).filter((p) => p.payload.kind === "status_change" && p.state !== "withdrawn" && p.state !== "rejected").pop();
       const accReason = st?.payload.kind === "status_change" ? st.payload.accReason : undefined;
-      const its = this.buildItems(batchId, test, cls, g, view, d, accReason);
+      const its = this.buildItems(batchId, test, cls, g, view, d, accReason, defaults);
       if (its.length) {
         items.push(...its);
         usedDecisions.push(d.id);
@@ -1157,15 +1253,37 @@ export class CoordinatorUi {
       if (patch.title !== undefined) body.title = sanitizeModelText(patch.title, 100);
       if (patch.description !== undefined) body.description = patch.description.replace(/\u0000/g, "").slice(0, 1000);
       if (patch.dueDate !== undefined) body.dueDate = patch.dueDate;
+      const next = { ...patch };
+      // The linked clashes are the item's (body.clashes): never edited from the card.
+      delete next.linkClashIds;
+      if (next.issueTypeLabel !== undefined) next.issueTypeLabel = sanitizeModelText(next.issueTypeLabel, 120);
+      if (next.assigneeLabel !== undefined) next.assigneeLabel = sanitizeModelText(next.assigneeLabel, 120);
       if (patch.assigneeId !== undefined) {
-        body.assignedTo = patch.assigneeId;
-        body.assignedToType = patch.assigneeType === "company" ? "Company" : patch.assigneeType === "role" ? "Role" : "User";
+        // G5: the human confirms or overrides the mapped assignee per issue; "" = no assignee.
+        if (patch.assigneeId) {
+          body.assignedTo = patch.assigneeId;
+          body.assignedToType = accAssigneeType(patch.assigneeType ?? "user");
+        } else {
+          delete body.assignedTo;
+          delete body.assignedToType;
+          delete next.assigneeId;
+          delete next.assigneeType;
+          if (it.issue) {
+            delete it.issue.assigneeId;
+            delete it.issue.assigneeType;
+            delete it.issue.assigneeLabel;
+          }
+        }
       }
-      if (patch.issueType && /^[0-9a-f-]{36}$/i.test(patch.issueType)) body.issueTypeId = patch.issueType;
-      if (patch.issueSubtype && /^[0-9a-f-]{36}$/i.test(patch.issueSubtype)) body.issueSubTypeId = patch.issueSubtype;
-      it.issue = { ...(it.issue ?? {}), ...patch };
+      if (patch.issueType && UUID_RE.test(patch.issueType)) body.issueTypeId = patch.issueType;
+      if (patch.issueSubtype && UUID_RE.test(patch.issueSubtype)) body.issueSubTypeId = patch.issueSubtype;
+      it.issue = { ...(it.issue ?? {}), ...next } as NonNullable<typeof it.issue>;
       it.fields = it.fields.map((f) => (f.field === "issue" ? { ...f, accNew: body.title } : f));
-      if (it.conflict && body.issueTypeId && body.issueSubTypeId && it.conflict.reason.startsWith("Falta el tipo")) delete it.conflict;
+      if (it.conflict && body.issueTypeId && body.issueSubTypeId && it.conflict.reason.startsWith("Falta el tipo")) {
+        delete it.conflict;
+        // The type was the only reason it was left out: choosing it at approval includes the issue again.
+        it.excluded = false;
+      }
       if (it.origin === "ai_accepted") it.origin = "ai_corrected";
       it.reasonCode = "R13";
       await this.store.putBatch(b);
@@ -2137,15 +2255,16 @@ export class CoordinatorUi {
   }
 
   /** Assign body for a set of clashes (shared by family issue items). */
-  private assignBody(seed: string, test: TestRecord, chunk: readonly ClashRecord[], issue: { title: string; description: string; dueDate: string }, preferredRepId?: string): { body: AssignedGroupCreate; conflict?: { reason: string; accValueNow: null } } {
+  private assignBody(seed: string, test: TestRecord, chunk: readonly ClashRecord[], issue: { title: string; description: string; dueDate: string; assignee?: { id: string; type: "user" | "role" | "company" } }, preferredRepId?: string, defaults?: IssueDefaults): { body: AssignedGroupCreate; conflict?: { reason: string; accValueNow: null } } {
     const rep = chunk.find((c) => c.id === preferredRepId) ?? [...chunk].sort((a, b) => b.penetrationMm - a.penetrationMm || (a.id < b.id ? -1 : 1))[0]!;
     const doc = test.documents.find((x) => x.documentId === rep.a.documentId);
-    const typeId = this.core.config.issues.issueTypeId ?? (this.core.source.kind === "fixtures" ? "00000000-0000-4000-a000-00000000f1a7" : undefined);
-    const subId = this.core.config.issues.issueSubtypeId ?? (this.core.source.kind === "fixtures" ? "00000000-0000-4000-a000-00000000f1a8" : undefined);
+    const typeId = defaults?.issueType?.typeId;
+    const subId = defaults?.issueType?.subtypeId;
     const body: AssignedGroupCreate = {
       id: uuidFromHash(sha256(`${seed}|assign`)),
       title: issue.title.slice(0, 100),
       description: issue.description.slice(0, 1000),
+      ...(issue.assignee ? { assignedTo: issue.assignee.id, assignedToType: accAssigneeType(issue.assignee.type) } : {}),
       dueDate: issue.dueDate,
       status: "Open",
       pushpin: { location: rep.a.bboxCenterM ?? { x: 0, y: 0, z: 0 }, objectId: rep.a.dbId, ...(rep.a.externalId ? { externalId: rep.a.externalId } : {}), type: "TwoDVectorPushpin" },
@@ -2156,7 +2275,7 @@ export class CoordinatorUi {
       ...(doc ? { viewableName: doc.viewableName } : {}),
     };
     const conflict = !typeId || !subId
-      ? { reason: "Falta el tipo/subtipo de incidencia ACC (issues.issueTypeId / issueSubtypeId en coordinator.config.local.json)", accValueNow: null }
+      ? { reason: MISSING_ISSUE_TYPE, accValueNow: null }
       : !doc || doc.urn.length > 80
         ? { reason: "documentVersionUrn ausente o > 80 caracteres", accValueNow: null }
         : undefined;
@@ -2168,7 +2287,7 @@ export class CoordinatorUi {
    * per instance (issueMode per_instance), or ONE close per family. Only inherited instances: pending
    * (new since the decision) and exceptions are never included automatically.
    */
-  private async familyBatchItems(batchId: string, test: TestRecord, cls: ClassificationRecord, user: HumanUser): Promise<{ items: BatchItemRecord[]; covered: Set<string> }> {
+  private async familyBatchItems(batchId: string, test: TestRecord, cls: ClassificationRecord, user: HumanUser, defaults?: IssueDefaults): Promise<{ items: BatchItemRecord[]; covered: Set<string> }> {
     const items: BatchItemRecord[] = [];
     const covered = new Set<string>();
     if (!cls.families) return { items, covered };
@@ -2223,9 +2342,25 @@ export class CoordinatorUi {
           const id = `I-${sha256(seed).slice(0, 10)}`;
           const label = sanitizeModelText(`${u.label}${suffix}`, 160);
           if (issue) {
-            const description = familyIssueDescription(v, dec, u.instances.filter((i) => groupIds.includes(i.groupId)));
-            const worst = groupIds.map((g) => gById.get(g)).filter((g): g is GroupRecord => !!g).sort((a, b) => a.band - b.band || b.maxPenetrationMm - a.maxPenetrationMm)[0];
-            const { body, conflict } = this.assignBody(seed, test, chunk, { title: fitTitle(u.label, suffix, 100), description, dueDate: due }, worst?.representativeClashId);
+            const gs = groupIds.map((g) => gById.get(g)).filter((g): g is GroupRecord => !!g);
+            const worst = [...gs].sort((a, b) => a.band - b.band || b.maxPenetrationMm - a.maxPenetrationMm)[0];
+            const ruleCount = new Map<string, number>();
+            for (const g of gs) for (const r of g.ruleIds) ruleCount.set(r, (ruleCount.get(r) ?? 0) + 1);
+            // G4: ACC content from the ubicación template (no internal id in the title, level summary, current wording).
+            const content = familyIssueContent(v, dec, u.instances.filter((i) => groupIds.includes(i.groupId)), {
+              band: worst?.band ?? v.proposed.band,
+              dueDate: due,
+              ruleIds: [...ruleCount.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).map(([r]) => r),
+              ...(worst?.rootCause ? { rootCause: worst.rootCause } : {}),
+              tags: [...new Set(gs.flatMap((g) => g.tags))],
+              modelSetVersion: test.modelSetVersion,
+              followUp: issuedFamilies.has(v.id),
+              ...(u.key !== "family" ? { instanceTitle: u.instances[0]!.title } : {}),
+              clashCount: chunk.length,
+              suffix,
+            });
+            const mapped = defaults?.assignees[dec.responsibleDiscipline];
+            const { body, conflict } = this.assignBody(seed, test, chunk, { title: content.title, description: content.description, dueDate: due, ...(mapped ? { assignee: { id: mapped.id, type: mapped.type } } : {}) }, worst?.representativeClashId, defaults);
             items.push({
               ...common,
               id,
@@ -2239,7 +2374,19 @@ export class CoordinatorUi {
               accNew: body,
               excluded: !!conflict,
               ...(conflict ? { conflict } : {}),
-              issue: { title: body.title, description: body.description, ownerDiscipline: dec.responsibleDiscipline, dueDate: due, includeView: true, linkClashIds: [], priorityLabel: `P${v.proposed.band}` },
+              issue: {
+                title: body.title,
+                description: body.description,
+                ownerDiscipline: dec.responsibleDiscipline,
+                dueDate: due,
+                includeView: true,
+                linkClashIds: chunk.map((c) => `C-${c.id}`),
+                location: content.location,
+                priorityLabel: `P${worst?.band ?? v.proposed.band}`,
+                ...(body.issueTypeId && body.issueSubTypeId ? { issueType: body.issueTypeId, issueSubtype: body.issueSubTypeId } : {}),
+                ...(defaults?.issueType?.label ? { issueTypeLabel: defaults.issueType.label } : {}),
+                ...(mapped ? { assigneeId: mapped.id, assigneeType: mapped.type, assigneeLabel: mapped.label } : {}),
+              },
             });
           } else {
             const body: ClosedGroupCreate = {

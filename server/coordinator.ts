@@ -35,6 +35,7 @@ import type { AgendaPayload, ChangeKind, InheritedDecision, IssueChecksPayload, 
 import { familyViews, FamilyDecisionStore, type FamilyView, type FamilyViewContext, type ModelSetFamilies } from "./families";
 import { PROBLEM_TYPES } from "../core/families";
 import { assertCode, DisciplineStore, inCode, outCode, suggestedToken, validCodes } from "./disciplines";
+import { IssueSettingsStore, pickDefaultIssueType, UUID_RE, type AccIssueTypeInfo, type AssigneeKind, type ProjectIssueSettings } from "./issue-settings";
 import type { ClashDiff } from "../core/types";
 import { checkAgentText, referencedIds, sanitizeModelText, untrusted, type Untrusted } from "./sanitize";
 import { FixtureSource } from "./source/fixtures";
@@ -199,6 +200,11 @@ export class Coordinator {
     return (this.disciplineStore ??= new DisciplineStore(this.store));
   }
   private disciplineStore?: DisciplineStore;
+  /** Per-project ACC issue type + discipline → assignee mapping, see server/issue-settings.ts. */
+  get issueSettings(): IssueSettingsStore {
+    return (this.issueSettingsStore ??= new IssueSettingsStore(this.store));
+  }
+  private issueSettingsStore?: IssueSettingsStore;
 
   /** Re-classify every classified cached test of a model set (or a project) — no re-download. */
   async reclassifyCached(filter: { projectId: string; modelSetId?: string }, caller: CallerContext): Promise<string[]> {
@@ -1985,6 +1991,98 @@ export class Coordinator {
     return { proposalId: p.id, kind: p.kind, status: p.state, risk: p.risk, affectedClashes: p.affectedClashes, conflictsWith: [], reviewUrl: this.reviewUrl(p.id), note: "Pendiente de aprobación humana en la UI (familias)." };
   }
 
+  private issueTypesCache = new Map<string, { at: number; types: AccIssueTypeInfo[] }>();
+
+  /** ACC issue types of a project (GET, cached 5 min). Empty on error or when the source has none. */
+  async accIssueTypes(projectId: string): Promise<AccIssueTypeInfo[]> {
+    const key = bareProjectId(projectId);
+    const hit = this.issueTypesCache.get(key);
+    if (hit && this.now() - hit.at < 300_000) return hit.types;
+    const types = await (this.source.listIssueTypes?.(`b.${key}`) ?? Promise.resolve([])).catch(() => [] as AccIssueTypeInfo[]);
+    this.issueTypesCache.set(key, { at: this.now(), types });
+    return types;
+  }
+
+  /**
+   * Issue type + assignee mapping a new batch uses (G4/G5). Type precedence: project setting →
+   * coordinator.config issues.issueTypeId/issueSubtypeId → unambiguous "Coordinación / Clash" in the
+   * project's ACC list → fixtures ids. Undefined type = the human chooses it at approval.
+   */
+  async resolveIssueDefaults(projectId: string): Promise<{ issueType?: { typeId: string; subtypeId: string; label?: string; source: "project" | "config" | "auto" | "fixtures" }; assignees: ProjectIssueSettings["assignees"]; settings: ProjectIssueSettings }> {
+    const settings = await this.issueSettings.load(projectId);
+    const cfg = this.config.issues;
+    let issueType: { typeId: string; subtypeId: string; label?: string; source: "project" | "config" | "auto" | "fixtures" } | undefined;
+    if (settings.issueType) issueType = { ...settings.issueType, source: "project" };
+    else {
+      const types = await this.accIssueTypes(projectId);
+      const label = (typeId?: string, subId?: string) => {
+        const t = types.find((x) => x.id === typeId);
+        const s = t?.subtypes.find((x) => x.id === subId);
+        return t && s ? `${t.title} / ${s.title}` : undefined;
+      };
+      if (cfg.issueTypeId && cfg.issueSubtypeId) {
+        const l = label(cfg.issueTypeId, cfg.issueSubtypeId);
+        issueType = { typeId: cfg.issueTypeId, subtypeId: cfg.issueSubtypeId, ...(l ? { label: l } : {}), source: "config" };
+      } else {
+        const auto = pickDefaultIssueType(types);
+        if (auto) issueType = { ...auto, source: this.source.kind === "fixtures" ? "fixtures" : "auto" };
+        else if (this.source.kind === "fixtures") issueType = { typeId: "00000000-0000-4000-a000-00000000f1a7", subtypeId: "00000000-0000-4000-a000-00000000f1a8", label: "Coordinación / Clash", source: "fixtures" };
+      }
+    }
+    return { ...(issueType ? { issueType } : {}), assignees: settings.assignees, settings };
+  }
+
+  /** Read-only (MCP get_issue_settings). User labels are masked (invariant 7); ACC names are untrusted. */
+  async getIssueSettings(input: { projectId?: string }) {
+    const projectId = await this.ctxProject(input.projectId);
+    const { issueType, settings } = await this.resolveIssueDefaults(projectId);
+    const candidates = await this.source.listAssignees(projectId).catch(() => []);
+    const show = (type: AssigneeKind, label: string) => (type === "user" ? "usuario ACC" : untrusted(label));
+    const codes = validCodes(loadRules());
+    return {
+      projectId,
+      version: settings.version,
+      issueType: issueType ? { typeId: issueType.typeId, subtypeId: issueType.subtypeId, label: issueType.label ? untrusted(issueType.label) : null, source: issueType.source } : null,
+      assignees: Object.entries(settings.assignees).map(([discipline, a]) => ({ discipline, id: a.id, type: a.type, label: show(a.type, a.label) })),
+      unmappedDisciplines: codes.map((c) => c.code).filter((c) => !settings.assignees[c]),
+      candidates: candidates.slice(0, 200).map((c) => ({ id: c.id, type: c.kind, label: show(c.kind, c.name) })),
+      note: "Solo lectura. Para cambiar un responsable usa propose_issue_assignee; un humano lo acepta en la UI. Nunca escribas nombres en el texto de incidencias.",
+    };
+  }
+
+  /** PROPOSAL only (G5 parity): the agent never changes the mapping; a human accepts it in the UI. */
+  async proposeIssueAssignee(
+    input: { projectId?: string; discipline: string; assignee: { id: string; type: AssigneeKind } | null; rationale: string },
+    caller: CallerContext = { actor: AGENT_ACTOR },
+  ) {
+    this.requireLevel(1, "propose_issue_assignee");
+    this.checkTexts({ rationale: input.rationale });
+    const projectId = await this.ctxProject(input.projectId);
+    const discipline = assertCode(loadRules(), inCode(input.discipline));
+    let assignee: { id: string; type: AssigneeKind; label: string } | null = null;
+    if (input.assignee) {
+      const cand = (await this.source.listAssignees(projectId).catch(() => [])).find((c) => c.id === input.assignee!.id && c.kind === input.assignee!.type);
+      if (!cand && !UUID_RE.test(input.assignee.id) && !/^\d{3,20}$/.test(input.assignee.id) && !/^[A-Z0-9]{8,20}$/.test(input.assignee.id)) {
+        throw new CoordError("validation_error", `El id ${input.assignee.id} no es un responsable ACC conocido del proyecto.`, "Usa un id de get_issue_settings.candidates.");
+      }
+      assignee = { id: input.assignee.id, type: input.assignee.type, label: cand?.name ?? input.assignee.id };
+    }
+    const p = await this.store.createProposal({
+      kind: "issue_settings",
+      projectId,
+      createdBy: caller.actor,
+      target: { groupIds: [], clashIds: [] },
+      payload: { kind: "issue_settings", discipline, assignee },
+      rationale: input.rationale,
+      evidence: [],
+      confidence: "media",
+      risk: "low",
+      affectedClashes: 0,
+    });
+    await this.store.audit({ actor: caller.actor, action: "issue_settings.suggested", projectId, targetIds: [p.id], details: { discipline, type: assignee?.type ?? null } });
+    return { proposalId: p.id, kind: p.kind, status: p.state, risk: p.risk, affectedClashes: 0, conflictsWith: [], reviewUrl: this.reviewUrl(p.id), note: "Pendiente de confirmación humana en la UI (Disciplinas › Responsables ACC)." };
+  }
+
   /** Read-only: the project's discipline mappings and how each document of a cached test resolved. */
   async listDisciplines(input: { testKey?: string }) {
     const ctx = await this.store.getContext();
@@ -2981,6 +3079,7 @@ export function proposalSummary(p: ProposalRecord): string {
     case "rule_change": return pl.title;
     case "family_decision": return `familia ${pl.familyId}: ${pl.validity} / ${pl.action}${pl.responsibleDiscipline ? ` → ${pl.responsibleDiscipline}` : ""}`;
     case "discipline_mapping": return `disciplina ${pl.discipline} → ${pl.fileName ?? pl.rule?.value ?? pl.lineageUrn ?? "?"}${pl.rule ? ` (regla ${pl.rule.match} "${pl.rule.value}")` : ""}`;
+    case "issue_settings": return pl.assignee ? `responsable ACC de ${pl.discipline} → ${pl.assignee.type === "user" ? "usuario ACC" : pl.assignee.label} (${pl.assignee.type})` : `quitar responsable ACC de ${pl.discipline}`;
     case "engine_batch": return `motor: ${pl.groups.length} grupos ${pl.op === "status_change" ? "cerrables" : "reales"}`;
   }
 }

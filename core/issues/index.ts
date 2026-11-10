@@ -23,6 +23,7 @@ import {
 
 export * from "./calendar";
 export { RULE_TEXT_ES, ROOT_CAUSE_TEXT_ES } from "./actions";
+export { accIssueUrl, ACC_HOST } from "./acc-links";
 
 export interface Assignee {
   type: "company" | "role" | "user";
@@ -85,14 +86,15 @@ function bandFor(g: ClashGroup): Exclude<BandName, "NONE"> {
   return g.strategy === "hygiene" ? "P3" : "P4";
 }
 
-function levelText(levels: readonly string[]): string {
+/** "Pisos 2-9" / "Nivel 201 a Nivel 401" for a list of level names. */
+export function levelText(levels: readonly string[]): string {
   if (levels.length === 0) return "";
   if (levels.length === 1) return levels[0]!;
   const m = levels.map((l) => /^(piso|nivel|level)\s+(-?\d+)$/i.exec(l.trim()));
   if (m.every((x) => x !== null)) {
     const ns = m.map((x) => Number(x![2])).sort((a, b) => a - b);
     const word = m[0]![1]!.toLowerCase() === "piso" ? "Pisos" : "Niveles";
-    return `${word} ${ns[0]}-${ns[ns.length - 1]}`;
+    return ns[0]! < 0 ? `${word} ${ns[0]} a ${ns[ns.length - 1]}` : `${word} ${ns[0]}-${ns[ns.length - 1]}`;
   }
   return `${levels[0]} a ${levels[levels.length - 1]}`;
 }
