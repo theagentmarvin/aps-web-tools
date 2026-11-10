@@ -1420,4 +1420,60 @@ export class MockCoordinatorApi implements CoordinatorApi {
     };
   }
 
+  // ── G4/G5: project ACC issue settings (mock, in memory) ──
+  private issueSettingsByProject = new Map<string, T.IssueSettings>();
+
+  private mockIssueSettings(projectId: string): T.IssueSettings {
+    let s = this.issueSettingsByProject.get(projectId);
+    if (!s) {
+      s = {
+        projectId,
+        version: 0,
+        issueType: null,
+        effectiveIssueType: { typeId: "00000000-0000-4000-a000-00000000f1a7", subtypeId: "00000000-0000-4000-a000-00000000f1a8", label: "Coordinación / Clash", source: "fixtures" },
+        assignees: [],
+        codes: DISCIPLINES.map((d) => ({ code: d.code, label: d.code })),
+        pendingProposals: [],
+      };
+      this.issueSettingsByProject.set(projectId, s);
+    }
+    return s;
+  }
+
+  async listIssueTypes(): Promise<T.AccIssueType[]> {
+    await delay(60);
+    return [
+      { id: "00000000-0000-4000-a000-00000000f1a7", title: "Coordinación", subtypes: [{ id: "00000000-0000-4000-a000-00000000f1a8", title: "Clash" }, { id: "00000000-0000-4000-a000-00000000f1a9", title: "Diseño" }] },
+      { id: "00000000-0000-4000-a000-00000000f1b0", title: "Calidad", subtypes: [{ id: "00000000-0000-4000-a000-00000000f1b1", title: "Observación" }] },
+    ];
+  }
+
+  async getIssueSettings(projectId: string): Promise<T.IssueSettings> {
+    await delay(60);
+    return clone(this.mockIssueSettings(projectId));
+  }
+
+  async setIssueType(projectId: string, req: { typeId: string; subtypeId: string; label: string } | { clear: true }): Promise<T.IssueSettings> {
+    const s = this.mockIssueSettings(projectId);
+    s.issueType = "clear" in req ? null : { typeId: req.typeId, subtypeId: req.subtypeId, label: req.label };
+    if (s.issueType) s.effectiveIssueType = { ...s.issueType, source: "project" };
+    s.version++;
+    return clone(s);
+  }
+
+  async setIssueAssignee(projectId: string, discipline: string, assignee: { id: string; type: "user" | "role" | "company"; label: string } | null): Promise<T.IssueSettings> {
+    const s = this.mockIssueSettings(projectId);
+    s.assignees = s.assignees.filter((a) => a.discipline !== discipline);
+    if (assignee) s.assignees.push({ discipline, ...assignee });
+    s.assignees.sort((a, b) => a.discipline.localeCompare(b.discipline));
+    s.version++;
+    return clone(s);
+  }
+
+  async decideIssueSettingsSuggestion(projectId: string, proposalId: string): Promise<T.IssueSettings> {
+    const s = this.mockIssueSettings(projectId);
+    s.pendingProposals = s.pendingProposals.filter((p) => p.id !== proposalId);
+    return clone(s);
+  }
+
 }

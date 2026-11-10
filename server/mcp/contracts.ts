@@ -485,13 +485,13 @@ export interface ProposalCreatedOutput {
   batchId?: string;                    // open draft batch (lote) the proposal was added to
   reviewUrl: string;                   // web UI deep link, e.g. http://localhost:5173/aprobaciones/L-2026-11-05-01
 }
-export type ProposalKind = "classification" | "group_action" | "issue_draft" | "status_change" | "rule_change" | "discipline_mapping" | "family_decision" | "family_exception";
+export type ProposalKind = "classification" | "group_action" | "issue_draft" | "status_change" | "rule_change" | "discipline_mapping" | "family_decision" | "family_exception" | "issue_settings";
 export type ProposalStatus = "draft" | "pending_review" | "approved" | "rejected" | "withdrawn" | "applied" | "failed";
 
 export const ListProposalsInput = z.object({
   testKey: TestKey.optional(),
   status: z.array(z.enum(["draft", "pending_review", "pending", "approved", "rejected", "withdrawn", "superseded", "applying", "applied", "failed"])).optional(),
-  kind: z.array(z.enum(["classification", "group_action", "issue_draft", "issue", "status_change", "rule_change", "discipline_mapping", "family_decision", "family_exception"])).optional(),
+  kind: z.array(z.enum(["classification", "group_action", "issue_draft", "issue", "status_change", "rule_change", "discipline_mapping", "family_decision", "family_exception", "issue_settings"])).optional(),
   ids: z.array(ProposalId).max(50).optional(),
   createdBy: z.enum(["agent", "coordinator", "any"]).default("any"),
   limit: Limit(25, 50),
@@ -683,6 +683,22 @@ export const ProposeDisciplineMappingInput = z.object({
     .object({ match: z.enum(["contains", "startsWith", "regex"]), value: z.string().min(1).max(200), field: z.enum(["fileName", "folder", "viewName"]) })
     .optional()
     .describe("Optional naming rule for future documents (case/accent-insensitive)"),
+  rationale: z.string().max(1500),
+});
+
+/** Read-only (G5 parity): project ACC issue type default + discipline → ACC assignee mapping. */
+export const GetIssueSettingsInput = z.object({ projectId: z.string().max(80).optional().describe("Default: active context project") });
+/** PROPOSAL only (G5 parity): a human accepts it in the UI (Disciplinas › Responsables ACC). */
+export const ProposeIssueResponsibleInput = z.object({
+  projectId: z.string().max(80).optional().describe("Default: active context project"),
+  discipline: z.string().min(2).max(6).describe("Discipline code (CLI, EST, ARQ…)"),
+  assignee: z
+    .object({
+      id: z.string().min(1).max(80).describe("ACC id from get_issue_settings.candidates (company / role / user)"),
+      type: z.enum(["company", "role", "user"]),
+    })
+    .nullable()
+    .describe("null = remove the mapping"),
   rationale: z.string().max(1500),
 });
 
@@ -893,6 +909,10 @@ export const TOOLS: ToolSpec[] = [
     description: "Per-discipline issue reminders (server template and counts) as in the UI; lines include ACC titles (untrusted). Read-only: the agent never sends them." },
   { family: "proposal", name: "propose_family_exception", title: "Propose family exception", minLevel: 1, annotations: LOCAL_WRITE, input: ProposeFamilyExceptionInput,
     description: "Suggest that ONE instance (group) of a family keeps different fields than the family decision, with a reason. Proposal only: a human accepts it in the family panel. Refused for closing a group that is real/needs_info." },
+  { family: "learning", name: "get_issue_settings", title: "Get ACC issue settings", minLevel: 0, annotations: RO_LOCAL, input: GetIssueSettingsInput,
+    description: "Project ACC issue settings: default issue type/subtype and the discipline → ACC assignee mapping (company/role; user names masked), plus candidate assignees read from ACC. Read-only." },
+  { family: "learning", name: "propose_issue_responsible", title: "Propose ACC assignee mapping", minLevel: 1, annotations: LOCAL_WRITE, input: ProposeIssueResponsibleInput,
+    description: "Suggest discipline → ACC assignee (company / role / user id) as a proposal. Never changes the mapping: a human accepts it in the web UI. The assignee is ACC metadata only; never write names in issue text." },
 ];
 
 /** Tools subagents must never get (also enforced by hooks). */

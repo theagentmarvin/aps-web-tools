@@ -294,6 +294,14 @@ export class FixtureSource implements DataSource {
     ];
   }
 
+  async listIssueTypes() {
+    // Same ids as the fixtures fallback in coordinator-ui (assign bodies stay byte-identical).
+    return [
+      { id: "00000000-0000-4000-a000-00000000f1a7", title: "Coordinación", subtypes: [{ id: "00000000-0000-4000-a000-00000000f1a8", title: "Clash" }, { id: "00000000-0000-4000-a000-00000000f1a9", title: "Diseño" }] },
+      { id: "00000000-0000-4000-a000-00000000f1b0", title: "Calidad", subtypes: [{ id: "00000000-0000-4000-a000-00000000f1b1", title: "Observación" }] },
+    ];
+  }
+
   private makeWriter(): ClashWriter {
     const record = async (
       operation: "clash.assign" | "clash.close",

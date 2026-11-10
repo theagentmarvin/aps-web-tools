@@ -120,7 +120,7 @@ Estados posibles: **parity** · **agent-missing** · **human-missing** · **inte
 | 49 | Asignar la disciplina de un documento (y regla opcional) | `PUT …/documents/:lineageKey/discipline` · `DisciplineDialog` | `propose_discipline_mapping` · CC (bloqueado en Chat) | parity |
 | 50 | Editar, reordenar o borrar reglas de nombre, y previsualizarlas | `PUT /projects/:id/disciplines/rules`, `POST …/preview` | Solo propone una regla nueva; no puede proponer reordenar ni borrar | **agent-missing** (bajo) |
 | 51 | Decidir una sugerencia de disciplina | `POST …/disciplines/proposals/:id/decision` | No tiene | intentional: el humano confirma los mapeos |
-| 52 | Mapeo disciplina → asignatario de ACC | — | El agente propone el mapeo | en curso (WS-B) |
+| 52 | Mapeo disciplina → asignatario de ACC (empresa / rol / usuario) y tipo de incidencia del proyecto | `GET/PUT /projects/:id/issue-settings…`, `GET …/issue-types` · `IssueSettingsPanel` (Disciplinas); en el lote, confirmar o cambiar por incidencia | `get_issue_settings` (usuarios enmascarados) + `propose_issue_responsible`; el humano acepta en la UI. No hay propuesta de tipo de incidencia | parity (WS-B; tipo: agent-missing, bajo) |
 
 ### I. Lotes y aplicación en ACC
 | # | Capacidad | Humano | Agente | Estado |

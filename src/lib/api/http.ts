@@ -226,7 +226,7 @@ export class HttpCoordinatorApi implements CoordinatorApi {
     return this.req<unknown>("PUT", `/projects/${enc(projectId)}/disciplines/rules`, { rules, ...(version !== undefined ? { version } : {}) });
   }
   decideDisciplineSuggestion(projectId: string, id: string, decision: "approve" | "reject") {
-    return this.req<unknown>("POST", `/projects/${enc(projectId)}/disciplines/proposals/${enc(id)}/decision`, { decision });
+    return this.req<unknown>("POST", `/projects/${enc(projectId)}/disciplines/proposals/${enc(id)}/decision`, { decision: decision === "approve" ? "accept" : decision });
   }
   ingestTest(projectId: string, modelSetId: string, accTestId: string, opts?: { refresh?: boolean }) {
     return this.req<T.IngestStart>("POST", `/projects/${enc(projectId)}/model-sets/${enc(modelSetId)}/tests/${enc(accTestId)}/ingest`, { refresh: opts?.refresh ?? false, classify: true });
@@ -446,5 +446,17 @@ export class HttpCoordinatorApi implements CoordinatorApi {
     return this.get<T.Page<T.CorrectionRow>>("/learning/corrections", p);
   }
   getCalibration() { return this.get<T.Calibration>("/learning/calibration"); }
+
+  listIssueTypes(projectId: string) { return this.get<T.AccIssueType[]>(`/projects/${enc(projectId)}/issue-types`); }
+  getIssueSettings(projectId: string) { return this.get<T.IssueSettings>(`/projects/${enc(projectId)}/issue-settings`); }
+  setIssueType(projectId: string, req: { typeId: string; subtypeId: string; label: string } | { clear: true }) {
+    return this.req<T.IssueSettings>("PUT", `/projects/${enc(projectId)}/issue-settings/issue-type`, req);
+  }
+  setIssueAssignee(projectId: string, discipline: string, assignee: { id: string; type: "user" | "role" | "company"; label: string } | null) {
+    return this.req<T.IssueSettings>("PUT", `/projects/${enc(projectId)}/issue-settings/assignees/${enc(discipline)}`, { assignee });
+  }
+  decideIssueSettingsSuggestion(projectId: string, proposalId: string, decision: "accept" | "reject") {
+    return this.req<T.IssueSettings>("POST", `/projects/${enc(projectId)}/issue-settings/proposals/${enc(proposalId)}/decision`, { decision });
+  }
 
 }

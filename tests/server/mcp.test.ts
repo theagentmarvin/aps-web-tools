@@ -41,7 +41,7 @@ describe("coord MCP server (fixtures)", () => {
   it("lists every contract tool and no approve tool", async () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(TOOLS.map((t) => t.name).sort());
-    expect(tools).toHaveLength(43);
+    expect(tools).toHaveLength(45);
     // No MCP tool may approve, sign, edit, exclude, return, discard, publish rules or answer questions.
     expect(tools.map((t) => t.name).filter((n) => /approve|sign|exclude|discard|return_|publish|answer|decide/.test(n) && n !== "apply_approved_proposals")).toEqual([]);
     const apply = tools.find((t) => t.name === "apply_approved_proposals")!;

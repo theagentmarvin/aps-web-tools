@@ -201,6 +201,8 @@ const IssuePatch = z
     includeView: z.boolean(),
     linkClashIds: z.array(z.string().max(30)).max(1000),
     pinnedView: z.unknown(),
+    issueTypeLabel: z.string().max(120),
+    assigneeLabel: z.string().max(120),
   })
   .partial();
 const AssertionSchema = z.object({
@@ -586,6 +588,34 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
     "POST",
     "/projects/:projectId/disciplines/proposals/:proposalId/decision",
     async ({ params, body, user }) => ui.decideDisciplineProposal(params.projectId, params.proposalId, z.object({ decision: z.enum(["accept", "reject"]) }).parse(body).decision, await user()),
+    true,
+  );
+
+  // ── G4/G5: project ACC issue settings (GET-only toward ACC; writes are local, human-only, audited) ──
+  add("GET", "/projects/:projectId/issue-types", async ({ params }) => ui.issueTypes(params.projectId));
+  add("GET", "/projects/:projectId/issue-settings", async ({ params }) => ui.issueSettings(params.projectId));
+  add(
+    "PUT",
+    "/projects/:projectId/issue-settings/issue-type",
+    async ({ params, body, user }) => {
+      const b = z.union([z.strictObject({ clear: z.literal(true) }), z.strictObject({ typeId: z.string().max(60), subtypeId: z.string().max(60), label: z.string().max(120).default("") })]).parse(body);
+      return ui.setIssueType(params.projectId, b, await user());
+    },
+    true,
+  );
+  add(
+    "PUT",
+    "/projects/:projectId/issue-settings/assignees/:discipline",
+    async ({ params, body, user }) => {
+      const b = z.strictObject({ assignee: z.strictObject({ id: z.string().min(1).max(80), type: z.enum(["user", "role", "company"]), label: z.string().max(120).default("") }).nullable() }).parse(body);
+      return ui.setIssueAssignee(params.projectId, params.discipline, b.assignee, await user());
+    },
+    true,
+  );
+  add(
+    "POST",
+    "/projects/:projectId/issue-settings/proposals/:proposalId/decision",
+    async ({ params, body, user }) => ui.decideIssueSettingsProposal(params.projectId, params.proposalId, z.object({ decision: z.enum(["accept", "reject"]) }).parse(body).decision, await user()),
     true,
   );
 

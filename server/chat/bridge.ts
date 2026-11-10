@@ -19,7 +19,7 @@ export const SIGTERM_GRACE_MS = 5_000;
 /** Tools the chat agent may never use (defence in depth: also absent from the agent's list). */
 export const CHAT_DISALLOWED = ["mcp__coord__apply_approved_proposals", "mcp__coord__ingest_clash_test", "mcp__coord__run_classification", "Bash", "PowerShell", "Edit", "Write", "Read", "WebFetch", "WebSearch", "Agent", "Task", "Skill"];
 /** Tool results that create something the human decides (cards). */
-const CREATING = new Set(["propose_family_decision", "propose_classification", "propose_group_action", "propose_status_change", "draft_issue", "ask_coordinator", "propose_discipline_mapping", "propose_family_exception"]);
+const CREATING = new Set(["propose_family_decision", "propose_classification", "propose_group_action", "propose_status_change", "draft_issue", "ask_coordinator", "propose_discipline_mapping", "propose_family_exception", "propose_issue_responsible"]);
 /**
  * Read-only coord tools the chat agent is pre-approved for (docs/ai/agent-human-parity.md §3.3).
  * Must stay a subset of the agent's front-matter `tools:` (tests/server/chat.test.ts checks it).
@@ -27,7 +27,7 @@ const CREATING = new Set(["propose_family_decision", "propose_classification", "
  */
 export const CHAT_READ_TOOLS = [
   "get_selection_context", "get_group", "get_family", "list_groups", "list_families", "list_clashes", "get_element_properties", "summarize_clashes", "list_proposals", "list_questions", "list_issue_checks",
-  "get_session_status", "list_meeting_notes", "diff_test_versions", "list_disciplines", "get_model_hygiene_stats", "list_batches", "get_batch", "list_decisions", "get_agenda", "list_reminders",
+  "get_session_status", "list_meeting_notes", "diff_test_versions", "list_disciplines", "get_model_hygiene_stats", "list_batches", "get_batch", "list_decisions", "get_agenda", "list_reminders", "get_issue_settings",
 ].map((t) => `mcp__coord__${t}`);
 
 export interface ResolvedBin {

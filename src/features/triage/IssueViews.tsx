@@ -223,8 +223,16 @@ export function VerificationSection({ check }: { check: IssueCheck }) {
         </div>
         <p className="flex items-center gap-1 text-xs text-gray-600">
           <IconExternal size={12} />
-          {/* The contract has no issue URL yet: show the ACC id (copyable) to find it in ACC. */}
-          {t("issues.openInAcc")}: <span className="select-all font-mono">{check.displayId ? `#${check.displayId}` : check.issueId}</span>
+          {/* G11: deep link to the ACC Build issue (server-built; absent for non-ACC ids, e.g. fixtures). */}
+          {check.accUrl ? (
+            <a href={check.accUrl} target="_blank" rel="noopener noreferrer" className="text-brand hover:underline">
+              {t("issues.openInAcc")}: <span className="font-mono">{check.displayId ? `#${check.displayId}` : check.issueId.slice(0, 8)}</span>
+            </a>
+          ) : (
+            <>
+              {t("issues.openInAcc")}: <span className="select-all font-mono">{check.displayId ? `#${check.displayId}` : check.issueId}</span>
+            </>
+          )}
           <span className="text-gray-400">· {t("issues.accStatus", { status: accStatusLabel(t, check.accStatus) })}</span>
         </p>
         {check.decision ? (

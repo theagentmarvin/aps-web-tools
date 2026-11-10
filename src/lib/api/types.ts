@@ -86,6 +86,7 @@ export type {
   UserInfo,
   Validity,
 } from "../../../server/api/contract";
+export type { AccIssueType, IssueAssigneeMapping, IssueSettings } from "../../../server/api/contract";
 
 import type { ReasonCode, Validity, Nature, Severity } from "../../../server/api/contract";
 

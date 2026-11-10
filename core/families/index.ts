@@ -53,6 +53,21 @@ export const PROBLEM_TYPES: readonly ProblemType[] = [
   { code: "PT00", nameEs: "Sin tipificar", responsibility: "COORD", options: ["Revisión humana; el resultado alimenta al curador de reglas"] },
 ];
 const PT_BY_CODE = new Map(PROBLEM_TYPES.map((p) => [p.code, p]));
+/**
+ * Current wording of a chosen solution option for ACC issue text (pilot review "terms" table):
+ * a number instead of a formula, and never "aprobada" about a structural opening. Decisions
+ * store the option text verbatim, so older wordings are rewritten here.
+ */
+export function solutionText(option: string, evidence?: { penetrationMm?: { max: number } }): string {
+  const o = option.trim().replace(/\.$/, "");
+  if (/^Bajar penetraci[oó]n \+ 25 mm/i.test(o)) {
+    const max = evidence?.penetrationMm?.max;
+    return max !== undefined && max > 0 ? `Bajar el ducto ~${Math.round(max + 25)} mm (verificar altura de cielo)` : "Bajar el ducto bajo la viga (verificar altura de cielo)";
+  }
+  if (/^Pasada aprobada por el calculista/i.test(o)) return "Pasada sujeta a aprobación del calculista, modelada por EST";
+  return o;
+}
+
 export function problemTypeOf(code: ProblemTypeCode): ProblemType {
   return PT_BY_CODE.get(code)!;
 }

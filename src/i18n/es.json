@@ -1407,5 +1407,41 @@
   "toolbar": {
     "label": "Barra de herramientas del espacio de coordinación",
     "more": "Más acciones"
+  },
+  "accIssues": {
+    "title": "Incidencias ACC del proyecto",
+    "hint": "Tipo de incidencia y responsable ACC por disciplina. El responsable es un dato de ACC (empresa, rol o usuario): nunca se escribe en el texto de la incidencia. Se confirma o cambia por incidencia al aprobar el lote.",
+    "type": "Tipo de incidencia predeterminado",
+    "typeEffective": "En uso: {label} ({source})",
+    "typeNone": "Sin tipo conocido: se elige en cada incidencia al aprobar.",
+    "source": {
+      "project": "proyecto",
+      "config": "configuración",
+      "auto": "detectado en ACC",
+      "fixtures": "demo"
+    },
+    "typeChoose": "Elegir tipo / subtipo…",
+    "typeClear": "Quitar predeterminado",
+    "typesUnavailable": "No se pudo leer la lista de tipos de ACC.",
+    "assignees": "Responsable ACC por disciplina",
+    "discipline": "Disciplina",
+    "assignee": "Responsable ACC",
+    "none": "— sin responsable —",
+    "manual": "Ingresar id ACC…",
+    "manualId": "Id ACC (empresa, rol o usuario)",
+    "manualType": "Tipo",
+    "kind": {
+      "company": "Empresa",
+      "role": "Rol",
+      "user": "Usuario"
+    },
+    "candidatesEmpty": "ACC no entregó la lista de miembros del proyecto: ingresa el id a mano.",
+    "saved": "Guardado",
+    "suggestions": "Sugerencias del agente",
+    "accept": "Aceptar",
+    "reject": "Rechazar",
+    "unassigned": "Sin responsable ACC: la incidencia queda sin asignar en ACC.",
+    "openIssue": "Abrir incidencia en ACC",
+    "createdIssues": "Incidencias creadas en ACC"
   }
 }

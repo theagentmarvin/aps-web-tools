@@ -180,12 +180,24 @@ describe("family decisions, inheritance and batches (fixtures)", () => {
     const b = await ui.sendToApproval({ projectId: P, modelSetId: MODEL_SET_ID, testId: k42 }, HUMAN);
     const items = b.items.filter((i) => i.familyId === f.id);
     expect(items).toHaveLength(1);
-    const body = items[0]!.accNew as { title: string; description: string; clashes: number[] };
-    expect(body.title).toMatch(new RegExp(`^\\[${f.id}\\] `));
+    const body = items[0]!.accNew as { title: string; description: string; clashes: number[]; issueTypeId: string; issueSubTypeId: string };
+    // G4: ACC content, not internal ids: "[P2][ELE×CLI] Niveles … · {family title}".
+    expect(body.title).not.toContain(f.id);
+    expect(body.title).toMatch(/^\[P[1-4]\]\[[A-Z]{2,6}(×[A-Z]{2,6})?\] /);
     expect(body.title.length).toBeLessThanOrEqual(100);
     expect(body.description.length).toBeLessThanOrEqual(1000);
-    expect(body.description).toMatch(/Ubicaciones por nivel: /);
-    expect(body.description).toMatch(/Detalle típico: Pasada tipo/);
+    for (const label of ["PROBLEMA: ", "UBICACIÓN: ", "ACCIÓN (", "CONSULTAR: ", "PLAZO: ", "REF: "]) expect(body.description).toContain(label);
+    expect(body.description).toMatch(/Aplicar el detalle típico "Pasada tipo" \(camisa Ø\+50\)/);
+    expect(body.description).toContain(`REF: Grupo ${f.id}`);
+    expect(body.description).not.toMatch(/Bajar penetración \+ 25 mm/);
+    // the issue type is set (fixtures: Coordinación / Clash) and the card counts what is linked
+    expect(body.issueTypeId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(body.issueSubTypeId).toMatch(/^[0-9a-f-]{36}$/);
+    const card = items[0]!.issue!;
+    expect(card.issueTypeLabel).toBe("Coordinación / Clash");
+    expect(card.location).toBeTruthy();
+    expect(card.linkClashIds).toHaveLength(body.clashes.length);
+    expect(card.linkClashIds.length).toBeGreaterThan(0);
     // X1: clashes ACC already assigned or closed are never part of a new assign
     expect(body.clashes.length).toBe(f.rawClashCount - (f.acc?.existing ?? 0));
     const live = f.instances.filter((i) => (i.acc?.existing ?? 0) < i.rawClashCount).map((i) => i.groupId);
@@ -201,7 +213,7 @@ describe("family decisions, inheritance and batches (fixtures)", () => {
     expect(dry.dryRun).toBe(true);
     const bodies = dry.requests
       .flatMap((r) => (Array.isArray(r.body) ? r.body : ((r.body as { groups?: unknown[] } | undefined)?.groups ?? [r.body])))
-      .filter((x): x is { title: string; clashes: number[] } => typeof (x as { title?: unknown } | undefined)?.title === "string" && (x as { title: string }).title.startsWith(`[${f.id}]`));
+      .filter((x): x is { title: string; clashes: number[] } => typeof (x as { title?: unknown } | undefined)?.title === "string" && (x as { title: string }).title === body.title);
     expect(bodies).toHaveLength(1);
     expect(bodies[0]!.clashes).toHaveLength(f.rawClashCount - (f.acc?.existing ?? 0));
   });

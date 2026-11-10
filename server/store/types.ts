@@ -237,8 +237,8 @@ export interface ClassificationRecord {
 
 // ── Proposals ──────────────────────────────────────────────────────────────
 
-export type ProposalKind = "classification" | "group_action" | "issue_draft" | "status_change" | "rule_change" | "discipline_mapping" | "family_decision" | "family_exception";
-export const PROPOSAL_KINDS: readonly ProposalKind[] = ["classification", "group_action", "issue_draft", "status_change", "rule_change", "discipline_mapping", "family_decision", "family_exception"];
+export type ProposalKind = "classification" | "group_action" | "issue_draft" | "status_change" | "rule_change" | "discipline_mapping" | "family_decision" | "family_exception" | "issue_settings";
+export const PROPOSAL_KINDS: readonly ProposalKind[] = ["classification", "group_action", "issue_draft", "status_change", "rule_change", "discipline_mapping", "family_decision", "family_exception", "issue_settings"];
 export type ProposalState = "draft" | "pending_review" | "approved" | "rejected" | "withdrawn" | "applied" | "failed";
 export const PROPOSAL_STATES: readonly ProposalState[] = ["draft", "pending_review", "approved", "rejected", "withdrawn", "applied", "failed"];
 export type Risk = "low" | "medium" | "high";
@@ -307,6 +307,12 @@ export type ProposalPayload =
       lineageUrn?: string;
       fileName?: string;
       rule?: { match: "contains" | "startsWith" | "regex"; value: string; field: "fileName" | "folder" | "viewName" };
+    }
+  | {
+      /** G5: change of the project discipline → ACC assignee mapping (null = remove). A human accepts it. */
+      kind: "issue_settings";
+      discipline: string;
+      assignee: { id: string; type: "user" | "role" | "company"; label: string } | null;
     }
   | {
       kind: "rule_change";

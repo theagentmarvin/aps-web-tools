@@ -9,7 +9,8 @@ import { ApsAuth } from "../aps/auth";
 import { ApsError } from "../aps/errors";
 import { fetchClashResults, intersectAssignedGroups, intersectClosedGroups, listAssignedGroups, listClashTests, listClosedGroups } from "../aps/clash";
 import type { AccSnapshot } from "../../core/ingest/ledger";
-import { listIssues } from "../aps/issues";
+import { listIssues, listIssueTypes } from "../aps/issues";
+import { assigneesFromUsers, listProjectUsers } from "../aps/admin";
 import { assignClashes, closeClashes, waitClashJob } from "../aps/clash-writes";
 import { apsRequest, type ApsCtx } from "../aps/http";
 import {
@@ -369,8 +370,18 @@ export class LiveSource implements DataSource {
     return { assigned, closed };
   }
 
-  async listAssignees() {
-    // Assignment to a person happens in ACC / the UI picker; v1 offers roles only.
-    return [] as Array<{ id: string; name: string; kind: "user" | "role" | "company" }>;
+  async listAssignees(projectId: string) {
+    // G5: ACC Admin project members (GET). Needs account:read; without it the UI asks for the id by hand.
+    try {
+      return assigneesFromUsers(await listProjectUsers(this.ctx, projectId));
+    } catch (e) {
+      log.warn("assignees.unavailable", { status: (e as ApsError).status ?? null });
+      return [] as Array<{ id: string; name: string; kind: "user" | "role" | "company" }>;
+    }
+  }
+
+  async listIssueTypes(projectId: string) {
+    const types = await listIssueTypes(this.ctx, projectId);
+    return types.map((t) => ({ id: t.id, title: t.title, subtypes: (t.subtypes ?? []).filter((x) => x.isActive !== false).map((x) => ({ id: x.id, title: x.title })) }));
   }
 }

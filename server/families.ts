@@ -11,7 +11,9 @@
  *    with the inheritance state of every instance.
  */
 import type { ClassifiedClash } from "../core/classified";
-import { assignFamilies, bucketOf, familyTitle, problemTypeOf, type ClashFamily, type ProblemTypeCode } from "../core/families";
+import { assignFamilies, bucketOf, familyTitle, problemTypeOf, solutionText, type ClashFamily, type ProblemTypeCode } from "../core/families";
+import { formatEs, levelText, ROOT_CAUSE_TEXT_ES, RULE_TEXT_ES } from "../core/issues";
+import { capitalize } from "../core/util/text";
 import type { ClashGroup as EngineGroup } from "../core/group";
 import { sha1 } from "../core/util/sha1";
 import { sanitizeModelText } from "./sanitize";
@@ -485,18 +487,120 @@ export function effectiveFields(dec: FamilyDecisionFields, ex?: FamilyException)
   return ex ? { ...dec, ...ex.fields } : dec;
 }
 
-/** ACC issue description ≤ 1,000 chars with locations grouped by level. */
-export function familyIssueDescription(view: Pick<FamilyView, "id" | "title" | "uniqueClashCount">, dec: FamilyDecisionFields, instances: readonly FamilyInstanceView[], max = 1000): string {
-  const byLevel = new Map<string, number>();
+export interface FamilyIssueOptions {
+  /** P1..P4 of the issue (worst instance band). */
+  band: 1 | 2 | 3 | 4;
+  /** YYYY-MM-DD */
+  dueDate: string;
+  /** Rule ids of the instances (most frequent first). */
+  ruleIds: readonly string[];
+  /** Root cause of the dominant instance (fallback text when the rule has none). */
+  rootCause?: string;
+  /** Group tags of the instances (pasada_estructural, requiere_calculista…). */
+  tags?: readonly string[];
+  modelSetVersion?: number;
+  /** A previous cycle already issued this family: mark the title as a follow-up. */
+  followUp?: boolean;
+  /** One issue per instance: the instance title replaces the family title. */
+  instanceTitle?: string;
+  /** Raw clashes linked by this issue (chunk). */
+  clashCount: number;
+  /** Chunk suffix " (1/2)" kept at the end of the title. */
+  suffix?: string;
+}
+
+export interface FamilyIssueContent {
+  /** ≤ 100, no internal ids. */
+  title: string;
+  /** Plain text ≤ 1000 (PROBLEMA / UBICACIÓN / POR QUÉ / ACCIÓN / CONSULTAR / PLAZO / REF). */
+  description: string;
+  /** Level summary for the issue card ("Niveles 201-401"). */
+  location: string;
+}
+
+function levelOf(i: Pick<FamilyInstanceView, "levels" | "hostLevelLabel">): string {
+  return i.levels[0] ?? i.hostLevelLabel ?? "Sin nivel";
+}
+
+function plural(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+/**
+ * ACC issue content for a decided family (G4): the same template as the ubicación (group)
+ * issues, locations summarised by level from the engine facts (no grid facts exist yet),
+ * current solution wording, ids only in REF. Title ≤ 100, description ≤ 1000.
+ */
+export function familyIssueContent(
+  view: Pick<FamilyView, "id" | "title" | "pair" | "evidence">,
+  dec: FamilyDecisionFields,
+  instances: readonly Pick<FamilyInstanceView, "levels" | "hostLevelLabel" | "uniqueClashCount" | "rawClashCount">[],
+  opts: FamilyIssueOptions,
+): FamilyIssueContent {
+  const resp = dec.responsibleDiscipline;
+  const sec = dec.secondaryDiscipline ?? (view.pair && view.pair[1] !== resp ? view.pair[1] : view.pair && view.pair[0] !== resp ? view.pair[0] : undefined);
+  const pair = sec && sec !== resp ? `[${resp}×${sec}]` : `[${resp}]`;
+  const byLevel = new Map<string, { n: number; clashes: number }>();
   for (const i of instances) {
-    const l = i.hostLevelLabel ?? i.levels[0] ?? "sin nivel";
-    byLevel.set(l, (byLevel.get(l) ?? 0) + 1);
+    const l = levelOf(i);
+    const e = byLevel.get(l) ?? { n: 0, clashes: 0 };
+    e.n++;
+    e.clashes += i.uniqueClashCount;
+    byLevel.set(l, e);
   }
-  const loc = [...byLevel.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([l, n]) => `${l}: ${n}`).join(" · ");
-  const head = `[${view.id}] ${view.title}. ${dec.solutionOption ? `Solución: ${dec.solutionOption}. ` : ""}${dec.typicalDetail ? `Detalle típico: ${dec.typicalDetail.name}${dec.typicalDetail.note ? ` (${dec.typicalDetail.note})` : ""}. ` : ""}`;
-  const body = `${instances.length} ubicaciones, ${instances.reduce((n, i) => n + i.uniqueClashCount, 0)} interferencias. Ubicaciones por nivel: ${loc}.`;
-  const s = `${head}${body}`;
-  return s.length <= max ? s : `${s.slice(0, max - 1)}…`;
+  const levels = [...byLevel.keys()].sort((a, b) => a.localeCompare(b, "es", { numeric: true }));
+  const where = levelText(levels) || "Nivel no informado";
+  const what = sanitizeModelText(opts.instanceTitle ?? view.title, 160);
+  const head = `[P${opts.band}]${pair}`;
+  const follow = opts.followUp ? " · seguimiento" : "";
+  const title = fitTitleParts(`${head} ${where} · ${what}${follow}`, `${head} ${what}${follow}`, opts.suffix ?? "");
+
+  const unique = instances.reduce((n, i) => n + i.uniqueClashCount, 0);
+  const maxPen = Math.round(view.evidence?.penetrationMm?.max ?? 0);
+  const problem = `${capitalize(what)}. ${plural(instances.length, "ubicación", "ubicaciones")} y ${plural(unique, "interferencia", "interferencias")}${maxPen > 0 ? `; penetración máx. ${maxPen} mm` : ""}.`;
+  const rule = opts.ruleIds.map((r) => RULE_TEXT_ES[r]).find((x) => !!x) ?? (opts.rootCause ? ROOT_CAUSE_TEXT_ES[opts.rootCause as keyof typeof ROOT_CAUSE_TEXT_ES] : undefined);
+  const actions: string[] = [];
+  if (dec.solutionOption) actions.push(`${solutionText(sanitizeModelText(dec.solutionOption, 300), view.evidence)} en todas las ubicaciones.`);
+  if (dec.typicalDetail) actions.push(`Aplicar el detalle típico "${sanitizeModelText(dec.typicalDetail.name, 80)}"${dec.typicalDetail.note ? ` (${sanitizeModelText(dec.typicalDetail.note, 120)})` : ""}.`);
+  for (const a of rule?.actions({ resp, respGroup: resp, ...(sec ? { other: sec } : {}) }) ?? []) if (actions.length < 3 && !actions.some((x) => x.startsWith(a.slice(0, 20)))) actions.push(a);
+  if (!actions.length) actions.push("Corregir el modelo en todas las ubicaciones listadas.");
+  const tags = new Set(opts.tags ?? []);
+  const calculista = sec === "EST" || tags.has("pasada_estructural") || tags.has("requiere_calculista");
+  const tail = calculista ? " Toda pasada en estructura queda sujeta a aprobación del calculista." : "";
+  const consult = sec ? `${sec}${sec === "EST" ? " (calculista)" : ""}` : "—";
+  const ref = `REF: Grupo ${view.id} · ${plural(opts.clashCount, "interferencia vinculada", "interferencias vinculadas")}${opts.ruleIds.length ? ` · ${opts.ruleIds.slice(0, 4).join(", ")}` : ""}${opts.modelSetVersion !== undefined ? ` · conjunto v${opts.modelSetVersion}` : ""}`;
+  const locLines = levels.map((l) => `${l}: ${plural(byLevel.get(l)!.n, "ubic.", "ubic.")} (${byLevel.get(l)!.clashes} interf.)`);
+
+  const render = (nLevels: number, nActions: number, withWhy: boolean) => {
+    const shown = locLines.slice(0, nLevels).join(" · ");
+    const more = levels.length > nLevels ? ` · y ${plural(levels.length - nLevels, "nivel más", "niveles más")}` : "";
+    return [
+      `PROBLEMA: ${problem}`,
+      `UBICACIÓN: ${where}. ${shown}${more}.`,
+      ...(withWhy && rule ? [`POR QUÉ: ${rule.why}`] : []),
+      `ACCIÓN (${resp}): ${actions.slice(0, nActions).map((x, i) => `${i + 1}. ${x}`).join(" ")}${tail}`,
+      `CONSULTAR: ${consult}.`,
+      `PLAZO: ${formatEs(opts.dueDate)}.`,
+      ref,
+    ].join("\n");
+  };
+  let description = "";
+  for (const [n, a, w] of [[levels.length, 3, true], [12, 3, true], [6, 3, true], [6, 2, true], [4, 2, false], [2, 1, false]] as const) {
+    description = render(Math.min(n, levels.length), a, w);
+    if (description.length <= 1000) break;
+  }
+  if (description.length > 1000) description = `${description.slice(0, 999)}…`;
+  return { title, description, location: where };
+}
+
+/** Longest of the candidates that fits 100 with the suffix; else the short one cut on a word. */
+function fitTitleParts(full: string, short: string, suffix: string, max = 100): string {
+  if (full.length + suffix.length <= max) return full + suffix;
+  if (short.length + suffix.length <= max) return short + suffix;
+  const room = Math.max(1, max - suffix.length - 1);
+  const cut = short.slice(0, room);
+  const sp = cut.lastIndexOf(" ");
+  return `${(sp > room * 0.6 ? cut.slice(0, sp) : cut).trimEnd()}…${suffix}`;
 }
 
 export function assertFamilyInTest(views: readonly FamilyView[], familyId: string): FamilyView {

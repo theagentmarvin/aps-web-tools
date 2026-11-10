@@ -356,6 +356,8 @@ export interface IssueCheck {
   priority?: Priority;
   /** The coordinator's decision on this verdict, if any (this version). */
   decision?: { kind: "accept" | "reject"; reasonCode?: ReasonCode; note?: string; decidedBy: string; decidedAt: string };
+  /** G11: ACC Build deep link (absent when the ids are not ACC ids, e.g. fixtures). */
+  accUrl?: string;
 }
 export interface IssueChecksPayload {
   testId: string;
@@ -725,6 +727,10 @@ export interface IssueDraft {
   includeView: boolean;
   linkClashIds: string[];
   pinnedView?: unknown;
+  /** G4: "Coordinación / Clash" (display; ids in issueType / issueSubtype). */
+  issueTypeLabel?: string;
+  /** G5: company / role / user name of assigneeId (UI only, never in issue text). */
+  assigneeLabel?: string;
 }
 
 /**
@@ -1197,6 +1203,15 @@ export interface Endpoints {
   "GET /api/coord/learning/calibration": { req: void; res: Calibration };
   "GET /api/coord/reports?projectId&modelSetId&from&to": { req: void; res: ReportData };
   "GET /api/coord/audit?project&user&action&from&to&batch&limit&cursor": { req: void; res: Page<AuditEvent> };
+  /** G4/G5: ACC issue types (GET only) and the project issue settings (type default + discipline → assignee). */
+  "GET /api/coord/projects/:projectId/issue-types": { req: void; res: AccIssueType[] };
+  "GET /api/coord/projects/:projectId/issue-settings": { req: void; res: IssueSettings };
+  /** Human-only. */
+  "PUT /api/coord/projects/:projectId/issue-settings/issue-type": { req: { typeId: string; subtypeId: string; label: string } | { clear: true }; res: IssueSettings };
+  /** Human-only. assignee null = remove the mapping. */
+  "PUT /api/coord/projects/:projectId/issue-settings/assignees/:discipline": { req: { assignee: { id: string; type: "user" | "role" | "company"; label: string } | null }; res: IssueSettings };
+  /** Human-only. Decision on an agent issue_settings proposal. */
+  "POST /api/coord/projects/:projectId/issue-settings/proposals/:proposalId/decision": { req: { decision: "accept" | "reject" }; res: IssueSettings };
 }
 
 export type EndpointKey = keyof Endpoints;
@@ -1275,4 +1290,27 @@ export interface ChatHistory {
   testKey: string;
   messages: ChatHistoryMessage[];
   running?: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// G4/G5: project ACC issue settings
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** ACC issue type with its active subtypes. */
+export interface AccIssueType { id: string; title: string; subtypes: Array<{ id: string; title: string }> }
+export interface IssueAssigneeMapping { discipline: string; id: string; type: "user" | "role" | "company"; label: string }
+/** GET /projects/:projectId/issue-settings */
+export interface IssueSettings {
+  projectId: string;
+  version: number;
+  /** Configured default (null = none: auto-detected or chosen at approval). */
+  issueType: { typeId: string; subtypeId: string; label: string } | null;
+  /** What a new batch would use now and where it came from. */
+  effectiveIssueType: { typeId: string; subtypeId: string; label?: string; source: "project" | "config" | "auto" | "fixtures" } | null;
+  assignees: IssueAssigneeMapping[];
+  codes: Array<{ code: string; label: string }>;
+  updatedAt?: string;
+  updatedBy?: string;
+  /** Agent suggestions waiting for a human decision. */
+  pendingProposals: Array<{ id: string; summary: string; rationale: string; createdAt: string; payload: Record<string, unknown> }>;
 }

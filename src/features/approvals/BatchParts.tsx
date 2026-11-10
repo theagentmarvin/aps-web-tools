@@ -9,6 +9,10 @@ import { Modal } from "~/lib/components/Modal";
 import { IconAlert, IconCheck, Spinner } from "~/lib/components/icons";
 import { Button, ProgressBar, cardCls, inputCls } from "~/lib/components/ui";
 import { STATUS_KEY } from "~/lib/labels";
+import { useApi } from "~/lib/api";
+import { AssigneePicker, type AssigneeValue } from "~/lib/components/AssigneePicker";
+import { typeChoices, useIssueOptions } from "~/lib/issue-options";
+import { accIssueUrl } from "@core/issues/acc-links";
 
 const PREFLIGHT_MAX_AGE = 10 * 60000;
 
@@ -79,13 +83,31 @@ export function PreflightStatus({ batch, running }: { batch: Batch; running: boo
   );
 }
 
-export function IssuePreviewCard({ item, readOnly, onSave, onToggle }: { item: BatchItem; readOnly: boolean; onSave: (patch: Partial<IssueDraft>) => void; onToggle: (excluded: boolean) => void }) {
+export function IssuePreviewCard({ item, readOnly, onSave, onToggle, projectId }: { item: BatchItem; readOnly: boolean; onSave: (patch: Partial<IssueDraft>) => void; onToggle: (excluded: boolean) => void; projectId?: string }) {
   const t = useT();
   const { fmt } = useI18n();
+  const api = useApi();
   const [editing, setEditing] = useState(false);
   const issue = item.issue!;
   const [title, setTitle] = useState(issue.title);
   const [description, setDescription] = useState(issue.description);
+  // G4/G5: the human confirms or overrides the issue type and the ACC assignee per issue.
+  const opts = useIssueOptions(api, editing ? projectId : undefined);
+  const [typeKey, setTypeKey] = useState(issue.issueType && issue.issueSubtype ? `${issue.issueType}|${issue.issueSubtype}` : "");
+  const [assignee, setAssignee] = useState<AssigneeValue | null>(issue.assigneeId ? { id: issue.assigneeId, type: issue.assigneeType ?? "user", label: issue.assigneeLabel ?? issue.assigneeRole ?? issue.assigneeId } : null);
+  const choices = typeChoices(opts?.types ?? []);
+  const typeText = issue.issueTypeLabel ?? (issue.issueType ? `${issue.issueType.slice(0, 8)}…` : "—");
+  const assigneeText = issue.assigneeLabel ?? issue.assigneeRole;
+  function save() {
+    const patch: Partial<IssueDraft> = { title, description };
+    const c = choices.find((x) => `${x.typeId}|${x.subtypeId}` === typeKey);
+    if (c && typeKey !== `${issue.issueType}|${issue.issueSubtype}`) Object.assign(patch, { issueType: c.typeId, issueSubtype: c.subtypeId, issueTypeLabel: c.label });
+    if ((assignee?.id ?? "") !== (issue.assigneeId ?? "") || (assignee && assignee.type !== issue.assigneeType)) {
+      Object.assign(patch, assignee ? { assigneeId: assignee.id, assigneeType: assignee.type, assigneeLabel: assignee.label } : { assigneeId: "" });
+    }
+    onSave(patch);
+    setEditing(false);
+  }
   return (
     <article className={`${cardCls} p-4 text-sm ${item.excluded ? "opacity-60" : ""}`}>
       <header className="mb-2 flex items-start justify-between gap-3">
@@ -112,13 +134,35 @@ export function IssuePreviewCard({ item, readOnly, onSave, onToggle }: { item: B
         <div>
           <dt className="text-gray-500">{t("issue.type")}</dt>
           <dd>
-            {issue.issueType ?? "—"}
-            {issue.issueSubtype && ` / ${issue.issueSubtype}`}
+            {editing && choices.length ? (
+              <select className={`${inputCls} w-full text-xs`} value={typeKey} onChange={(e) => setTypeKey(e.target.value)} aria-label={t("issue.type")}>
+                <option value="">{t("accIssues.typeChoose")}</option>
+                {choices.map((c) => (
+                  <option key={`${c.typeId}|${c.subtypeId}`} value={`${c.typeId}|${c.subtypeId}`}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              typeText
+            )}
           </dd>
         </div>
         <div>
           <dt className="text-gray-500">{t("issue.assignee")}</dt>
-          <dd>{issue.assigneeRole ?? issue.ownerDiscipline}</dd>
+          <dd>
+            {editing ? (
+              <AssigneePicker label={t("issue.assignee")} value={assignee} candidates={opts?.assignees ?? []} onChange={setAssignee} />
+            ) : assigneeText ? (
+              <>
+                {assigneeText} <span className="text-gray-500">({issue.ownerDiscipline})</span>
+              </>
+            ) : (
+              <span className="text-amber-800" title={t("accIssues.unassigned")}>
+                {issue.ownerDiscipline} · {t("accIssues.none")}
+              </span>
+            )}
+          </dd>
         </div>
         <div>
           <dt className="text-gray-500">{t("issue.dueDate")}</dt>
@@ -137,7 +181,23 @@ export function IssuePreviewCard({ item, readOnly, onSave, onToggle }: { item: B
           <dd>{issue.includeView ? t("issue.snapshotAtApply") : "—"}</dd>
         </div>
       </dl>
-      <p className="mt-2 text-xs text-gray-500">{t("issue.linkedClashes", { count: issue.linkClashIds.length })}</p>
+      <p className="mt-2 flex flex-wrap items-center gap-x-3 text-xs text-gray-500">
+        {t("issue.linkedClashes", { count: issue.linkClashIds.length })}
+        {/* G11: after apply, the created ACC issue opens in ACC Build. */}
+        {item.result?.status === "applied" &&
+          (item.result.accRefs ?? []).map((ref) => {
+            const url = accIssueUrl(projectId, ref);
+            return url ? (
+              <a key={ref} href={url} target="_blank" rel="noopener noreferrer" className="text-brand hover:underline">
+                {t("accIssues.openIssue")}
+              </a>
+            ) : (
+              <span key={ref} className="select-all font-mono">
+                {ref}
+              </span>
+            );
+          })}
+      </p>
       {!readOnly && (
         <footer className="mt-3 flex justify-end gap-2">
           {editing ? (
@@ -145,10 +205,7 @@ export function IssuePreviewCard({ item, readOnly, onSave, onToggle }: { item: B
               <Button onClick={() => setEditing(false)}>{t("common.cancel")}</Button>
               <Button
                 variant="primary"
-                onClick={() => {
-                  onSave({ title, description });
-                  setEditing(false);
-                }}
+                onClick={save}
               >
                 {t("common.save")}
               </Button>
@@ -304,7 +361,7 @@ export function ApplyProgress({ status }: { status: ApplyStatus }) {
 }
 
 /** Dry-run preview: the exact ACC requests the apply would send. */
-export function DryRunPreview({ res }: { res: ApplyResponse }) {
+export function DryRunPreview({ res, projectId }: { res: ApplyResponse; projectId?: string }) {
   const t = useT();
   if (res.refused) return <p className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">{t("batch.refused", { message: res.refused.message })}</p>;
   return (
@@ -320,7 +377,20 @@ export function DryRunPreview({ res }: { res: ApplyResponse }) {
           </summary>
           {r.message && <p className="px-3 text-xs text-gray-600">{r.message}</p>}
           {r.body !== undefined && <pre className="max-h-72 overflow-auto border-t border-brand-muted/20 bg-gray-50 p-3 font-mono text-[11px] text-gray-800">{JSON.stringify(r.body, null, 2)}</pre>}
-          {r.createdIssueIds && r.createdIssueIds.length > 0 && <p className="px-3 pb-2 font-mono text-[11px] text-green-800">{r.createdIssueIds.join(", ")}</p>}
+          {r.createdIssueIds && r.createdIssueIds.length > 0 && (
+            <p className="flex flex-wrap gap-x-3 px-3 pb-2 font-mono text-[11px] text-green-800" aria-label={t("accIssues.createdIssues")}>
+              {r.createdIssueIds.map((id) => {
+                const url = accIssueUrl(projectId, id);
+                return url ? (
+                  <a key={id} href={url} target="_blank" rel="noopener noreferrer" className="underline hover:text-green-900" title={t("accIssues.openIssue")}>
+                    {id}
+                  </a>
+                ) : (
+                  <span key={id}>{id}</span>
+                );
+              })}
+            </p>
+          )}
         </details>
       ))}
     </div>
