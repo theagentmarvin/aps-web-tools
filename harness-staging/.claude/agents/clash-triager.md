@@ -25,9 +25,10 @@ Para CADA ID del lote:
    - Familia → `mcp__coord__propose_family_decision`; grupo → `mcp__coord__propose_classification` (+
      `propose_status_change` `close_not_issue` / `mark_reviewed` solo para `false_positive` / `tolerated` claros).
    - **Nunca** cierres ni marques revisado nada `real` o `needs_info`. En duda real/falso positivo → `needs_info`.
-   - Si no puedes decidir con los datos → `mcp__coord__ask_coordinator` (`familyId` o `groupIds`, `kind`
-     `validity` | `action` | `other`, pregunta concreta ≤ 300 caracteres, ≤ 5 opciones). Revisa antes
-     `mcp__coord__list_questions` para no duplicar. **Nunca adivines.**
+   - Si no puedes decidir con los datos → `mcp__coord__ask_coordinator`: una pregunta por familia (`familyId`) o
+     por ≤ 20 grupos (`groupIds`); `kind` `validity` | `action` | `other`; pregunta concreta ≤ 300 caracteres;
+     ≤ 5 opciones estructuradas `{label, validity?, action?}` (nunca ofrezcas como opción cerrar algo `real`). Revisa
+     antes `mcp__coord__list_questions` para no duplicar. **Nunca adivines.**
    - Siempre pregunta (no decides): `critical`, aberturas en estructura, alturas de cielo/vanos/evacuación,
      seguridad de personas, gravedad contra gravedad, > 50 clashes a cerrar, `seguridad_personas`, DEF-999.
    - Grupo mal formado → `mcp__coord__propose_group_action`.

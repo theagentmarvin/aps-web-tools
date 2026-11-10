@@ -415,6 +415,46 @@ describe("guard-shell", () => {
     expect(blocked(sh(command))).toBe(true);
   });
 
+  // ── [v2] M1–M4 security review: the new trusted state files and the human-only API endpoints ──
+  it.each([
+    ["forge a ledger human decision", `node -e "require('fs').writeFileSync('.coordinator/ledgers/b-demo/9c1d.json', JSON.stringify({source:'human'}))"`],
+    ["read the ledger", "cat .coordinator/ledgers/b-demo/9c1d.json"],
+    ["edit questions.json", "sed -i 's/open/answered/' .coordinator/questions.json"],
+    ["forge a meeting note (dueDateQuote)", `echo '{"text":"para el 20-11-2026"}' > .coordinator/meeting/b-demo/9c1d.json`],
+    ["forge an issue check verdict", "cp /tmp/x.json .coordinator/issue-checks/b-demo/9c1d.json"],
+    ["append a decision", `echo '{"verdict":"accept"}' >> .coordinator/decisions/decisions.jsonl`],
+    ["overwrite a classified test", "rm -rf .coordinator/tests/T-abc"],
+    ["COORDINATOR_HOME expansion", "cat $COORDINATOR_HOME/questions.json"],
+    ["PowerShell COORDINATOR_HOME", "Get-Content \"$env:COORDINATOR_HOME\\ledgers\\x.json\""],
+  ])("[v2] blocks state path: %s", (_n, command) => {
+    expect(blocked(sh(command))).toBe(true);
+  });
+
+  it.each([
+    ["CSRF token", "curl -s http://localhost:3000/api/coord/csrf"],
+    ["answer a question", `curl -s -X POST -H "Origin: http://localhost:3000" -d '{"answer":0}' http://localhost:3000/api/coord/questions/Q-1/answer`],
+    ["post a project note", `curl -X POST http://127.0.0.1:3000/api/coord/projects/b.demo/notes -d '{"text":"x"}'`],
+    ["issue-check verdict decision", "curl -X POST http://[::1]:3000/api/coord/issue-checks/ISS-1/decision -d '{\"decision\":\"accept\"}'"],
+    ["family decision", "wget --post-data='{}' http://localhost:3000/api/coord/families/F-abc123/decision"],
+    ["triage decisions", "curl -X POST http://localhost:3001/api/coord/triage/decisions -d '[]'"],
+    ["discipline mapping", "curl -X PUT http://localhost:3000/api/coord/projects/b.demo/disciplines/rules -d '{\"rules\":[]}'"],
+    ["httpie", "http POST localhost:3000/api/coord/questions/Q-1/answer answer:=0"],
+    ["xh", "xh post :3000/api/coord/questions/Q-1/answer answer:=0"],
+    ["xargs from echo", "echo http://localhost:3000/api/coord/csrf | xargs curl"],
+    ["split-string fetch", `node -e "fetch('http://local'+'host:3000/api/'+'coord/questions/Q-1/answer',{method:'POST'})"`],
+  ])("[v2] blocks human-only API endpoint: %s", (_n, command) => {
+    expect(blocked(sh(command))).toBe(true);
+  });
+
+  it("[v2] PowerShell to the human-only API is blocked", () => {
+    expect(blocked(ps("Invoke-RestMethod -Method Post -Uri http://localhost:3000/api/coord/questions/Q-1/answer -Body '{}'"))).toBe(true);
+  });
+
+  it("[v2] reading the API routes in source code stays allowed", () => {
+    expect(sh('grep -rn "/api/coord/questions" server src').decision).toBeUndefined();
+    expect(sh('git grep -n "/api/coord" -- server').decision).toBeUndefined();
+  });
+
   it("[v2] PowerShell Set-Content into rules is blocked, into docs is allowed", () => {
     expect(blocked(ps("Set-Content -Path rules/classification-rules.yaml -Value 'x'"))).toBe(true);
     expect(ps("Set-Content -Path docs/notes.txt -Value 'x'").decision).toBeUndefined();
@@ -568,6 +608,34 @@ describe("guard-files", () => {
     ["harness-staging/.claude/settings.json", "deny"],
   ])("[v2] %s → %s", (p, expected) => {
     expect(edit(p, { tool: "Write" }).decision).toBe(expected);
+  });
+
+  it.each([
+    ".coordinator/ledgers/b-demo/9c1d.json",
+    ".coordinator/questions.json",
+    ".coordinator/meeting/b-demo/9c1d.json",
+    ".coordinator/issue-checks/b-demo/9c1d.json",
+    ".coordinator/decisions/decisions.jsonl",
+    ".coordinator/tests/T-abc/classification.json",
+  ])("[v2] denies Write to new state file %s", (p) => {
+    expect(edit(p, { tool: "Write" }).decision).toBe("deny");
+    expect(edit(p, { tool: "Edit" }).decision).toBe("deny");
+  });
+
+  it("[v2] COORDINATOR_HOME outside the repo is protected the same way (notes stay writable)", () => {
+    const home = mkdtempSync(join(tmpdir(), "coord-home-"));
+    roots.push(home);
+    const env = { COORDINATOR_HOME: home };
+    expect(edit(join(home, "ledgers", "x.json"), { tool: "Write", env }).decision).toBe("deny");
+    expect(edit(join(home, "meeting", "p", "m.json"), { tool: "Write", env }).decision).toBe("deny");
+    expect(edit(join(home, "questions.json"), { tool: "Write", env }).decision).toBe("deny");
+    expect(edit(join(home, "projects", "b-demo", "notes.md"), { env }).decision).toBeUndefined();
+  });
+
+  it("[v2] COORD_SECURE_DIR is never writable", () => {
+    const sec = mkdtempSync(join(tmpdir(), "coord-sec-"));
+    roots.push(sec);
+    expect(edit(join(sec, "approval-key.json"), { tool: "Write", env: { COORD_SECURE_DIR: sec } }).decision).toBe("deny");
   });
 
   it("[v2] guarded code is editable in dev mode", () => {

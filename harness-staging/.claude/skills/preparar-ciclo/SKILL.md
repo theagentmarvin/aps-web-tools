@@ -30,8 +30,10 @@ veredictos. Tú NO repites eso: no revisas lo heredado sin cambios, no reabres l
    (máx. 3 en paralelo). Prompt del lote: testKey, IDs, "ciclo ≥ 2: compara con la decisión previa", y las líneas
    relevantes de notes.md. Nada más.
 5. **Preguntas.** Revisa `mcp__coord__list_questions` (pendientes) para no duplicar. Si un caso no se puede
-   decidir con los datos, la respuesta es `mcp__coord__ask_coordinator` (`familyId` o `groupIds`, `kind`:
-   `validity` | `action` | `other`, ≤ 5 opciones), **nunca una suposición**.
+   decidir con los datos, la respuesta es `mcp__coord__ask_coordinator`, **nunca una suposición**: una pregunta por
+   familia (`familyId`) o por un conjunto pequeño de grupos (`groupIds`, ≤ 20); `kind` `validity` | `action` |
+   `other`; ≤ 5 opciones **estructuradas** `{label, validity?, action?}` (la respuesta se convierte en decisión sin
+   interpretar texto), p. ej. `{label: "Real: crear incidencia", validity: "real", action: "create_issue"}`.
 6. **Incidencias (M3).** `mcp__coord__list_issue_checks`: resume por veredicto (resuelta · avance · sigue_abierta ·
    dice_resuelta · no_verificable). Destaca "dice resuelta" con interferencias vigentes y P1 estancadas.
    No propones cambios de estado de incidencias: eso lo propone el motor y lo decide el humano.

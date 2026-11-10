@@ -34,6 +34,18 @@ const r = resolveToolPath(root, target, input.cwd);
 
 if (r.unresolvable) decide("deny", `${TAG} Ruta no resoluble para escritura: ${r.unresolvable}.`);
 
+// The coordinator state dir may live outside the repo (COORDINATOR_HOME for demos/evals) and the keystore
+// (COORD_SECURE_DIR): same rule as .coordinator/ wherever they are — only projects/<id>/notes.md is writable.
+for (const [envName, allowNotes] of [["COORDINATOR_HOME", true], ["COORD_SECURE_DIR", false]]) {
+  const dir = process.env[envName];
+  if (!dir) continue;
+  const inner = resolveToolPath(dir, target, input.cwd);
+  if (typeof inner.rel === "string") {
+    if (allowNotes && /^projects\/[^/]+\/notes\.md$/.test(inner.rel)) pass();
+    decide("deny", `${TAG} ${envName} lo gestiona el servidor; el agente no escribe ahí${allowNotes ? " (salvo projects/<id>/notes.md)" : ""}.`);
+  }
+}
+
 const SCRIPT_EXT = /\.(m?js|cjs|ts|mts|cts|tsx|jsx|ps1|psm1|psd1|py|sh|bash|zsh|bat|cmd|vbs|wsf|hta|lnk|reg|exe|dll)$/i;
 
 if (r.outside) {

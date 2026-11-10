@@ -129,13 +129,16 @@ const INLINE_RE = [
 const inlineInterpreter = isPowerShellTool || INLINE_RE.some((re) => re.test(raw));
 
 const NET_CLIENT =
-  /(\bcurl\b|\bwget\b|invoke-webrequest|invoke-restmethod|\biwr\b|\birm\b|start-bitstransfer|net\.webclient|httpclient|\bfetch\b|https?\.(get|request)|\baxios\b|\brequests\.|urllib|\bhttpie\b|\bnc\b|\bncat\b|\btelnet\b|\bsocat\b|s_client|xmlhttprequest|websocket|test-netconnection)/;
+  /(\bcurl\b|\bwget\b|\bwget2\b|invoke-webrequest|invoke-restmethod|\biwr\b|\birm\b|start-bitstransfer|net\.webclient|httpclient|\bfetch\b|https?\.(get|request)|\baxios\b|\bundici\b|\bgot\(|\brequests\.|urllib|httpx|aiohttp|\bhttpie\b|(^|[\s;&|])https?\s+(-{1,2}[\w-]+\s+)*(get|post|put|patch|delete|:\d|localhost|127\.|\[::1\])|\bxh\b|\baria2c\b|\blynx\b|\bw3m\b|\bnc\b|\bncat\b|\btelnet\b|\bsocat\b|s_client|xmlhttprequest|websocket|test-netconnection|bitsadmin|certutil\s+-urlcache)/;
 const LOOPBACK = /(localhost|127\.\d+|::1|0\.0\.0\.0|0x7f|2130706433|0177\.|::ffff:127|\blocaltest\.me|\.localhost\b)/;
 const API_PATH = /\/api\/(coord|auth|aps|s3-proxy)/;
 
 // Sensitive markers looked for in the SQUASHED command.
 const ALWAYS_SENSITIVE = [
+  // ALL of .coordinator/ (ledgers, questions.json, meeting/, issue-checks/, decisions/, tests/, batches, approvals…):
+  // forged ledger refs or meeting notes would fake human decisions or due-date quotes. Notes go through Read/Edit.
   [/\.coordinator/, "acceso por shell a .coordinator/ (usa las herramientas mcp__coord__* y Read/Edit de notas)"],
+  [/coordinator_home/, "acceso por shell al directorio de estado del coordinador (COORDINATOR_HOME)"],
   [/bim-coord/, "acceso al almacén de claves del coordinador"],
   [/coord_secure_dir/, "acceso al almacén de claves del coordinador"],
   [/approval[-.]?key|audit[-.]?key|aps-token|webauthn-cred|browser-session/, "acceso a llaves o tokens del coordinador"],
@@ -186,7 +189,18 @@ if (/(^|[\s;&|])(script|winpty|unbuffer|expect|conpty)(\s|$)|pty\.spawn|node-pty
 // ─────────────────────────────────────────────────────────────────────────────
 
 const usesNet = NET_CLIENT.test(raw) || inlineInterpreter;
-if (usesNet && (API_PATH.test(squashed) || API_PATH.test(raw))) deny("llamada a la API local del coordinador (/api/coord, /api/auth, /api/aps): las aprobaciones son solo humanas, en la UI");
+// The local API's human-only endpoints (approve, question answers, notes, verdict and family decisions,
+// discipline mappings, /csrf) must never be called from the agent's shell. Any mention of the API path is denied
+// unless EVERY segment is a read-only text tool (grep/rg/cat/… over source code) — whatever HTTP client is used.
+const READ_ONLY_TEXT = new Set(["grep", "rg", "egrep", "fgrep", "cat", "less", "more", "head", "tail", "wc", "ls", "find", "git", "select-string", "get-content", "type", "findstr"]);
+const onlyReadOnlyText = splitSegments(cmd).every((s) => {
+  const t = stripPrefixes(tokenize(s));
+  const h = base(t[0]);
+  return READ_ONLY_TEXT.has(h) && !(h === "find" && /-exec|-delete|-ok/.test(s));
+});
+if ((API_PATH.test(squashed) || API_PATH.test(raw)) && (usesNet || !onlyReadOnlyText)) {
+  deny("llamada a la API local del coordinador (/api/coord, /api/auth, /api/aps): aprobaciones, respuestas, notas y decisiones son solo humanas, en la UI");
+}
 if (usesNet && LOOPBACK.test(squashed) && /\/api|%[0-9a-f]{2}/.test(squashed)) deny("llamada HTTP a un servidor local");
 if (usesNet && /autodesk\.com|autodesk360|\/bim360\/|\/construction\//.test(squashed)) deny("llamada directa a APIs de Autodesk; usa las herramientas mcp__coord__*");
 
