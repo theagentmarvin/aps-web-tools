@@ -212,7 +212,7 @@
     "pendingHigh": "Pendientes P1–P2",
     "lowConfidence": "Baja confianza",
     "newInTest": "Nuevas en esta prueba",
-    "proposedFalsePositives": "Falsos positivos propuestos",
+    "proposedFalsePositives": "Propuestas «No es problema»",
     "withIssueDraft": "Con borrador de incidencia",
     "resolvedByTest": "Resueltas por la prueba"
   },
@@ -256,12 +256,18 @@
     "short4": "P4"
   },
   "validity": {
-    "valid": "Real",
-    "falsePositive": "Falso positivo",
-    "tolerable": "Tolerada",
+    "valid": "Conflicto",
+    "falsePositive": "No es problema",
+    "tolerable": "Dentro de tolerancia",
     "duplicate": "Duplicada",
     "toConfirm": "Por confirmar",
-    "needsInfo": "Requiere información"
+    "needsInfo": "Falta información",
+    "tip": {
+      "valid": "Conflicto: interferencia física real que alguien debe resolver",
+      "falsePositive": "No es problema: los elementos no chocan de verdad (modelado, duplicado o conexión propia)",
+      "tolerable": "Dentro de tolerancia: se tocan, pero dentro de lo admisible (aislación, holgura aceptada)",
+      "needsInfo": "Falta información: no se puede decidir sin un dato más (cota, sistema, disciplina)"
+    }
   },
   "accStatus": {
     "active": "Activa",
@@ -878,7 +884,7 @@
     "rowClashes_one": "{count} interferencia",
     "rowClashes_other": "{count} interferencias",
     "cellTitle": "{a} × {b}",
-    "cellTooltip": "{clashes} interferencias · {groups} grupos · {real} reales · {p1} P1 · {review} por revisar · {fresh} nuevas",
+    "cellTooltip": "{clashes} interferencias · {groups} grupos · {real} conflictos · {p1} P1 · {review} por revisar · {fresh} nuevas",
     "cellTooltipCounts": "{clashes} interferencias · {fresh} nuevas (sin clasificar)",
     "gridLabel": "Matriz de interferencias por par de modelos",
     "keyboardHint": "Flechas para moverte entre celdas, Enter para abrir la coordinación filtrada por ese par.",
@@ -1057,8 +1063,8 @@
     "approveConfirm": "Aplicar a {instances} ubicaciones",
     "approveSummary": "{validity} · {action} · mueve {owner}",
     "validityChangesTitle": "Cambian de validez ({count}): marca cada una para confirmar",
-    "protectedRealTitle": "{count} ubicaciones reales no se cierran",
-    "protectedRealBody": "Una decisión de grupo nunca cierra interferencias reales: quedan para decidirlas una por una.",
+    "protectedRealTitle": "{count} ubicaciones con conflicto no se cierran",
+    "protectedRealBody": "Una decisión de grupo nunca cierra conflictos: quedan para decidirlos uno por uno.",
     "nothingToApply": "No queda ninguna ubicación a la que aplicar la decisión.",
     "previewIssues": "El lote generaría {count} incidencia(s) en ACC al aprobarse.",
     "approveFootnote": "Se registra como decisión humana auditada; nada se escribe en ACC hasta aprobar el lote.",
@@ -1096,7 +1102,7 @@
   "acc": {
     "closedTip": "Cerrada en ACC · motivo: {reason}",
     "assignedTip": "Incidencia en ACC: {ids} · {existing} siguen · {resolved} resueltas",
-    "closedWhileReal": "Cerrada en ACC ({reason}) pero el motor la ve real: confirmar."
+    "closedWhileReal": "Cerrada en ACC ({reason}) pero el motor la ve como conflicto: confirmar."
   },
   "lens": {
     "label": "Lentes",
@@ -1309,8 +1315,8 @@
     "thinking": "Pensando…",
     "cancel": "Cancelar",
     "send": "Enviar",
-    "placeholder": "Escribe tu pregunta (Enter envía, Shift+Enter salto de línea)",
-    "footer": "Se envía con el contexto de las etiquetas de arriba; quita las que no quieras.",
+    "placeholder": "Escribe tu pregunta…",
+    "footer": "Se envía con este contexto; quita lo que no quieras.",
     "contextLabel": "Contexto que se enviará",
     "ctx": {
       "lens": "Lente: {lens}",
@@ -1322,16 +1328,24 @@
       "selection_one": "{count} elemento seleccionado en el visor",
       "selection_other": "{count} elementos seleccionados en el visor",
       "selectionCapped": "{cap} de {count} elementos seleccionados en el visor",
-      "drop": "Quitar «{label}» del contexto"
+      "drop": "Quitar «{label}» del contexto",
+      "none": "sin contexto",
+      "selShort_one": "{count} elem.",
+      "selShort_other": "{count} elem.",
+      "selShortCapped": "{cap} de {count} elem."
     },
     "prompt": {
       "why": "¿Por qué es {validity}?",
-      "regroup": "Agrupa estas interferencias con su grupo",
+      "regroup": "Agrupa los elementos seleccionados",
       "issue": "Redacta la incidencia",
       "verdict": "¿Por qué este veredicto?",
       "changed": "¿Qué cambió desde la versión anterior?",
       "p1": "¿Qué P1 debería revisar primero?",
-      "summary": "Resume este grupo en 3 líneas"
+      "summary": "Resume este grupo en 3 líneas",
+      "explain": "Explícame este grupo",
+      "solution": "¿Qué solución recomiendas?",
+      "issueExplain": "Explícame esta incidencia",
+      "first": "¿Qué debería revisar primero?"
     },
     "kind": {
       "decision": "Decisión",
@@ -1371,7 +1385,10 @@
     "cost": "US$ {usd}",
     "duration": "{s} s",
     "newSession": "Nueva conversación",
-    "noTarget": "La propuesta aún no aparece en la prueba; actualiza las propuestas y vuelve a intentarlo."
+    "noTarget": "La propuesta aún no aparece en la prueba; actualiza las propuestas y vuelve a intentarlo.",
+    "suggestions": "Sugerencias",
+    "contextShort": "Contexto:",
+    "inputHint": "Enter envía · Shift+Enter nueva línea"
   },
   "toolbar": {
     "label": "Barra de herramientas del espacio de coordinación",

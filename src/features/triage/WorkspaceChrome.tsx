@@ -14,7 +14,7 @@ import type { Priority, Validity } from "~/lib/api/types";
 import { useAgentStatus } from "~/lib/components/shell-widgets";
 import { IconX } from "~/lib/components/icons";
 import { Kbd, ProgressBar, inputCls } from "~/lib/components/ui";
-import { DECISION_KEY, PRIORITY_KEY, VALIDITY_KEY, VALIDITY_ORDER } from "~/lib/labels";
+import { DECISION_KEY, PRIORITY_KEY, VALIDITY_KEY, VALIDITY_ORDER, VALIDITY_TIP } from "~/lib/labels";
 import { latestDecisions } from "~/lib/api/decision-utils";
 import { useTriageContext } from "./actions";
 import { StatusLine } from "./StatusLine";
@@ -317,7 +317,7 @@ export function SelectionBar() {
       <select aria-label={t("actions.setValidity")} className={`${inputCls} py-0.5 text-xs`} value="" onChange={(e) => e.target.value && actions.bulkValidity(e.target.value as Validity)}>
         <option value="">{t("actions.setValidity")} ▾</option>
         {VALIDITY_ORDER.map((v) => (
-          <option key={v} value={v}>
+          <option key={v} value={v} title={t(VALIDITY_TIP[v])}>
             {t(VALIDITY_KEY[v])}
           </option>
         ))}

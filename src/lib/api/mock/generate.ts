@@ -161,8 +161,8 @@ const VALIDITY_RULES: Record<MockKind, string[]> = {
 };
 
 const VALIDITY_ES: Record<MockKind, string> = {
-  real: "válida",
-  false_positive: "falso positivo",
+  real: "conflicto",
+  false_positive: "no es problema",
   duplicate: "duplicada",
   tolerance: "dentro de tolerancia",
   by_design: "pasada prevista",

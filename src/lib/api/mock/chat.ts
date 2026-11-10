@@ -55,7 +55,7 @@ export class MockChat {
         "Lo que veo:",
         "- La penetración máxima supera la tolerancia del par, así que no es un contacto superficial.",
         "- No hay una pasada modelada a menos de 50 mm del punto de choque.",
-        `- Sugiero tratarlo como \`real\` y crear una incidencia para la disciplina que mueve.`,
+        `- Sugiero tratarlo como **conflicto** y crear una incidencia para la disciplina que mueve.`,
         "",
         "Dejé una **propuesta** abajo: no se aplica nada hasta que la apruebes.",
       ]
@@ -70,8 +70,8 @@ export class MockChat {
       const proposal: ChatProposal = sel
         ? { id: `CP-${this.seq}-${Date.now()}`, kind: "regroup", summary: `Agrupar ${sel} elementos seleccionados con ${focus?.label ?? "el grupo actual"}`, targetCount: sel, groupIds: focus?.kind === "group" ? [focus.id] : [] }
         : focus?.kind === "family"
-          ? { id: `CP-${this.seq}-${Date.now()}`, kind: "family_decision", summary: `Decidir el grupo como real · crear incidencia`, targetCount: 1, familyId: focus.id }
-          : { id: `CP-${this.seq}-${Date.now()}`, kind: "decision", summary: `Marcar como real y crear incidencia`, targetCount: 1, groupIds: focus?.kind === "group" ? [focus.id] : [], clashIds: focus?.kind === "clash" ? [focus.id] : [] };
+          ? { id: `CP-${this.seq}-${Date.now()}`, kind: "family_decision", summary: `Decidir el grupo como conflicto · crear incidencia`, targetCount: 1, familyId: focus.id }
+          : { id: `CP-${this.seq}-${Date.now()}`, kind: "decision", summary: `Marcar como conflicto y crear incidencia`, targetCount: 1, groupIds: focus?.kind === "group" ? [focus.id] : [], clashIds: focus?.kind === "clash" ? [focus.id] : [] };
       answer.proposals!.push(proposal);
       onEvent({ type: "proposal", proposal });
       const started = Date.parse(answer.at);

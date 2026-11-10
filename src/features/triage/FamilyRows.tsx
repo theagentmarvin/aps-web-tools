@@ -174,6 +174,8 @@ export const FamilyRow = memo(function FamilyRow({ row }: { row: Row }) {
   const st = store.state.familyStats.get(f.id);
   const note = store.state.notes.get(`family:${f.id}`)?.text;
   const decided = f.decision?.status === "approved";
+  // Rows show the validity only when it is the exception (not "Conflicto"); the panel always shows it.
+  const rowValidity = f.decision?.status === "approved" ? f.decision.validity : f.proposed.validity;
   return (
     <div
       id={`row-${row.key}`}
@@ -193,9 +195,11 @@ export const FamilyRow = memo(function FamilyRow({ row }: { row: Row }) {
       <div className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
         <div className="flex min-w-0 items-center gap-1.5 overflow-hidden">
           {worst && <PriorityChip value={worst} />}
-          <span className="shrink-0 text-xs">
-            <ValidityBadge value={f.decision?.status === "approved" ? f.decision.validity : f.proposed.validity} />
-          </span>
+          {rowValidity !== "real" && (
+            <span className="shrink-0 text-xs">
+              <ValidityBadge value={rowValidity} />
+            </span>
+          )}
           <FamilyStatusChip family={f} />
           <span className="ml-auto shrink-0 whitespace-nowrap text-[11px] text-gray-500" title={`${t("families.uniqueTooltip", { raw: f.rawClashCount, unique: f.uniqueClashCount })}
 ${f.levels.join(", ")}`}>

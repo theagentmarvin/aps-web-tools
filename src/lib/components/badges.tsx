@@ -6,7 +6,7 @@ import { Link } from "react-router";
 import { useI18n, useT } from "~/i18n";
 import { band } from "~/lib/api/decision-utils";
 import type { AccStatus, ConfidenceBandName, DecisionState, Delta, FieldSource, Nature, Priority, Severity, Validity } from "~/lib/api/types";
-import { DECISION_KEY, DELTA_KEY, NATURE_KEY, PRIORITY_SHORT_KEY, SEVERITY_KEY, STATUS_KEY, VALIDITY_KEY } from "~/lib/labels";
+import { DECISION_KEY, DELTA_KEY, NATURE_KEY, PRIORITY_SHORT_KEY, SEVERITY_KEY, STATUS_KEY, VALIDITY_KEY, VALIDITY_TIP } from "~/lib/labels";
 import { useSettings } from "~/lib/settings";
 import { IconAlert, IconCheck, IconCircle, IconInherited, IconPause, IconPencil, IconX, SideASwatch, SideBSwatch } from "./icons";
 
@@ -116,7 +116,7 @@ const VALIDITY_CLS: Record<Validity, string> = {
 export function ValidityBadge({ value }: { value: Validity }) {
   const t = useT();
   return (
-    <span className={`inline-flex items-center gap-1 ${VALIDITY_CLS[value]}`}>
+    <span title={t(VALIDITY_TIP[value])} className={`inline-flex items-center gap-1 ${VALIDITY_CLS[value]}`}>
       {value === "needs_info" && <IconAlert size={12} />}
       {t(VALIDITY_KEY[value])}
     </span>

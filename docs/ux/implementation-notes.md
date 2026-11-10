@@ -195,7 +195,7 @@ Plan: `docs/PLAN-core-features-simplified.md` (approved). Contract: `ClashGroup.
 | Row | Chip 1 | Chip 2 | Chip 3 (one status chip, by precedence) | State icon (one, by precedence) |
 |---|---|---|---|---|
 | Ubicación | Priority | Discipline pair | Reapareció > Cambió > Nuevo | Your decision in this version (✓ ✎ ✕ ⏸) > open agent question **?** (M2) > ACC: closed ⊘ / assigned or mixed (issue icon; tooltip with issue ids, "siguen" / "resueltas") > exception ⚑ > inherited ↺ (tooltip "Heredada de v10 · decidida por ti / por el grupo / en ACC") / ◌ > meeting note (M4, only when nothing above applies) > pending ○ |
-| Grupo | Worst priority | Validity | Reapareció > Cambió > Nuevo > validez mixta > orientación por confirmar > Típico | Decided ✓ > ACC (aggregated) |
+| Grupo | Worst priority | Validity, **only when it is not "Conflicto"** (No es problema / Dentro de tolerancia / Falta información); the panel always shows it | Reapareció > Cambió > Nuevo > validez mixta > orientación por confirmar > Típico | Decided ✓ > ACC (aggregated) |
 | Interferencia (flat) | Priority | — | Reapareció > Cambió > Nuevo | Same as ubicación (ACC from its group) |
 | Nodes (par / tipo) | Worst priority | — | — | — (counts and "N por revisar" as text) |
 
@@ -363,3 +363,26 @@ Propose-only domain agent (docs/ai/chat-agent-design.md). The UI never applies a
   - At ≤ 1366 px (`TOOLBAR_COMPACT_QUERY`) it also gets Orden, Vistas and Analizar.
   - At that width the search collapses to an icon that expands on focus; "/" still focuses it.
 - **Content top (list | viewer | tabs):** 147 px → 84 px at 1600×1000 (+63 px); 191 px → 84 px at 1366×768 (+107 px; the old workspace row wrapped to 2 lines there).
+
+## Chat input compaction + validity wording (2026-11-10, product owner)
+
+- **Chat input area (Agente tab).**
+  - The suggested prompts moved into a ✨ "Sugerencias" button next to Enviar. It opens a menu above the input with ↑/↓ and Esc; picking a prompt fills the input and never sends it.
+  - In an empty conversation, the same prompts are also listed in the message area.
+  - The prompts use plain coordinator language and appear only when they apply:
+    - with a row focused: "Explícame este grupo", "¿Qué solución recomiendas?";
+    - when the row is a Conflicto: "Redacta la incidencia";
+    - for an issue: "Explícame esta incidencia";
+    - with a viewer selection: "Agrupa los elementos seleccionados";
+    - when there is a previous version: "¿Qué cambió desde la versión anterior?";
+    - with no row focused: "¿Qué debería revisar primero?".
+  - The context chips became ONE 24 px line, "Contexto: <grupo> · <lente> · N elem.", truncated with the full list in its tooltip. Clicking it opens a popover where each item has an ×. "Nueva conversación" sits at the right of that line.
+  - The input auto-grows from 1 to 6 lines. Its placeholder is "Escribe tu pregunta…", and the Enter / Shift+Enter hint is in the tooltip.
+  - The message area at 1366×768 grew 451 → 545 px (mock) and 409 → 545 px (live v11). The input block shrank from 174 / 215 px to 79 px.
+- **Validity wording.** Only the UI labels change; the API values stay the same.
+  - real → "Conflicto" (en "Clash");
+  - false_positive → "No es problema" ("Not an issue");
+  - tolerated → "Dentro de tolerancia" ("Within tolerance");
+  - needs_info → "Falta información" ("Needs info").
+  - Every label has a one-line definition as its tooltip (`VALIDITY_TIP` in `src/lib/labels.ts`), shown on the ValidityBadge, the selects, the validity dialog and the filter values.
+  - `tests/ui/validity-wording.test.ts` pins this wording.

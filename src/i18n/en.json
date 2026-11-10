@@ -212,7 +212,7 @@
     "pendingHigh": "Pending P1–P2",
     "lowConfidence": "Low confidence",
     "newInTest": "New in this test",
-    "proposedFalsePositives": "Proposed false positives",
+    "proposedFalsePositives": "Proposed «Not an issue»",
     "withIssueDraft": "With issue draft",
     "resolvedByTest": "Resolved by the test"
   },
@@ -256,12 +256,18 @@
     "short4": "P4"
   },
   "validity": {
-    "valid": "Real",
-    "falsePositive": "False positive",
-    "tolerable": "Tolerated",
+    "valid": "Clash",
+    "falsePositive": "Not an issue",
+    "tolerable": "Within tolerance",
     "duplicate": "Duplicate",
     "toConfirm": "To confirm",
-    "needsInfo": "Needs information"
+    "needsInfo": "Needs info",
+    "tip": {
+      "valid": "Clash: a real physical interference someone must resolve",
+      "falsePositive": "Not an issue: the elements do not really clash (modelling, duplicate or own connection)",
+      "tolerable": "Within tolerance: they touch, but within what is acceptable (insulation, accepted clearance)",
+      "needsInfo": "Needs info: it cannot be decided without one more fact (elevation, system, discipline)"
+    }
   },
   "accStatus": {
     "active": "Active",
@@ -878,7 +884,7 @@
     "rowClashes_one": "{count} clash",
     "rowClashes_other": "{count} clashes",
     "cellTitle": "{a} × {b}",
-    "cellTooltip": "{clashes} clashes · {groups} groups · {real} real · {p1} P1 · {review} to review · {fresh} new",
+    "cellTooltip": "{clashes} clashes · {groups} groups · {real} marked Clash · {p1} P1 · {review} to review · {fresh} new",
     "cellTooltipCounts": "{clashes} clashes · {fresh} new (not classified)",
     "gridLabel": "Clash grid by model pair",
     "keyboardHint": "Arrow keys move between cells, Enter opens coordination filtered by that pair.",
@@ -1057,8 +1063,8 @@
     "approveConfirm": "Apply to {locations} locations",
     "approveSummary": "{validity} · {action} · {owner} moves",
     "validityChangesTitle": "Validity changes ({count}): tick each to confirm",
-    "protectedRealTitle": "{count} real locations are not closed",
-    "protectedRealBody": "A group decision never closes real clashes: they stay for an individual decision.",
+    "protectedRealTitle": "{count} locations marked Clash are not closed",
+    "protectedRealBody": "A group decision never closes Clash items: they stay for an individual decision.",
     "nothingToApply": "No location left to apply the decision to.",
     "previewIssues": "The batch would create {count} ACC issue(s) once approved.",
     "approveFootnote": "Recorded as an audited human decision; nothing is written to ACC until the batch is approved.",
@@ -1096,7 +1102,7 @@
   "acc": {
     "closedTip": "Closed in ACC · reason: {reason}",
     "assignedTip": "ACC issue: {ids} · {existing} still clash · {resolved} resolved",
-    "closedWhileReal": "Closed in ACC ({reason}) but the engine sees it as real: confirm."
+    "closedWhileReal": "Closed in ACC ({reason}) but the engine sees it as a Clash: confirm."
   },
   "lens": {
     "label": "Lenses",
@@ -1309,8 +1315,8 @@
     "thinking": "Thinking…",
     "cancel": "Cancel",
     "send": "Send",
-    "placeholder": "Type your question (Enter sends, Shift+Enter new line)",
-    "footer": "Sent with the context chips above; remove the ones you don't want.",
+    "placeholder": "Type your question…",
+    "footer": "Sent with this context; remove what you do not want.",
     "contextLabel": "Context to be sent",
     "ctx": {
       "lens": "Lens: {lens}",
@@ -1322,16 +1328,24 @@
       "selection_one": "{count} element selected in the viewer",
       "selection_other": "{count} elements selected in the viewer",
       "selectionCapped": "{cap} of {count} elements selected in the viewer",
-      "drop": "Remove \"{label}\" from the context"
+      "drop": "Remove \"{label}\" from the context",
+      "none": "no context",
+      "selShort_one": "{count} elem.",
+      "selShort_other": "{count} elem.",
+      "selShortCapped": "{cap} of {count} elem."
     },
     "prompt": {
       "why": "Why is it {validity}?",
-      "regroup": "Group these clashes with their group",
+      "regroup": "Group the selected elements",
       "issue": "Draft the issue",
       "verdict": "Why this verdict?",
       "changed": "What changed since the previous version?",
       "p1": "Which P1 should I review first?",
-      "summary": "Summarise this group in 3 lines"
+      "summary": "Summarise this group in 3 lines",
+      "explain": "Explain this group to me",
+      "solution": "What solution do you recommend?",
+      "issueExplain": "Explain this issue to me",
+      "first": "What should I review first?"
     },
     "kind": {
       "decision": "Decision",
@@ -1371,7 +1385,10 @@
     "cost": "US$ {usd}",
     "duration": "{s} s",
     "newSession": "New conversation",
-    "noTarget": "The proposal is not in the test yet; refresh proposals and try again."
+    "noTarget": "The proposal is not in the test yet; refresh proposals and try again.",
+    "suggestions": "Suggestions",
+    "contextShort": "Context:",
+    "inputHint": "Enter sends · Shift+Enter new line"
   },
   "toolbar": {
     "label": "Coordination workspace toolbar",

@@ -11,6 +11,14 @@ export const VALIDITY_KEY: Record<Validity, TKey> = {
   needs_info: "validity.needsInfo",
 };
 
+/** One-line definition shown as the tooltip of every validity label. */
+export const VALIDITY_TIP: Record<Validity, TKey> = {
+  real: "validity.tip.valid",
+  false_positive: "validity.tip.falsePositive",
+  tolerated: "validity.tip.tolerable",
+  needs_info: "validity.tip.needsInfo",
+};
+
 /** Order of the `v` validity menu (digits 1..4). */
 export const VALIDITY_ORDER: Validity[] = ["real", "false_positive", "tolerated", "needs_info"];
 

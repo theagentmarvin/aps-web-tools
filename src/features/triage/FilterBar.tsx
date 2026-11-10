@@ -7,6 +7,8 @@ import { useT, type TKey } from "~/i18n";
 import { IconPlus, IconSearch, IconSort, IconStar, IconX } from "~/lib/components/icons";
 import { inputCls } from "~/lib/components/ui";
 import { readJson, writeJson } from "~/lib/storage";
+import { VALIDITY_TIP } from "~/lib/labels";
+import type { Validity } from "~/lib/api/types";
 import { useTriageContext } from "./actions";
 import { FILTER_KEYS, FIXED_VALUES, SORT_KEYS, facetCounts, isDefaultQuery, tokenLabelKey, type FilterKey, type Filters, type ListQuery, type SortKey } from "./filters";
 import { useTriage } from "./store";
@@ -124,7 +126,7 @@ function FilterChip({ fkey, query, onChange, autoOpen }: { fkey: FilterKey; quer
         <Popover onClose={() => setOpen(false)}>
           <div role="listbox" aria-multiselectable="true">
             {values.map((v, i) => (
-              <label key={v} className="flex cursor-pointer items-center gap-2 px-3 py-1 hover:bg-brand-surface">
+              <label key={v} title={fkey === "validity" && v in VALIDITY_TIP ? t(VALIDITY_TIP[v as Validity]) : undefined} className="flex cursor-pointer items-center gap-2 px-3 py-1 hover:bg-brand-surface">
                 <input type="checkbox" autoFocus={i === 0} className="accent-brand" checked={selected.includes(v)} onChange={() => toggle(v)} />
                 <span className="flex-1">{label(v)}</span>
                 <span className="font-mono text-[11px] text-gray-400">{counts.get(v) ?? 0}</span>

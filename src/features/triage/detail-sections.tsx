@@ -10,7 +10,7 @@ import type { Clash, Decision, ElementInfo, ElementProperties, FieldSource, Issu
 import { ConfidenceBadge, DecisionStateIcon, SourceBadge } from "~/lib/components/badges";
 import { SideASwatch, SideBSwatch } from "~/lib/components/icons";
 import { Kbd, inputCls } from "~/lib/components/ui";
-import { DECISION_KEY, PRIORITY_KEY, STATUS_KEY, VALIDITY_KEY, VALIDITY_ORDER } from "~/lib/labels";
+import { DECISION_KEY, PRIORITY_KEY, STATUS_KEY, VALIDITY_KEY, VALIDITY_ORDER, VALIDITY_TIP } from "~/lib/labels";
 import { useTriageContext } from "./actions";
 import type { Evaluated } from "./filters";
 import type { PairSummary } from "./pair-summary";
@@ -167,7 +167,7 @@ export function InlineEditor({ proposal }: { proposal: Proposal }) {
         <span className="text-xs text-gray-500">{t("detail.field.validity")}</span>
         <select autoFocus className={`${inputCls} min-w-0`} value={v} onChange={(e) => store.setEdits(targetId, { validity: e.target.value as Validity })}>
           {VALIDITY_ORDER.map((x) => (
-            <option key={x} value={x}>
+            <option key={x} value={x} title={t(VALIDITY_TIP[x])}>
               {t(VALIDITY_KEY[x])}
             </option>
           ))}

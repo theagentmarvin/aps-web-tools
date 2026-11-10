@@ -12,7 +12,7 @@ import { useSettings } from "~/lib/settings";
 import { Modal } from "~/lib/components/Modal";
 import { Button, Kbd, inputCls } from "~/lib/components/ui";
 import { displayKey, useHotkeyDocs, type HotkeyGroup } from "~/lib/hotkeys";
-import { FIELD_KEY, PRIORITY_KEY, VALIDITY_KEY, VALIDITY_ORDER } from "~/lib/labels";
+import { FIELD_KEY, PRIORITY_KEY, VALIDITY_KEY, VALIDITY_ORDER, VALIDITY_TIP } from "~/lib/labels";
 import { BULK_CAP, REASONS_BY_FIELD, changesFromEdits, isRisky, useTriageContext } from "./actions";
 import { parseKey, useTriage, type Dialog } from "./store";
 import { FamilyApproveDialog, FamilyRejectDialog } from "./FamilyDialogs";
@@ -133,7 +133,7 @@ function ValidityMenu() {
       <ul className="space-y-1">
         {VALIDITY_ORDER.map((v, i) => (
           <li key={v}>
-            <button type="button" onClick={() => pick(v)} className="flex w-full items-center gap-2 rounded px-2 py-1 text-left hover:bg-brand-surface">
+            <button type="button" onClick={() => pick(v)} title={t(VALIDITY_TIP[v])} className="flex w-full items-center gap-2 rounded px-2 py-1 text-left hover:bg-brand-surface">
               <Kbd>{i + 1}</Kbd>
               {t(VALIDITY_KEY[v])}
             </button>

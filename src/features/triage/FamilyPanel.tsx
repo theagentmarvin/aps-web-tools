@@ -13,7 +13,7 @@ import { categoryTitle } from "~/lib/category-names";
 import { PriorityChip, ValidityBadge } from "~/lib/components/badges";
 import { IconChevronLeft, IconChevronRight } from "~/lib/components/icons";
 import { EmptyState, Kbd } from "~/lib/components/ui";
-import { VALIDITY_KEY, VALIDITY_ORDER } from "~/lib/labels";
+import { VALIDITY_KEY, VALIDITY_ORDER, VALIDITY_TIP } from "~/lib/labels";
 import { FAMILY_ACTIONS, isClosingAction, problemTypeOf } from "~/lib/problem-types";
 import { useTriageContext } from "./actions";
 import { Section, useSectionPrefs } from "./detail-accordion";
@@ -219,7 +219,7 @@ function FamilyProposal({ f, draft, options, impact }: { f: TriageFamily; draft:
             <span className="text-xs text-gray-500">{t("detail.field.validity")}</span>
             <select className={sel} value={draft.validity} onChange={(e) => store.setFamilyDraft(f.id, { validity: e.target.value as Validity })}>
               {VALIDITY_ORDER.map((v) => (
-                <option key={v} value={v}>
+                <option key={v} value={v} title={t(VALIDITY_TIP[v])}>
                   {t(VALIDITY_KEY[v])}
                 </option>
               ))}

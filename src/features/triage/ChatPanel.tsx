@@ -10,7 +10,7 @@ import { useI18n, useT, type TFunction } from "~/i18n";
 import { useApi } from "~/lib/api";
 import type { ChatContext, ChatErrorCode, ChatMessage, ChatProposal, ChatSelectedElement, ChatStatus } from "~/lib/api/types";
 import { useToast } from "~/lib/components/Toast";
-import { VALIDITY_KEY } from "~/lib/labels";
+import { IconChevronDown, IconSparkle } from "~/lib/components/icons";
 import { readJson, readString, writeJson, writeString } from "~/lib/storage";
 import { useTriageContext } from "./actions";
 import { useTriage, type TriageStore } from "./store";
@@ -101,19 +101,28 @@ export function buildContext(store: TriageStore, selection: ChatSelectedElement[
   return ctx;
 }
 
-/** Three prompts that fit the context. */
+/**
+ * Suggested prompts in plain coordinator language (no validity jargon), only
+ * the ones that apply to the current context (focused row, viewer selection,
+ * a previous version to compare with).
+ */
 export function suggestedPrompts(t: TFunction, store: TriageStore, selectionCount: number): string[] {
   const s = store.state;
   const key = s.cursorKey;
   const out: string[] = [];
+  const row = key && (key.startsWith("f:") || key.startsWith("g:") || key.startsWith("c:"));
   const gid = key?.startsWith("g:") ? key.slice(2) : key?.startsWith("c:") ? s.clashes.get(key.slice(2))?.groupId : undefined;
   const validity = gid ? s.groups.get(gid)?.validity : key?.startsWith("f:") ? s.families.get(key.slice(2))?.proposed.validity : undefined;
-  if (validity) out.push(t("chat.prompt.why", { validity: t(VALIDITY_KEY[validity]).toLowerCase() }));
+  if (row) {
+    out.push(t("chat.prompt.explain"));
+    out.push(t("chat.prompt.solution"));
+    if (validity === "real") out.push(t("chat.prompt.issue"));
+  }
+  if (key?.startsWith("i:")) out.push(t("chat.prompt.issueExplain"));
   if (selectionCount) out.push(t("chat.prompt.regroup"));
-  if (validity === "real") out.push(t("chat.prompt.issue"));
-  if (key?.startsWith("i:")) out.push(t("chat.prompt.verdict"));
-  for (const p of [t("chat.prompt.changed"), t("chat.prompt.p1"), t("chat.prompt.summary")]) if (out.length < 3 && !out.includes(p)) out.push(p);
-  return out.slice(0, 3);
+  if (store.hasPrevious()) out.push(t("chat.prompt.changed"));
+  if (!row) out.push(t("chat.prompt.first"));
+  return out;
 }
 
 const ERROR_KEY: Record<ChatErrorCode, Parameters<TFunction>[0]> = {
@@ -278,6 +287,36 @@ export function ChatPanel() {
   }
 
   const drop = (k: string) => setDropped((d) => new Set(d).add(k));
+  // Input: auto-grow from 1 to 6 lines.
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight + 2}px`;
+  }, [input]);
+  /** A suggestion fills the input (never auto-sends). */
+  function fill(p: string) {
+    setInput(p);
+    window.setTimeout(() => inputRef.current?.focus(), 0);
+  }
+  const ctxItems: ContextItem[] = [];
+  if (ctx.focus && ctx.focus.kind !== "node") {
+    const label = ctx.focus.label ?? ctx.focus.id;
+    ctxItems.push({ key: "focus", short: label, full: t(`chat.ctx.${ctx.focus.kind}` as Parameters<TFunction>[0], { label }), onDrop: () => drop("focus") });
+  }
+  if (ctx.lens) {
+    const lens = t(`lens.${ctx.lens}` as Parameters<TFunction>[0]);
+    ctxItems.push({ key: "lens", short: lens, full: t("chat.ctx.lens", { lens }), onDrop: () => drop("lens") });
+  }
+  if (ctx.selection) {
+    ctxItems.push({
+      key: "selection",
+      short: selection.truncated ? t("chat.ctx.selShortCapped", { cap: ctx.selection.length, count: selection.total }) : t("chat.ctx.selShort", { count: ctx.selection.length }),
+      full: selection.truncated ? t("chat.ctx.selectionCapped", { count: selection.total, cap: ctx.selection.length }) : t("chat.ctx.selection", { count: ctx.selection.length }),
+      onDrop: () => drop("selection"),
+    });
+  }
   // "Preguntar al agente sobre esto": the focus chip comes back even if it was dropped.
   const askNonce = useTriage(store, (s) => s.chatAskNonce);
   useEffect(() => {
@@ -312,7 +351,23 @@ export function ChatPanel() {
             <p className="font-medium">{t(ERROR_KEY[blocked])}</p>
           </div>
         )}
-        {!messages.length && !streaming && <p className="text-xs text-gray-500">{t("chat.empty")}</p>}
+        {!messages.length && !streaming && (
+          <div className="text-xs text-gray-500">
+            <p>{t("chat.empty")}</p>
+            {/* Empty conversation: the suggestions are listed here (they fill the input, never auto-send). */}
+            {!blocked && prompts.length > 0 && (
+              <ul className="mt-2 space-y-1">
+                {prompts.map((p) => (
+                  <li key={p}>
+                    <button type="button" onClick={() => fill(p)} className="text-left text-violet-800 hover:underline">
+                      {p}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
         {[...messages, ...(streaming ? [streaming] : [])].map((m, i) => (
           <Fragment key={i}>
             {m.role === "user" ? (
@@ -340,30 +395,14 @@ export function ChatPanel() {
 
       <div className="flex-shrink-0 border-t border-brand-muted/20 px-3 py-2">
         {status && (
-          <p className="mb-1.5 flex items-center justify-between gap-2 text-[11px] text-violet-800" role="status">
+          <p className="mb-1 flex items-center justify-between gap-2 text-[11px] text-violet-800" role="status">
             <span className="truncate">{status}</span>
             <button type="button" onClick={cancel} className="shrink-0 rounded border border-violet-300 px-1.5 text-[11px] hover:bg-violet-50">
               {t("chat.cancel")}
             </button>
           </p>
         )}
-        <div className="mb-1.5 flex flex-wrap gap-1">
-          {prompts.map((p) => (
-            <button key={p} type="button" disabled={busy || !!blocked} onClick={() => void send(p)} className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] text-violet-900 hover:border-violet-400 disabled:opacity-50">
-              {p}
-            </button>
-          ))}
-        </div>
-        <div className="mb-1.5 flex flex-wrap gap-1" aria-label={t("chat.contextLabel")}>
-          {ctx.lens && <ContextChip label={t("chat.ctx.lens", { lens: t(`lens.${ctx.lens}` as Parameters<TFunction>[0]) })} onDrop={() => drop("lens")} />}
-          {ctx.focus && ctx.focus.kind !== "node" && <ContextChip label={t(`chat.ctx.${ctx.focus.kind}` as Parameters<TFunction>[0], { label: (ctx.focus.label ?? ctx.focus.id).slice(0, 48) })} onDrop={() => drop("focus")} />}
-          {ctx.selection && (
-            <ContextChip
-              label={selection.truncated ? t("chat.ctx.selectionCapped", { count: selection.total, cap: ctx.selection.length }) : t("chat.ctx.selection", { count: ctx.selection.length })}
-              onDrop={() => drop("selection")}
-            />
-          )}
-        </div>
+        <ContextLine items={ctxItems} canRestart={messages.length > 0 || !!chatId} busy={busy} onRestart={startNew} />
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -373,6 +412,7 @@ export function ChatPanel() {
         >
           <textarea
             id="chat-input"
+            ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
@@ -381,39 +421,156 @@ export function ChatPanel() {
                 void send(input);
               }
             }}
-            rows={2}
+            rows={1}
             maxLength={4000}
             disabled={!!blocked}
             placeholder={blocked ? t(ERROR_KEY[blocked]) : t("chat.placeholder")}
             aria-label={t("chat.placeholder")}
-            className="min-w-0 flex-1 resize-none rounded border border-brand-muted/30 px-2 py-1.5 text-sm focus:border-brand focus:outline-none"
+            title={t("chat.inputHint")}
+            className="max-h-[8.25rem] min-w-0 flex-1 resize-none overflow-y-auto rounded border border-brand-muted/30 px-2 py-1.5 text-sm leading-5 focus:border-brand focus:outline-none"
           />
-          <button type="submit" disabled={busy || !input.trim() || !!blocked} className="rounded bg-brand px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-light disabled:opacity-50">
+          <PromptMenu prompts={prompts} disabled={busy || !!blocked} onPick={fill} />
+          <button type="submit" disabled={busy || !input.trim() || !!blocked} className="h-8 rounded bg-brand px-3 text-xs font-medium text-white hover:bg-brand-light disabled:opacity-50">
             {t("chat.send")}
           </button>
         </form>
-        <p className="mt-1 flex items-center justify-between gap-2 text-[10px] text-gray-400">
-          <span>{t("chat.footer")}</span>
-          {(messages.length > 0 || chatId) && (
-            <button type="button" onClick={startNew} disabled={busy} className="shrink-0 text-brand hover:underline disabled:opacity-50">
-              {t("chat.newSession")}
-            </button>
-          )}
-        </p>
       </div>
     </div>
   );
 }
 
-function ContextChip({ label, onDrop }: { label: string; onDrop: () => void }) {
+interface ContextItem {
+  key: string;
+  short: string;
+  full: string;
+  onDrop: () => void;
+}
+
+/** Close a small popover on an outside click. */
+function useOutside(open: boolean, close: () => void) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const h = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && close();
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, [open, close]);
+  return ref;
+}
+
+/**
+ * ONE line (24 px) above the input: "Contexto: Grupo … · Todo · 3 elem." —
+ * truncated, never wraps; the button opens a popover listing each item with ×.
+ */
+function ContextLine({ items, canRestart, busy, onRestart }: { items: ContextItem[]; canRestart: boolean; busy: boolean; onRestart: () => void }) {
   const t = useT();
+  const [open, setOpen] = useState(false);
+  const close = useMemo(() => () => setOpen(false), []);
+  const ref = useOutside(open, close);
+  const summary = items.length ? items.map((i) => i.short).join(" · ") : t("chat.ctx.none");
   return (
-    <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-brand-muted/30 bg-gray-50 px-2 py-0.5 text-[11px] text-gray-700">
-      <span className="truncate">{label}</span>
-      <button type="button" onClick={onDrop} aria-label={t("chat.ctx.drop", { label })} className="shrink-0 text-gray-400 hover:text-red-700">
-        ×
+    <div ref={ref} className="relative mb-1 flex h-6 items-center gap-2 text-[11px] text-gray-500">
+      <button
+        type="button"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        title={[t("chat.footer"), ...items.map((i) => i.full)].join("\n")}
+        onClick={() => setOpen((o) => !o)}
+        className="flex min-w-0 flex-1 items-center gap-1 rounded px-1 text-left hover:bg-gray-50"
+      >
+        <span className="shrink-0 font-medium text-gray-600">{t("chat.contextShort", { count: items.length })}</span>
+        <span className="min-w-0 truncate">{summary}</span>
+        <IconChevronDown size={11} className="shrink-0" />
       </button>
-    </span>
+      {canRestart && (
+        <button type="button" onClick={onRestart} disabled={busy} className="shrink-0 text-brand hover:underline disabled:opacity-50">
+          {t("chat.newSession")}
+        </button>
+      )}
+      {open && (
+        <div role="dialog" aria-label={t("chat.contextLabel")} onKeyDown={(e) => e.key === "Escape" && setOpen(false)} className="absolute bottom-7 left-0 right-0 z-30 rounded-lg border border-brand-muted/20 bg-white p-2 text-xs text-gray-700 shadow-lg">
+          <p className="mb-1 text-[11px] text-gray-500">{t("chat.footer")}</p>
+          {items.length ? (
+            <ul className="space-y-1">
+              {items.map((i) => (
+                <li key={i.key} className="flex items-center gap-2">
+                  <span className="min-w-0 flex-1 truncate" title={i.full}>
+                    {i.full}
+                  </span>
+                  <button type="button" onClick={i.onDrop} aria-label={t("chat.ctx.drop", { label: i.full })} className="shrink-0 rounded px-1 text-gray-400 hover:text-red-700">
+                    ×
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p>{t("chat.ctx.none")}</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** ✨ "Sugerencias": the context-aware prompts in a menu above the input; picking one fills the input. */
+function PromptMenu({ prompts, disabled, onPick }: { prompts: string[]; disabled: boolean; onPick: (p: string) => void }) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const close = useMemo(() => () => setOpen(false), []);
+  const ref = useOutside(open, close);
+  const items = useRef<(HTMLButtonElement | null)[]>([]);
+  if (!prompts.length) return null;
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        disabled={disabled}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={t("chat.suggestions")}
+        title={t("chat.suggestions")}
+        onClick={() => setOpen((o) => !o)}
+        className="inline-flex h-8 w-8 items-center justify-center rounded border border-violet-200 text-violet-700 hover:bg-violet-50 disabled:opacity-50"
+      >
+        <IconSparkle size={14} />
+      </button>
+      {open && (
+        <div
+          role="menu"
+          aria-label={t("chat.suggestions")}
+          onKeyDown={(e) => {
+            const i = items.current.indexOf(document.activeElement as HTMLButtonElement);
+            if (e.key === "Escape") setOpen(false);
+            else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+              e.preventDefault();
+              const n = prompts.length;
+              items.current[(i + (e.key === "ArrowDown" ? 1 : n - 1)) % n]?.focus();
+            }
+          }}
+          className="absolute bottom-10 right-0 z-30 w-72 rounded-lg border border-brand-muted/20 bg-white py-1 text-sm shadow-lg"
+        >
+          <p className="px-3 py-1 text-[11px] font-medium uppercase tracking-wide text-gray-400">{t("chat.suggestions")}</p>
+          {prompts.map((p, i) => (
+            <button
+              key={p}
+              ref={(el) => {
+                items.current[i] = el;
+              }}
+              type="button"
+              role="menuitem"
+              autoFocus={i === 0}
+              onClick={() => {
+                onPick(p);
+                setOpen(false);
+              }}
+              className="block w-full px-3 py-1.5 text-left text-gray-800 hover:bg-violet-50 focus:bg-violet-50 focus:outline-none"
+            >
+              {p}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
