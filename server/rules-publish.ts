@@ -171,19 +171,49 @@ export class RulePublisher {
     throw new CoordError("approval_missing", "Publicar reglas requiere confirmar con tu passkey (Windows Hello).");
   }
 
+  /** True when the candidate rules are the current ones minus some rules (same order, same content, same annotations). */
+  private async onlyRemovesRules(patch: string): Promise<boolean> {
+    try {
+      const { patchTargets } = await import("./coordinator");
+      if (!patchTargets(patch).every((f) => f === "rules/classification-rules.yaml" || f === "rules/classification-rules.archive.yaml")) return false;
+      const base = this.rulesDir === DEFAULT_RULES_DIR ? loadRules() : loadRules(this.rulesDir);
+      const cand = loadRules(await this.coord.candidateRulesDir(Promise.resolve(patch), this.rulesDir));
+      const b = base.source.classification;
+      const c = cand.source.classification;
+      if (JSON.stringify(b.annotations) !== JSON.stringify(c.annotations) || c.rules.length >= b.rules.length) return false;
+      const kept = b.rules.filter((r) => c.rules.some((x) => x.id === r.id));
+      return kept.length === c.rules.length && kept.every((r, i) => JSON.stringify(r) === JSON.stringify(c.rules[i])) && c.rules.some((r) => r.id === "DEF-999");
+    } catch {
+      return false;
+    }
+  }
+
   /** Re-run the evaluation; throws when the candidate regresses anything. */
-  private async gate(patch: string): Promise<RulePublication["evaluation"]> {
+  private async gate(patch: string, changeKind?: string): Promise<RulePublication["evaluation"]> {
     const ev = await this.coord.evaluateRuleset({ candidatePatch: patch, suites: ["eval_scenarios", "feedback_replay"] }, { rulesDir: this.rulesDir });
     const b = ev.baseline as Record<string, number>;
     const c = (ev.candidate ?? {}) as Record<string, number>;
     const why: string[] = [];
     if (ev.schemaErrors.length) why.push(`las reglas no cargan (${ev.schemaErrors[0]!.slice(0, 200)})`);
     if (!ev.candidate) why.push("sin evaluación del candidato");
-    if (ev.regressions.length) why.push(`${ev.regressions.length} regresión(es), p. ej. ${ev.regressions[0]!.scenario}/${ev.regressions[0]!.field}`);
-    if ((c.unsafeClosureRate ?? 0) > (b.unsafeClosureRate ?? 0) + EPS) why.push("cierra más conflictos reales");
-    if ((c.criticalFalseNegatives ?? 0) > (b.criticalFalseNegatives ?? 0)) why.push("pierde casos críticos");
-    if ((c.scenariosExactMatch ?? 0) < (b.scenariosExactMatch ?? 0)) why.push("menos escenarios exactos");
-    if ((c.macroF1 ?? 0) < (b.macroF1 ?? 0) - EPS) why.push("baja el macro-F1");
+    // The relaxed retire gate applies only when the patch really ONLY removes rules (whatever the label says).
+    const pureRetire = changeKind === "retire" && (await this.onlyRemovesRules(patch));
+    if (pureRetire) {
+      // Retiring is fail-safe only when every regressed scenario now lands on DEF-999 (Conflicto +
+      // revisión humana). Any other change of outcome, more unsafe closures or a critical case that
+      // does not reach DEF-999 still blocks the publication.
+      const other = ev.nonFallbackScenarios ?? [];
+      if (other.length) why.push(`${other.length} escenario(s) pasan a otra regla que no es la de respaldo, p. ej. ${other[0]}`);
+      if ((c.unsafeClosureRate ?? 0) > (b.unsafeClosureRate ?? 0) + EPS) why.push("cierra más conflictos reales");
+      if (ev.criticalFnAllFallback === false) why.push("pierde casos críticos fuera de la revisión humana");
+      c.fallbackScenarios = (ev.fallbackScenarios ?? []).length;
+    } else {
+      if (ev.regressions.length) why.push(`${ev.regressions.length} regresión(es), p. ej. ${ev.regressions[0]!.scenario}/${ev.regressions[0]!.field}`);
+      if ((c.unsafeClosureRate ?? 0) > (b.unsafeClosureRate ?? 0) + EPS) why.push("cierra más conflictos reales");
+      if ((c.criticalFalseNegatives ?? 0) > (b.criticalFalseNegatives ?? 0)) why.push("pierde casos críticos");
+      if ((c.scenariosExactMatch ?? 0) < (b.scenariosExactMatch ?? 0)) why.push("menos escenarios exactos");
+      if ((c.macroF1 ?? 0) < (b.macroF1 ?? 0) - EPS) why.push("baja el macro-F1");
+    }
     if (why.length) throw new CoordError("validation_error", `No se publica: la evaluación con las reglas actuales detecta ${why.join("; ")}.`);
     return { baseline: b, candidate: c };
   }
@@ -191,7 +221,7 @@ export class RulePublisher {
   async publish(id: string, proof: PublishProof, user: { id: string; name: string }): Promise<RulePublication> {
     return this.lock(async () => {
       const prep = await this.prepare(id);
-      const evaluation = await this.gate(prep.patch);
+      const evaluation = await this.gate(prep.patch, prep.p.payload.kind === "rule_change" ? prep.p.payload.changeKind : undefined);
       const ok = await this.verify("publish", id, prep.payloadHash, proof);
       const pubId = `RP-${nowIso(this.coord.now()).replace(/[-:.TZ]/g, "").slice(0, 14)}-${randomBytes(3).toString("hex")}`;
       const dir = this.coord.store.path("rule-publications", pubId);

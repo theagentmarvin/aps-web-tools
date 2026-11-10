@@ -51,6 +51,7 @@ export function seedSuggestions(): T.RuleSuggestion[] {
       affected: 37,
       evaluation: { baselineMacroF1: 0.81, candidateMacroF1: 0.84, unsafeClosureRate: 0 },
       state: "pending",
+      origin: "agente",
       createdAt: new Date(Date.now() - 3 * 3600000).toISOString(),
     },
     {
@@ -65,6 +66,7 @@ export function seedSuggestions(): T.RuleSuggestion[] {
       affected: 21,
       evaluation: { baselineMacroF1: 0.81, candidateMacroF1: 0.815, unsafeClosureRate: 0 },
       state: "pending",
+      origin: "agente",
       createdAt: new Date(Date.now() - 27 * 3600000).toISOString(),
     },
   ];

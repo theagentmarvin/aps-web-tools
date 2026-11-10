@@ -731,6 +731,52 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
   // ── learning / rules / reports / audit ─────────────────────────────────
   add("POST", "/feedback", async ({ body, user }) => ui.submitFeedback(FeedbackSchema.parse(body) as never, await user()), true);
   add("GET", "/rules", async () => ui.rules());
+  // Reglas: human rule changes (calibrate · edit · retire · restore) → the same suggestion the agent
+  // creates. New rules come from the agent (propose_rule_change); a human never publishes here.
+  const RuleIdZ = z.string().regex(/^[A-Z]{2,4}-\d{3}$/);
+  const RuleChangeZ = z.discriminatedUnion("kind", [
+    z.strictObject({
+      kind: z.literal("calibrate"),
+      ruleId: RuleIdZ,
+      then: z
+        .strictObject({
+          validity: z.enum(["real", "false_positive", "tolerated", "needs_info"]),
+          responsibleDiscipline: z.string().regex(/^(\$a|\$b|@mover|@other|[A-Z]{2,6})$/),
+          secondaryDiscipline: z.string().regex(/^(\$a|\$b|@mover|@other|[A-Z]{2,6})$/).nullable(),
+          severity: z.enum(["critical", "high", "medium", "low", "none"]),
+          suggestedAction: z.enum(["close_not_issue", "mark_reviewed", "create_issue", "hygiene_issue", "request_info", "escalate"]),
+          humanReview: z.boolean(),
+          confidence: z.number().min(0).max(1),
+        })
+        .partial()
+        .optional(),
+      thresholds: z.array(z.strictObject({ path: z.string().max(80), value: z.number().finite() })).max(20).optional(),
+      nameEs: z.string().min(1).max(120).optional(),
+    }),
+    z.strictObject({ kind: z.literal("edit"), ruleId: RuleIdZ, rule: z.union([z.string().max(6000), z.record(z.string(), z.unknown())]) }),
+    z.strictObject({ kind: z.literal("retire"), ruleIds: z.array(RuleIdZ).min(1).max(200), reason: z.string().max(300).optional() }),
+    z.strictObject({ kind: z.literal("restore"), ruleIds: z.array(RuleIdZ).min(1).max(200) }),
+  ]);
+  const TestKeyZ = z.string().max(300).optional();
+  add("GET", "/rules/overview", async ({ query }) => ui.rulesOverview(query.get("testKey") ?? undefined));
+  add(
+    "POST",
+    "/rule-suggestions/preview",
+    async ({ body }) => {
+      const b = z.strictObject({ change: RuleChangeZ, testKey: TestKeyZ }).parse(body);
+      return ui.previewRuleChange(b.change as never, b.testKey);
+    },
+    true,
+  );
+  add(
+    "POST",
+    "/rule-suggestions",
+    async ({ body, user }) => {
+      const b = z.strictObject({ change: RuleChangeZ, rationale: z.string().min(1).max(1500), title: z.string().max(120).optional(), testKey: TestKeyZ }).parse(body);
+      return ui.createRuleSuggestion(b as never, await user());
+    },
+    true,
+  );
   add("GET", "/rules/:ruleId", async ({ params }) => ui.rule(params.ruleId));
   add("GET", "/rule-suggestions", async () => ui.ruleSuggestions());
   add(

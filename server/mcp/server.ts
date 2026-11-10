@@ -59,6 +59,7 @@ export function toolHandlers(coord: Coordinator, actor: Actor = AGENT_ACTOR): Re
     record_feedback: async (a) => coord.recordFeedback(a as never, ctx, "agent"),
     list_feedback: async (a) => coord.listFeedback(a as never),
     evaluate_ruleset: async (a) => coord.evaluateRuleset(a as never),
+    get_rule_insights: async (a) => coord.ruleInsights(a as never),
     propose_rule_change: async (a) => coord.proposeRuleChange(a as never, ctx),
     list_disciplines: async (a) => coord.listDisciplines(a as never),
     list_families: async (a) => coord.listFamilies(a as never),

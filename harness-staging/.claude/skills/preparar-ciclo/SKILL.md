@@ -2,7 +2,7 @@
 name: preparar-ciclo
 description: Prepara el ciclo semanal de coordinación (D-1) sobre la última versión del conjunto de modelos — ingesta, clasificación y familias (motor), cambios de alcance y sincronización con ACC, revisión IA SOLO de lo que cambió y requiere juicio, preguntas al coordinador cuando no se puede decidir, verificación de incidencias, y entrega con enlace a la UI. Primer ciclo automático si no hay versión previa. Usar para "preparar el ciclo", "coordinar", "revisar la nueva versión", "procesar interferencias".
 argument-hint: "[proyecto] [conjunto de modelos] [prueba o versión]"
-allowed-tools: mcp__coord__get_session_status mcp__coord__set_active_context mcp__coord__list_projects mcp__coord__list_model_sets mcp__coord__list_model_set_versions mcp__coord__list_clash_tests mcp__coord__ingest_clash_test mcp__coord__run_classification mcp__coord__summarize_clashes mcp__coord__diff_test_versions mcp__coord__get_model_hygiene_stats mcp__coord__list_families mcp__coord__get_family mcp__coord__list_groups mcp__coord__get_group mcp__coord__list_questions mcp__coord__ask_coordinator mcp__coord__list_issue_checks mcp__coord__list_proposals Read
+allowed-tools: mcp__coord__get_session_status mcp__coord__set_active_context mcp__coord__list_projects mcp__coord__list_model_sets mcp__coord__list_model_set_versions mcp__coord__list_clash_tests mcp__coord__ingest_clash_test mcp__coord__run_classification mcp__coord__summarize_clashes mcp__coord__diff_test_versions mcp__coord__get_model_hygiene_stats mcp__coord__list_families mcp__coord__get_family mcp__coord__list_groups mcp__coord__get_group mcp__coord__list_questions mcp__coord__ask_coordinator mcp__coord__list_issue_checks mcp__coord__list_proposals mcp__coord__get_rule_insights mcp__coord__propose_rule_change Read
 ---
 
 # Preparar ciclo
@@ -37,9 +37,20 @@ veredictos. Tú NO repites eso: no revisas lo heredado sin cambios, no reabres l
 6. **Incidencias (M3).** `mcp__coord__list_issue_checks`: resume por veredicto (resuelta · avance · sigue_abierta ·
    dice_resuelta · no_verificable). Destaca "dice resuelta" con interferencias vigentes y P1 estancadas.
    No propones cambios de estado de incidencias: eso lo propone el motor y lo decide el humano.
-7. **Entrega** (≤ 25 líneas, español): versión vs. versión revisada; nuevas / cambiadas / reaparecidas /
-   heredadas; cambios de alcance; familias revisadas por IA, propuestas y **preguntas abiertas** (con ID);
-   resumen de incidencias; y el enlace
+7. **Reglas (descubrimiento, al final de cada ciclo).** `mcp__coord__get_rule_insights` con el testKey del ciclo.
+   El agente es quien descubre reglas; el humano calibra, edita, retira y publica. Con la evidencia que devuelve:
+   - grupos de `uncovered` (DEF-999 / falta información) repetidos y homogéneos → **regla nueva**
+     (`mcp__coord__propose_rule_change` con `changeKind: "new"` y `rule` = YAML de UNA regla con `nameEs`; el
+     servidor elige la posición: al final de su sección, antes de DEF-999);
+   - `corrected` con n ≥ 5 y acierto bajo → **calibración** (`changeKind: "calibrate"`, `ruleId`, `calibration`);
+   - `zeroUse` → **retiro** a la Biblioteca (`changeKind: "retire"`, `ruleIds`; se admite un lote). Nunca DEF-999
+     ni las alertas ANN-*; las reglas de estructura o seguridad de las personas se retiran solo si el coordinador lo pide;
+   - `reactivation` → **restaurar** (`changeKind: "restore"`, `ruleIds`).
+   Máximo 3 sugerencias por ciclo, cada una con motivo y cifras de la herramienta. Nunca cierres `real` sin
+   revisión humana, nunca apruebes ni publiques: eso lo hace el coordinador en Reglas (passkey + evaluación).
+8. **Entrega** (≤ 25 líneas, español): versión vs. versión revisada; nuevas / cambiadas / reaparecidas /
+   heredadas; cambios de alcance; familias revisadas por IA, propuestas, sugerencias de reglas y **preguntas
+   abiertas** (con ID); resumen de incidencias; y el enlace
    `http://localhost:3000/coordinacion/<projectId>/<modelSetId>?lente=<lente>` con `cambios` (ciclo ≥ 2),
    `todo` (primer ciclo) o `incidencias` si lo urgente son verificaciones. Cierra con el paso siguiente:
    revisar en la UI → aprobar el lote con passkey → "aplica el lote" (dry run primero).

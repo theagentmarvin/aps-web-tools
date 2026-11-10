@@ -324,6 +324,10 @@ export type ProposalPayload =
       scope: string;
       /** Real-data evaluation backing the change (when there is no coordinator feedback). */
       evidence?: RuleChangeEvidence;
+      /** new · calibrate · edit · retire · restore (absent on older free-form patches). */
+      changeKind?: "new" | "calibrate" | "edit" | "retire" | "restore";
+      /** Rules the change is about (retire / restore may cover many). */
+      ruleIds?: string[];
     }
   | {
       kind: "engine_batch";

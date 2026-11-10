@@ -24,6 +24,8 @@ import { CLOSABLE, ENGINE_NAME, ENGINE_VERSION, loadRules, runEngine } from "./e
 import { fixtureLedgerSeed, LedgerService, recordAccInLedger } from "./ledger";
 import { QuestionStore, type StoredQuestion } from "./questions";
 import { RulePublisher } from "./rules-publish";
+import { RuleAuthoring, type RuleOp } from "./rule-suggest";
+import type { RuleChangeKind } from "./rule-authoring";
 import { accIssueGroups, computeIssueChecks, IssueCheckStore } from "./issue-checks";
 import { buildAgenda, cleanNote, MeetingStore, quoteContainsDate, redactContacts, VIEW_MAX_BYTES } from "./meeting";
 import type { SourceIssue } from "./source/types";
@@ -245,6 +247,12 @@ export class Coordinator {
   }
   set rulePublisher(p: RulePublisher) {
     this.rulePub = p;
+  }
+
+  private ruleAuth?: RuleAuthoring;
+  /** Rule-change suggestions (all kinds) + Reglas read models; works on the publisher's rules dir. */
+  get ruleAuthoring(): RuleAuthoring {
+    return (this.ruleAuth ??= new RuleAuthoring(this));
   }
 
   /** Dependencies for server/approval (the only ACC write path). */
@@ -2762,13 +2770,56 @@ export class Coordinator {
     );
   }
 
+  /**
+   * propose_rule_change (agent). Either a unified diff (`patch`) or a structured change
+   * (`changeKind` new | calibrate | edit | retire | restore with ruleIds / ruleId / rule / calibration):
+   * the server then builds the patch, picks the insertion point (precedence) and measures the
+   * evidence itself. Same proposal shape as a coordinator's suggestion; never publishes.
+   */
   async proposeRuleChange(
-    input: { title: string; patch: string; rationale: string; feedbackIds?: string[]; evidence?: RuleChangeEvidence; evaluation: Record<string, number>; scope: "project" | "company" },
+    input: {
+      title?: string;
+      patch?: string;
+      rationale: string;
+      feedbackIds?: string[];
+      evidence?: RuleChangeEvidence;
+      evaluation?: Record<string, number>;
+      scope: "project" | "company";
+      changeKind?: RuleChangeKind;
+      ruleIds?: string[];
+      ruleId?: string;
+      rule?: string;
+      calibration?: { then?: Record<string, unknown>; thresholds?: Array<{ path: string; value: number }> };
+    },
     caller: CallerContext = { actor: AGENT_ACTOR },
   ) {
     this.requireLevel(1, "propose_rule_change");
-    this.checkTexts({ title: input.title, rationale: input.rationale, ...(input.evidence ? { evidence: input.evidence.summary } : {}) });
+    this.checkTexts({ title: input.title ?? "", rationale: input.rationale, ...(input.evidence ? { evidence: input.evidence.summary } : {}) });
     const feedbackIds = input.feedbackIds ?? [];
+    const known = new Set((await this.store.listFeedback()).map((f) => f.id));
+    const unknown = feedbackIds.filter((f) => !known.has(f));
+    if (unknown.length) throw new CoordError("not_found", `feedbackIds inexistentes: ${unknown.slice(0, 5).join(", ")}`);
+    if (!input.patch) {
+      const k = input.changeKind;
+      if (!k) throw new CoordError("validation_error", "Indica patch (unified diff) o changeKind con la regla (new | calibrate | edit | retire | restore).");
+      let op: RuleOp;
+      if (k === "retire" || k === "restore") {
+        if (!input.ruleIds?.length) throw new CoordError("validation_error", `${k} requiere ruleIds.`);
+        op = k === "retire" ? { kind: "retire", ruleIds: input.ruleIds, reason: input.rationale.slice(0, 300) } : { kind: "restore", ruleIds: input.ruleIds };
+      } else if (k === "new") {
+        if (!input.rule) throw new CoordError("validation_error", "new requiere rule (YAML de una regla, con nameEs).");
+        op = { kind: "new", rule: input.rule };
+      } else if (k === "edit") {
+        if (!input.ruleId || !input.rule) throw new CoordError("validation_error", "edit requiere ruleId y rule (YAML de la regla completa).");
+        op = { kind: "edit", ruleId: input.ruleId, rule: input.rule };
+      } else {
+        if (!input.ruleId || !input.calibration) throw new CoordError("validation_error", "calibrate requiere ruleId y calibration {then?, thresholds?}.");
+        op = { kind: "calibrate", ruleId: input.ruleId, then: input.calibration.then as never, thresholds: input.calibration.thresholds };
+      }
+      const r = await this.ruleAuthoring.suggest(op, { rationale: input.rationale, title: input.title, feedbackIds, testKey: input.evidence?.testKey }, caller.actor);
+      const p = (await this.store.getProposal(r.proposalId))!;
+      return { proposalId: p.id, kind: p.kind, status: p.state, risk: p.risk, affectedClashes: p.affectedClashes, conflictsWith: [], reviewUrl: this.reviewUrl(p.id), patchPath: p.payload.kind === "rule_change" ? p.payload.patchFile : "", effect: r.preview.effect, impact: r.preview.impact ?? null, warnings: r.preview.warnings };
+    }
     if (!feedbackIds.length && !input.evidence) throw new CoordError("validation_error", "Indica feedbackIds o evidence (evaluación sobre datos reales).");
     if (input.evidence) {
       const m = input.evidence.metrics;
@@ -2776,45 +2827,85 @@ export class Coordinator {
       if (m.scenariosPassed > m.scenariosTotal) throw new CoordError("validation_error", "scenariosPassed no puede superar scenariosTotal.");
       if (!(await this.store.getTest(input.evidence.testKey))) throw new CoordError("not_found", `testKey de la evidencia no existe: ${input.evidence.testKey}`);
     }
-    if ((input.evaluation.unsafeClosures ?? 0) > 0) throw new CoordError("validation_error", "evaluation.unsafeClosures > 0: no se registra.");
+    if ((input.evaluation?.unsafeClosures ?? 0) > 0) throw new CoordError("validation_error", "evaluation.unsafeClosures > 0: no se registra.");
+    return this.storeRuleSuggestion({
+      title: input.title || "Cambio de reglas",
+      patch: input.patch,
+      rationale: input.rationale,
+      feedbackIds,
+      evaluation: input.evaluation ?? {},
+      scope: input.scope,
+      ...(input.changeKind ? { changeKind: input.changeKind } : {}),
+      ...(input.ruleIds?.length ? { ruleIds: input.ruleIds } : input.ruleId ? { ruleIds: [input.ruleId] } : {}),
+      ...(input.evidence ? { evidence: input.evidence } : {}),
+      affected: input.evidence?.metrics.changedMc ?? 0,
+      actor: caller.actor,
+    });
+  }
+
+  /** Store a validated rules/ patch as a rule_change proposal (agent and coordinator share this). */
+  async storeRuleSuggestion(input: {
+    title: string;
+    patch: string;
+    rationale: string;
+    feedbackIds: string[];
+    evaluation: Record<string, number>;
+    scope: string;
+    changeKind?: RuleChangeKind;
+    ruleIds?: string[];
+    evidence?: RuleChangeEvidence;
+    affected: number;
+    actor: Actor;
+  }) {
     const files = patchTargets(input.patch);
     if (files.length === 0) throw new CoordError("validation_error", "El patch no tiene cabeceras de archivo (unified diff).");
     const bad = files.filter((f) => !/^rules\/[A-Za-z0-9_./-]+\.ya?ml$/.test(f) || f.includes(".."));
     if (bad.length) throw new CoordError("validation_error", `El patch solo puede tocar rules/**.yaml: ${bad.join(", ")}`);
-    const known = new Set((await this.store.listFeedback()).map((f) => f.id));
-    const unknown = feedbackIds.filter((f) => !known.has(f));
-    if (unknown.length) throw new CoordError("not_found", `feedbackIds inexistentes: ${unknown.slice(0, 5).join(", ")}`);
-    // Validate that the patch applies and the candidate rules load.
-    await this.candidateRulesDir(Promise.resolve(input.patch));
+    // Validate that the patch applies and the candidate rules load (on the rules the publisher writes).
+    await this.candidateRulesDir(Promise.resolve(input.patch), this.rulePublisher.rulesDir);
     const ctx = await this.store.getContext();
     const p = await this.store.createProposal({
       kind: "rule_change",
       projectId: ctx?.projectId,
-      createdBy: caller.actor,
+      createdBy: input.actor,
       target: { groupIds: [], clashIds: [] },
       payload: {
         kind: "rule_change",
         title: input.title,
         patchFile: "",
         patchHash: sha256(input.patch),
-        feedbackIds,
+        feedbackIds: input.feedbackIds,
         evaluation: input.evaluation,
         scope: input.scope,
+        ...(input.changeKind ? { changeKind: input.changeKind } : {}),
+        ...(input.ruleIds?.length ? { ruleIds: input.ruleIds } : {}),
         ...(input.evidence ? { evidence: { ...input.evidence, summary: sanitizeModelText(input.evidence.summary, 1500) } } : {}),
       },
       rationale: input.rationale,
       evidence: [],
       confidence: "media",
       risk: "high",
-      affectedClashes: input.evidence?.metrics.changedMc ?? 0,
+      affectedClashes: input.affected,
     });
     const file = await this.store.writeRulePatch(p.id, input.patch);
     await this.store.updateProposal(p.id, (x) => {
       if (x.payload.kind === "rule_change") x.payload.patchFile = file;
     });
-    await this.store.audit({ actor: caller.actor, action: "rule.suggested", projectId: ctx?.projectId, targetIds: [p.id], details: { files: files.join(","), scope: input.scope, feedback: feedbackIds.length, evidence: input.evidence ? input.evidence.testKey : null } });
+    await this.store.audit({
+      actor: input.actor,
+      action: "rule.suggested",
+      projectId: ctx?.projectId,
+      targetIds: [p.id],
+      details: { files: files.join(","), scope: input.scope, feedback: input.feedbackIds.length, evidence: input.evidence ? input.evidence.testKey : null, changeKind: input.changeKind ?? null, origin: input.actor.type === "user" ? "coordinador" : "agente" },
+    });
     return { proposalId: p.id, kind: p.kind, status: p.state, risk: p.risk, affectedClashes: p.affectedClashes, conflictsWith: [], reviewUrl: this.reviewUrl(p.id), patchPath: file };
   }
+
+  /** get_rule_insights (read-only): discovery input for new rules / calibrations / retirements. */
+  async ruleInsights(input: { testKey?: string; projectId?: string }) {
+    return this.ruleAuthoring.insights(input);
+  }
+
 
   async listProposals(input: { testKey?: string; status?: string[]; kind?: string[]; ids?: string[]; createdBy?: "agent" | "coordinator" | "any"; limit: number; cursor?: string }) {
     const ctx = await this.store.getContext();
@@ -3041,6 +3132,8 @@ export class Coordinator {
       let asserted = 0;
       let correct = 0;
       let criticalFalseNegatives = 0;
+      const ruleOf = new Map<string, string>();
+      const criticalFnRules: string[] = [];
       if (scenarios.length) {
         const rep = evaluateScenarios(rs, scenarios);
         exact = rep.passed;
@@ -3052,7 +3145,11 @@ export class Coordinator {
           const exp = r.scenario.expected;
           if (typeof exp.validity === "string") pairs.push({ id: r.scenario.id, expected: exp.validity, got: String(r.actual.validity) });
           for (const k of Object.keys(exp)) if (k in r.actual) fieldResults.set(`${r.scenario.id}/${k}`, !r.diffs.some((d) => d.field === k));
-          if (exp.severity === "critical" && (!["critical", "high"].includes(String(r.actual.severity)) || r.actual.validity !== "real")) criticalFalseNegatives++;
+          ruleOf.set(r.scenario.id, String(r.actual.ruleId ?? ""));
+          if (exp.severity === "critical" && (!["critical", "high"].includes(String(r.actual.severity)) || r.actual.validity !== "real")) {
+            criticalFalseNegatives++;
+            criticalFnRules.push(String(r.actual.ruleId ?? ""));
+          }
         }
       }
       let replayN = 0;
@@ -3100,29 +3197,54 @@ export class Coordinator {
         },
         fieldResults,
         pairs,
+        ruleOf,
+        criticalFnRules,
       };
     };
 
     const baseline = await metricsFor(opts.rulesDir);
     const candidate = candidateDir ? await metricsFor(candidateDir) : undefined;
-    const regressions: Array<{ scenario: string; field: string; expected: string; got: string }> = [];
+    const regressions: Array<{ scenario: string; field: string; expected: string; got: string; gotRule?: string }> = [];
+    let regressionCount = 0;
+    // Scenarios that regress only because they now fall to the fallback rule (DEF-999: real + human review).
+    let fallbackRegressions = 0;
+    const fallbackScenarios = new Set<string>();
+    const otherScenarios = new Set<string>();
     if (candidate) {
       const got = new Map(candidate.pairs.map((p) => [p.id, p]));
       for (const [k, ok] of baseline.fieldResults) {
-        if (!ok || candidate.fieldResults.get(k) !== false || regressions.length >= 20) continue;
+        if (!ok || candidate.fieldResults.get(k) !== false) continue;
         const parts = k.split("/");
         const field = parts.pop()!;
         const scenario = parts.join("/");
+        const gotRule = candidate.ruleOf.get(scenario);
+        regressionCount++;
+        if (gotRule === "DEF-999") {
+          fallbackRegressions++;
+          fallbackScenarios.add(scenario);
+        } else otherScenarios.add(scenario);
+        if (regressions.length >= 20) continue;
         const p = got.get(scenario);
-        regressions.push({ scenario, field, expected: field === "validity" && p ? p.expected : "(base ok)", got: field === "validity" && p ? p.got : "(distinto)" });
+        regressions.push({ scenario, field, expected: field === "validity" && p ? p.expected : "(base ok)", got: field === "validity" && p ? p.got : "(distinto)", ...(gotRule ? { gotRule } : {}) });
       }
     }
+    const newCriticalFn = candidate ? candidate.criticalFnRules.length - baseline.criticalFnRules.length : 0;
     return {
       baseline: baseline.metrics,
       ...(candidate ? { candidate: candidate.metrics } : {}),
       regressions,
       schemaErrors,
       cases: baseline.pairs.length,
+      ...(candidate
+        ? {
+            regressionCount,
+            fallbackRegressions,
+            fallbackScenarios: [...fallbackScenarios],
+            nonFallbackScenarios: [...otherScenarios],
+            /** Extra critical false negatives that all land on DEF-999 (human review). */
+            criticalFnAllFallback: newCriticalFn <= 0 || candidate.criticalFnRules.filter((r) => r === "DEF-999").length - baseline.criticalFnRules.filter((r) => r === "DEF-999").length >= newCriticalFn,
+          }
+        : {}),
     };
   }
 

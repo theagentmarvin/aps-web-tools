@@ -29,6 +29,8 @@ export interface ListQuery {
   view: ViewMode;
   /** Document pair "a,b" (from the clash grid): only clashes between those two models. Filtered client-side. */
   docs?: string;
+  /** Engine rule id (?regla=, from Reglas): only items won by that rule. Filtered client-side. */
+  rule?: string;
   lens?: LensId;
 }
 
@@ -124,6 +126,7 @@ export function parseQuery(sp: URLSearchParams): ListQuery {
     // Two views: the tree ("Grupos", internal "families") and "Interferencias". Old ?view=groups / ?view=families links open the tree.
     view: sp.get("view") === "clashes" || sp.get("view") === "interferencias" ? "clashes" : "families",
     ...(sp.get("docs") ? { docs: sp.get("docs")! } : {}),
+    ...(/^[A-Z]{2,4}-\d{3}$/.test(sp.get("regla") ?? "") ? { rule: sp.get("regla")! } : {}),
     ...((LENSES as readonly string[]).includes(sp.get("lente") ?? "") ? { lens: sp.get("lente") as LensId } : {}),
   };
 }
@@ -142,6 +145,7 @@ export function writeQuery(sp: URLSearchParams, q: ListQuery): URLSearchParams {
   q.q ? sp.set("q", q.q) : sp.delete("q");
   q.view === "families" ? sp.delete("view") : sp.set("view", q.view);
   q.docs ? sp.set("docs", q.docs) : sp.delete("docs");
+  q.rule ? sp.set("regla", q.rule) : sp.delete("regla");
   q.lens ? sp.set("lente", q.lens) : sp.delete("lente");
   return sp;
 }
@@ -149,7 +153,7 @@ export function writeQuery(sp: URLSearchParams, q: ListQuery): URLSearchParams {
 export function isDefaultQuery(q: ListQuery): boolean {
   const active = FILTER_KEYS.filter((k) => q.filters[k] !== undefined);
   const onlyDefault = active.length === 1 && active[0] === "decision" && q.filters.decision?.length === 1 && q.filters.decision[0] === "pendiente";
-  return onlyDefault && !q.q && !q.docs;
+  return onlyDefault && !q.q && !q.docs && !q.rule;
 }
 
 // ── Facts ──────────────────────────────────────────────────────────
@@ -180,6 +184,8 @@ export interface StaticFacts {
   nature?: Nature;
   /** Unordered document pairs "min:max" of the member clashes. */
   docPairs: string[];
+  /** Engine rules that won its clashes. */
+  ruleIds: string[];
 }
 
 const DELTA_RANK: Record<Delta, number> = { new: 0, reappeared: 1, modified: 2, persisting: 3, resolved: 4 };
@@ -210,6 +216,7 @@ export function groupFacts(g: ClashGroup, members: Clash[], p: Proposal | undefi
     deltaRank: DELTA_RANK[g.delta],
     nature: g.nature,
     docPairs: [...new Set(members.map(docPair))],
+    ruleIds: g.ruleIds ?? [],
   };
 }
 
@@ -234,6 +241,7 @@ export function clashFacts(c: Clash, g: ClashGroup | undefined, p: Proposal | un
     deltaRank: DELTA_RANK[c.delta],
     nature: c.nature,
     docPairs: [docPair(c)],
+    ruleIds: c.ruleId ? [c.ruleId] : (g?.ruleIds ?? []),
   };
 }
 
@@ -306,6 +314,7 @@ export function docsKey(docs: string): string {
 
 export function passes(e: Evaluated, q: ListQuery): boolean {
   if (q.docs && !e.s.docPairs.includes(docsKey(q.docs))) return false;
+  if (q.rule && !e.s.ruleIds.includes(q.rule)) return false;
   if (q.q && !e.s.search.includes(q.q.toLowerCase())) return false;
   return matches(e.values, q.filters);
 }
@@ -314,6 +323,7 @@ export function facetCounts(items: Evaluated[], q: ListQuery, key: FilterKey): M
   const out = new Map<string, number>();
   for (const e of items) {
     if (q.docs && !e.s.docPairs.includes(docsKey(q.docs))) continue;
+    if (q.rule && !e.s.ruleIds.includes(q.rule)) continue;
     if (q.q && !e.s.search.includes(q.q.toLowerCase())) continue;
     if (!matches(e.values, q.filters, key)) continue;
     for (const v of e.values[key]) out.set(v, (out.get(v) ?? 0) + 1);

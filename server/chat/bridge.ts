@@ -28,7 +28,7 @@ const CREATING = new Set(["propose_family_decision", "propose_classification", "
  */
 export const CHAT_READ_TOOLS = [
   "get_selection_context", "get_group", "get_family", "list_groups", "list_families", "list_clashes", "get_element_properties", "summarize_clashes", "list_proposals", "list_questions", "list_issue_checks",
-  "get_session_status", "list_meeting_notes", "diff_test_versions", "list_disciplines", "get_model_hygiene_stats", "list_batches", "get_batch", "list_decisions", "get_agenda", "list_reminders", "get_issue_settings",
+  "get_session_status", "list_meeting_notes", "diff_test_versions", "list_disciplines", "get_model_hygiene_stats", "list_batches", "get_batch", "list_decisions", "get_agenda", "list_reminders", "get_issue_settings", "get_rule_insights",
 ].map((t) => `mcp__coord__${t}`);
 
 export interface ResolvedBin {
