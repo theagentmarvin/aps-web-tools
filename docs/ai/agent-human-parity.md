@@ -1,4 +1,4 @@
-| 75 | Tarjetas de propuesta en el chat | Tarjeta con acción, validez, destino seleccionable; preguntas respondibles en la tarjeta | Las tarjetas salen de datos del servidor, nunca del texto del modelo | parity (WS-D) || 36 | Familias más gruesas y etiquetas de par | Firma v7 (27 grupos en vez de 83 en fixtures); par por disciplina del sistema; decisiones antiguas «por revisar» | `get_family.legacyDecisions`; mismas familias vía `list_families` | parity (WS-C) || 35 | Plantilla de incidencia por familia, tipo de incidencia, enlaces profundos a ACC | Plantilla PROBLEMA/UBICACIÓN/ACCIÓN en incidencias de grupo; tipo por proyecto (Disciplinas › Incidencias ACC) o al aprobar; «Abrir en ACC» enlazado | `draft_issue` sigue la misma guía; `get_issue_settings` lee el tipo | parity (WS-B) || 25 | Confirmar decisiones heredadas en bloque | `GET`/`POST /tests/:id/inherited-confirmations` · «⋯» › «Confirmar heredadas sin cambio (N)» (lista por motivo, acuse aparte para pasadas en estructura y seguridad de personas, conteo escrito; validado en el servidor) | `propose_group_action` `{type: "confirm_inherited"}`; `get_group.previousDecision.confirmReasons` · CC, Chat | parity (WS-C): el agente propone, el humano confirma |# Paridad híbrida agente ↔ humano
+# Paridad híbrida agente ↔ humano
 
 Responsable: especialista IA. Fecha: 2026-11-10. Estado: auditoría; WS-E implementó P0, P1, `propose_family_exception` y la lista de lectura del Chat (filas marcadas «WS-E»).
 
@@ -73,7 +73,7 @@ Estados posibles: **parity** · **agent-missing** · **human-missing** · **inte
 | 22 | Cerrar como no problema o marcar revisado | Acción de cierre en la decisión | `propose_status_change`; el servidor lo rechaza para `real`/`needs_info` · CC, T, Chat | parity |
 | 23 | Reabrir un grupo cerrado en ACC | Sin acción en la UI. Solo aparece en el lote si el agente lo propuso | `propose_status_change` con `reopen` | **human-missing** |
 | 24 | Historial de decisiones humanas | `GET /decisions` · `DetailPanel` | `list_decisions` (sin nombres; nota `untrusted`) · CC, Chat | parity (WS-E) |
-| 25 | Confirmar decisiones heredadas en bloque | `acceptInherited` en triage; `POST /families/:id/confirm-inherited` todavía sin llamador en la UI | El agente podrá proponerlo | en curso (WS-C) |
+| 25 | Confirmar decisiones heredadas en bloque | `GET`/`POST /tests/:id/inherited-confirmations` · «⋯» › «Confirmar heredadas sin cambio (N)» (lista por motivo, acuse aparte para pasadas en estructura y seguridad de personas, conteo escrito; validado en el servidor) | `propose_group_action` `{type: "confirm_inherited"}`; `get_group.previousDecision.confirmReasons` · CC, Chat | parity (WS-C): el agente propone, el humano confirma |
 | 26 | Cambios recientes de propuestas | `GET /triage/…/changes` (sondeo cada 10 s, tecla `R`) | `list_proposals` | parity |
 
 ### D. Familias de solución
@@ -87,8 +87,8 @@ Estados posibles: **parity** · **agent-missing** · **human-missing** · **inte
 | 32 | Fusionar familias | `POST /families/merge` · menú «⋯» del panel de familia › «Fusionar con otra familia…», con confirmación. Una familia separada puede volver a fusionarse (alias resuelto en `familyViews`) | `propose_group_action` con `merge_families`/`split_family` | parity (WS-F) |
 | 33 | Aplicar o rechazar una reagrupación propuesta | `POST /proposals/:id/regroup` `{testId, decision}` (bug de `http.ts` corregido; test de contrato `tests/server/api-route-contract.test.ts`) | Crea la propuesta | parity (WS-E) |
 | 34 | Contar las decisiones de familia en los lotes | Barra del espacio de trabajo (`progress.ts`: listas = decisiones de grupo sin lote + familias con `pendingSend` > 0; hechas incluye instancias heredadas), pie «N decisiones», página de proyecto | `TriageFamily.pendingSend` en `families`/triage; el lote ya incluía las familias | parity |
-| 35 | Plantilla de incidencia por familia, tipo de incidencia, enlaces profundos a ACC | — | — | en curso (WS-B) |
-| 36 | Familias más gruesas y etiquetas de par | — | — | en curso (WS-C) |
+| 35 | Plantilla de incidencia por familia, tipo de incidencia, enlaces profundos a ACC | Plantilla PROBLEMA/UBICACIÓN/ACCIÓN en incidencias de grupo; tipo por proyecto (Disciplinas › Incidencias ACC) o al aprobar; «Abrir en ACC» enlazado | `draft_issue` sigue la misma guía; `get_issue_settings` lee el tipo | parity (WS-B) |
+| 36 | Familias más gruesas y etiquetas de par | Firma v7 (27 grupos en vez de 83 en fixtures); par por disciplina del sistema; decisiones antiguas «por revisar» | `get_family.legacyDecisions`; mismas familias vía `list_families` | parity (WS-C) |
 
 ### E. Reunión (M4)
 | # | Capacidad | Humano | Agente | Estado |
@@ -155,18 +155,18 @@ Estados posibles: **parity** · **agent-missing** · **human-missing** · **inte
 | 72 | Asignatarios de ACC (personas) | `GET /projects/:id/assignees` · editor del lote | No tiene | intentional (regla 7: sin datos personales) |
 | 73 | Conversar con el agente | `POST /chat/messages`, SSE, `history`, `status` · `ChatPanel` | — | intentional: canal del humano al agente |
 | 74 | Cancelar el turno del chat | `POST /chat/:id/cancel` (bug de `http.ts` corregido en WS-E) | — | intentional: canal del humano |
-| 75 | Tarjetas de propuesta en el chat | — | — | en curso (WS-D) |
+| 75 | Tarjetas de propuesta en el chat | Tarjeta con acción, validez y destino seleccionable; preguntas respondibles en la tarjeta | Las tarjetas salen de datos del servidor, nunca del texto del modelo | parity (WS-D) |
 
 ### Conteo
 
 | Estado | Filas |
 |---|---|
-| parity | 44 |
+| parity | 47 |
 | intentional | 21 |
 | human-missing | 3 (#23, #44, #66) |
 | agent-missing | 4 (#29, #40, #50, #63) |
-| en curso | 4 |
-| **Total** | **76** |
+| en curso | 0 |
+| **Total** | **75** |
 
 Recuento tras integrar WS-A…F (2026-11-10).
 
