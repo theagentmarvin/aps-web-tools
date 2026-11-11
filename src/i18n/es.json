@@ -1250,6 +1250,7 @@
     "instancesOnLevels_one": "{count} ubicación en {levels} niveles",
     "instancesOnLevels_other": "{count} ubicaciones en {levels} niveles",
     "proposal": "El agente propone",
+    "headerCounts": "{instances} ubic. · {levels} niv. · {clashes} interf.",
     "agentSuggested": "Sugerida por el agente",
     "whyDefault": "Misma situación física en {count} ubicaciones ({levels} niveles), penetración {min}–{max} mm: una sola decisión para todas.",
     "solution": "Solución",

@@ -1250,6 +1250,7 @@
     "instancesOnLevels_one": "{count} location on {levels} levels",
     "instancesOnLevels_other": "{count} locations on {levels} levels",
     "proposal": "The agent proposes",
+    "headerCounts": "{instances} loc. · {levels} lev. · {clashes} clashes",
     "agentSuggested": "Suggested by the agent",
     "whyDefault": "Same physical situation in {count} locations ({levels} levels), penetration {min}–{max} mm: one decision for all.",
     "solution": "Solution",

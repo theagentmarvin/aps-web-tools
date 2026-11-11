@@ -158,10 +158,13 @@ export function FamilyPanel({ familyId }: { familyId: string }) {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="flex-shrink-0 border-b border-brand-muted/20 px-4 pb-2 pt-3">
-        <div className="flex items-start gap-2">
-          <h2 className="min-w-0 flex-1 break-words text-sm font-semibold leading-snug text-gray-900" lang="es">
-            {headline}
+      <header className="flex-shrink-0 border-b border-brand-muted/20 px-4 pb-2 pt-2.5">
+        {/* Compact header: P1 · pair · problem (1 line) / host · counts (1 line). Full names, id and signature on hover. */}
+        <div className="flex items-center gap-1.5">
+          {worst && <PriorityChip value={worst} />}
+          {f.pair && <span className="shrink-0 rounded bg-gray-100 px-1.5 font-mono text-[11px] font-semibold leading-5 text-gray-800">{`${f.pair[0]} × ${f.pair[1]}`}</span>}
+          <h2 className="min-w-0 flex-1 truncate text-sm font-semibold text-gray-900" lang="es" title={`${headline}\n${f.title}\n${f.id} · ${t("families.uniqueTooltip", { raw: f.rawClashCount, unique: f.uniqueClashCount })}`}>
+            {pt?.nameEs ?? f.title}
           </h2>
           <span className="flex shrink-0 gap-0.5">
             <button type="button" aria-label={t("shortcuts.prev")} title={`${t("shortcuts.prev")} (K)`} onClick={() => store.move(-1)} className="rounded p-0.5 text-gray-500 hover:bg-brand-surface">
@@ -173,17 +176,17 @@ export function FamilyPanel({ familyId }: { familyId: string }) {
             <FamilyMoreMenu family={f} />
           </span>
         </div>
-        <p className="mt-0.5 truncate text-xs text-gray-600" title={f.title} lang="es">
-          {f.title}
-        </p>
-        <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs">
-          {worst && <PriorityChip value={worst} />}
-          <FamilyTags family={f} />
-          {f.decision?.status === "approved" && <span className="rounded-full border border-green-200 bg-green-50 px-2 text-[11px] leading-5 text-green-800">{t("families.decidedBy", { user: f.decision.decidedBy, version: f.decision.version })}</span>}
-          {f.decision?.status === "rejected" && <span className="rounded-full border border-red-200 bg-red-50 px-2 text-[11px] leading-5 text-red-800">{t("families.rejectedBy", { user: f.decision.decidedBy })}</span>}
-          <span className="ml-auto whitespace-nowrap font-mono text-[11px] text-gray-400" title={`${t("families.uniqueTooltip", { raw: f.rawClashCount, unique: f.uniqueClashCount })}
-${f.signature}`}>
-            {f.id} · {t("list.clashesCount", { count: f.rawClashCount })}
+        <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px] text-gray-600">
+          <span className="min-w-0 truncate" lang="es" title={`${host}\n${f.title}`}>
+            {host}
+          </span>
+          <span className="shrink-0 whitespace-nowrap" title={`${t("families.uniqueTooltip", { raw: f.rawClashCount, unique: f.uniqueClashCount })}\n${f.id} · ${f.signature}`}>
+            · {t("families.headerCounts", { instances: f.instanceCount, levels: f.levels.length, clashes: f.rawClashCount })}
+          </span>
+          <span className="ml-auto flex shrink-0 items-center gap-1">
+            <FamilyTags family={f} />
+            {f.decision?.status === "approved" && <span className="rounded-full border border-green-200 bg-green-50 px-1.5 leading-5 text-green-800" title={t("families.decidedBy", { user: f.decision.decidedBy, version: f.decision.version })}>✓ v{f.decision.version}</span>}
+            {f.decision?.status === "rejected" && <span className="rounded-full border border-red-200 bg-red-50 px-1.5 leading-5 text-red-800" title={t("families.rejectedBy", { user: f.decision.decidedBy })}>{t("families.split")}</span>}
           </span>
         </div>
         {/* G16: decisions of older grupos (previous signature) that disagree here: never applied, a human reviews them. */}
