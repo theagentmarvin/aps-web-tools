@@ -22,6 +22,11 @@ Las **alertas automáticas** (`annotations`, ANN-001…006) no son reglas: agreg
 | Retirar / restaurar | Propone (también en lote) | Sí: «⋯ › Retirar», Biblioteca › «Restaurar» |
 | Aprobar y publicar | **Nunca** | Sí: aprobar y publicar con passkey |
 
+**Dónde propone el agente:** al final de `/preparar-ciclo` (máx. 3 sugerencias), con `/curar-reglas` en VS Code, o
+**desde el chat de la UI** cuando el coordinador lo pide («esta regla debería asignar CLI», «crea una regla para…»).
+En el chat la sugerencia aparece como tarjeta «Cambio de regla» con el botón «Revisar en Reglas»; el chat explica
+el cambio y pide confirmación antes de crearla. El chat no evalúa el conjunto de reglas, no publica ni aprueba.
+
 Todo cambio, venga del agente o del coordinador, es la misma **sugerencia** con el mismo ciclo:
 **propuesta → aprobada → publicada** (y «Revertir»). Publicar pide la passkey, vuelve a evaluar las reglas
 (sin regresiones en los escenarios ni en las decisiones ya tomadas), deja respaldo y queda en la auditoría.

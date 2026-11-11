@@ -20,7 +20,7 @@ export const SIGTERM_GRACE_MS = 5_000;
 /** Tools the chat agent may never use (defence in depth: also absent from the agent's list). */
 export const CHAT_DISALLOWED = ["mcp__coord__apply_approved_proposals", "mcp__coord__ingest_clash_test", "mcp__coord__run_classification", "Bash", "PowerShell", "Edit", "Write", "Read", "WebFetch", "WebSearch", "Agent", "Task", "Skill"];
 /** Tool results that create something the human decides (cards). */
-const CREATING = new Set(["propose_family_decision", "propose_classification", "propose_group_action", "propose_status_change", "draft_issue", "ask_coordinator", "propose_discipline_mapping", "propose_family_exception", "propose_issue_responsible"]);
+const CREATING = new Set(["propose_family_decision", "propose_classification", "propose_group_action", "propose_status_change", "draft_issue", "ask_coordinator", "propose_discipline_mapping", "propose_family_exception", "propose_issue_responsible", "propose_rule_change"]);
 /**
  * Read-only coord tools the chat agent is pre-approved for (docs/ai/agent-human-parity.md §3.3).
  * Must stay a subset of the agent's front-matter `tools:` (tests/server/chat.test.ts checks it).

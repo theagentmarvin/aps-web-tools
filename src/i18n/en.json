@@ -1530,8 +1530,10 @@
       "other": "Proposal",
       "classification": "Decision",
       "issue_draft": "Issue",
-      "status_change": "Status change"
+      "status_change": "Status change",
+      "rule_change": "Rule change"
     },
+    "reviewRule": "Review in Rules",
     "targets_one": "{count} target",
     "targets_other": "{count} targets",
     "apply": "Apply",

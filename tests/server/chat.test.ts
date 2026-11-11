@@ -109,6 +109,13 @@ describe("chat bridge (pure)", () => {
     expect(allowed).not.toContain("mcp__coord__apply_approved_proposals");
     expect(allowed).not.toContain("mcp__coord__ingest_clash_test");
     expect(allowed.every((t) => t.startsWith("mcp__coord__"))).toBe(true);
+    // Rule flexibility: the chat may PROPOSE rule changes (a card, approved + published by a human in Reglas)…
+    expect(allowed).toContain("mcp__coord__propose_rule_change");
+    expect(allowed).toContain("mcp__coord__get_rule_insights");
+    expect(createdId("mcp__coord__propose_rule_change", JSON.stringify({ ok: true, data: { proposalId: "P-20261111-0001" } }))).toBe("P-20261111-0001");
+    // …but never evaluates the ruleset, publishes, approves or applies anything (no such tool exists for agents).
+    expect(allowed).not.toContain("mcp__coord__evaluate_ruleset");
+    expect(allowed.filter((t) => /publish|approve|revert/.test(t))).toEqual([]);
     // Subagents (installed and staged) never get batch tools.
     for (const dir of [join(ROOT, ".claude", "agents"), join(ROOT, "harness-staging", ".claude", "agents")]) {
       for (const f of existsSync(dir) ? readdirSync(dir).filter((x) => x.endsWith(".md") && x !== "coordinador-chat.md") : []) {

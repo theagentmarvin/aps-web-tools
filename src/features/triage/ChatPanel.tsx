@@ -6,6 +6,7 @@
  * proposal cards that apply ONLY through the existing human paths.
  */
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Link } from "react-router";
 import { useI18n, useT, type TFunction } from "~/i18n";
 import { useApi } from "~/lib/api";
 import type { ChatContext, ChatErrorCode, ChatMessage, ChatProposal, ChatSelectedElement, ChatStatus } from "~/lib/api/types";
@@ -588,7 +589,7 @@ export function cardSummary(t: TFunction, p: ChatProposal): string {
   return [action, c.validity ? t(VALIDITY_KEY[c.validity]) : ""].filter(Boolean).join(" · ");
 }
 const CARD_ACTIONS = new Set(["create_issue", "close", "close_not_issue", "mark_reviewed", "hygiene_issue", "escalate", "request_info", "reopen", "regroup", "issue", "classify"]);
-const KIND_LABELS = new Set(["decision", "family_decision", "regroup", "question", "classification", "issue_draft", "status_change"]);
+const KIND_LABELS = new Set(["decision", "family_decision", "regroup", "question", "classification", "issue_draft", "status_change", "rule_change"]);
 
 /** A proposal from the agent: Aplicar uses the EXISTING human paths; nothing applies without a click. */
 function ProposalCard({ proposal }: { proposal: ChatProposal }) {
@@ -601,6 +602,8 @@ function ProposalCard({ proposal }: { proposal: ChatProposal }) {
   const testId = useTriage(store, (s) => s.payload?.test.id ?? "");
   const card = proposal.card;
   const isQuestion = proposal.kind === "question";
+  // A rule suggestion is never applied from the chat: it is approved and published (passkey) in Reglas.
+  const isRule = proposal.kind === "rule_change";
   // Questions are answered in place with the same flow as the panel callout (store copy wins once loaded).
   const questionId = isQuestion ? (proposal.questionId ?? proposal.id) : "";
   const storedQuestion = useTriage(store, (s) => (questionId ? s.questions.get(questionId) : undefined));
@@ -621,7 +624,7 @@ function ProposalCard({ proposal }: { proposal: ChatProposal }) {
   const target = local ?? resolved;
   // The event has no ids beyond the proposal's: look it up once (server data, never the model's text).
   useEffect(() => {
-    if (local || !testId || proposal.kind === "regroup" || isQuestion) return;
+    if (local || !testId || proposal.kind === "regroup" || isQuestion || isRule) return;
     let live = true;
     api.listProposals({ testId, ids: [proposal.id], limit: 1 }).then(
       (page) => {
@@ -635,7 +638,7 @@ function ProposalCard({ proposal }: { proposal: ChatProposal }) {
     return () => {
       live = false;
     };
-  }, [api, local, proposal.id, proposal.kind, store, testId, isQuestion]);
+  }, [api, local, proposal.id, proposal.kind, store, testId, isQuestion, isRule]);
   // Select the target in the tree (the chat tab stays open).
   const select = () => {
     if (target) store.reveal(target);
@@ -714,7 +717,12 @@ function ProposalCard({ proposal }: { proposal: ChatProposal }) {
             <p className="mt-1">{t("chat.dismissed")}</p>
           ) : (
             <div className="mt-1.5 flex gap-1.5">
-              {!isQuestion && (
+              {isRule && (
+                <Link to="/reglas" className="rounded bg-brand px-2 py-0.5 font-medium text-white hover:bg-brand-light">
+                  {t("chat.reviewRule")}
+                </Link>
+              )}
+              {!isQuestion && !isRule && (
                 <button
                   type="button"
                   onClick={() => void apply()}

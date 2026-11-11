@@ -1530,8 +1530,10 @@
       "other": "Propuesta",
       "classification": "Decisión",
       "issue_draft": "Incidencia",
-      "status_change": "Cambio de estado"
+      "status_change": "Cambio de estado",
+      "rule_change": "Cambio de regla"
     },
+    "reviewRule": "Revisar en Reglas",
     "targets_one": "{count} objetivo",
     "targets_other": "{count} objetivos",
     "apply": "Aplicar",
