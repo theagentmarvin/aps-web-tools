@@ -20,6 +20,7 @@ import { readJson, readString, writeJson, writeString } from "~/lib/storage";
 import { useTriageContext } from "./actions";
 import { QuestionAnswer } from "./QuestionAnswer";
 import { useTriage, type TriageStore } from "./store";
+import { decidedCount } from "./questions";
 import { onViewerSelection, readViewerSelection } from "./viewer-selection";
 
 // ── markdown-lite (paragraphs, lists, **bold**, `code`; never raw HTML) ──
@@ -631,13 +632,18 @@ function FlowChatCard({ run: initial }: { run: FlowRunView }) {
   );
 }
 
-/** A proposal from the agent: Aplicar uses the EXISTING human paths; nothing applies without a click. */
+/**
+ * A proposal from the agent: «Abrir para decidir» opens the EXISTING human path (nothing applies without
+ * a click there). «Rechazar» rejects the proposal on the server and records it as feedback to the agent.
+ * Questions look different (dashed border, «? Pregunta del agente · decide N ubicaciones»).
+ */
 function ProposalCard({ proposal }: { proposal: ChatProposal }) {
   const t = useT();
   const api = useApi();
   const toast = useToast();
   const { store, actions } = useTriageContext();
-  const [state, setState] = useState<"open" | "confirm" | "applied" | "dismissed">("open");
+  const [state, setState] = useState<"open" | "confirm" | "applied" | "dismissed" | "rejecting" | "rejected">("open");
+  const [reason, setReason] = useState("");
   const [resolved, setResolved] = useState<string | null>(null);
   const testId = useTriage(store, (s) => s.payload?.test.id ?? "");
   const card = proposal.card;
@@ -714,6 +720,20 @@ function ProposalCard({ proposal }: { proposal: ChatProposal }) {
     setState("applied");
   }
 
+  /** «Rechazar»: the proposal moves to rejected on the server (reason optional) and the agent gets it as feedback. */
+  async function reject() {
+    if (state !== "rejecting") return setState("rejecting");
+    try {
+      if (proposal.kind === "regroup") {
+        if (testId) await api.applyRegroup(proposal.id, testId, "reject");
+      } else await api.rejectAgentProposal(proposal.id, reason.trim() || undefined);
+      setState("rejected");
+    } catch (err) {
+      toast.show(t("loop.chat.rejectFailed", { message: err instanceof Error ? err.message : String(err) }), { tone: "error" });
+      setState("open");
+    }
+  }
+
   const kindLabel = t(`chat.kind.${KIND_LABELS.has(proposal.kind) ? proposal.kind : "other"}` as Parameters<TFunction>[0]);
   const tg = card?.target;
   const targetLine = tg
@@ -721,9 +741,16 @@ function ProposalCard({ proposal }: { proposal: ChatProposal }) {
     : null;
   const detail = card && card.kind !== "question" && card.title ? card.title : null;
   return (
-    <div className={`mt-2 rounded border px-2 py-1.5 text-xs ${state === "dismissed" ? "border-gray-200 bg-gray-50 text-gray-400" : "border-violet-300 bg-violet-50"}`}>
+    <div
+      className={`mt-2 rounded border px-2 py-1.5 text-xs ${
+        state === "dismissed" || state === "rejected" ? "border-gray-200 bg-gray-50 text-gray-500" : isQuestion ? "border-dashed border-actor-agent bg-white" : "border-actor-agent-bd bg-actor-agent-bg"
+      }`}
+    >
       <p className="flex items-center gap-1.5">
-        <span className="rounded bg-violet-600 px-1 text-[10px] font-medium text-white">{isQuestion ? t("chat.cardQuestion") : kindLabel}</span>
+        {/* Shape + word, not colour only: ✦ proposal · ? question (dashed). */}
+        <span className="min-w-0 font-semibold text-actor-agent">
+          {isQuestion ? `? ${question && decidedCount(question) > 0 ? t("loop.chat.question", { count: decidedCount(question) }) : t("loop.chat.questionNone")}` : `✦ ${t("loop.chat.agentProposes", { kind: kindLabel })}`}
+        </span>
         <span className="truncate font-mono text-[10px] text-gray-400" title={proposal.id}>
           {proposal.id}
         </span>
@@ -753,8 +780,20 @@ function ProposalCard({ proposal }: { proposal: ChatProposal }) {
           {state === "confirm" && <p className="mt-1 font-medium text-amber-900">{t("chat.regroupConfirm", { count: proposal.targetCount ?? 0 })}</p>}
           {state === "applied" ? (
             <p className="mt-1 text-green-800">{t("chat.applied")}</p>
+          ) : state === "rejected" ? (
+            <p className="mt-1">{t("loop.chat.rejected")}</p>
           ) : state === "dismissed" ? (
             <p className="mt-1">{t("chat.dismissed")}</p>
+          ) : state === "rejecting" ? (
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              <input autoFocus value={reason} maxLength={300} onChange={(e) => setReason(e.target.value)} onKeyDown={(e) => e.key === "Enter" && void reject()} placeholder={t("loop.chat.rejectReason")} aria-label={t("loop.chat.rejectReason")} className="min-w-0 flex-1 rounded border border-brand-muted/30 bg-white px-1.5 py-0.5" />
+              <button type="button" onClick={() => void reject()} className="rounded bg-brand px-2 py-0.5 font-medium text-white hover:bg-brand-light">
+                {t("loop.chat.rejectConfirm")}
+              </button>
+              <button type="button" onClick={() => setState("open")} className="rounded px-2 py-0.5 text-gray-700">
+                {t("common.cancel")}
+              </button>
+            </div>
           ) : (
             <div className="mt-1.5 flex gap-1.5">
               {isRule && (
@@ -773,9 +812,11 @@ function ProposalCard({ proposal }: { proposal: ChatProposal }) {
                   {state === "confirm" ? t("chat.confirm") : t("chat.apply")}
                 </button>
               )}
-              <button type="button" onClick={() => setState("dismissed")} className="rounded border border-brand-muted/30 px-2 py-0.5 text-gray-700">
-                {t("chat.dismiss")}
-              </button>
+              {!isRule && (
+                <button type="button" onClick={() => void reject()} title={t("loop.chat.rejectTip")} className="rounded border border-brand-muted/30 bg-white px-2 py-0.5 text-gray-700">
+                  {t("loop.chat.reject")}
+                </button>
+              )}
               {target && (
                 <button type="button" onClick={see} className="rounded px-2 py-0.5 text-brand hover:underline">
                   {t("chat.see")}

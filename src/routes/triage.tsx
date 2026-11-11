@@ -26,6 +26,7 @@ import { ChatPanel } from "~/features/triage/ChatPanel";
 import { PrintAgenda, printAgenda } from "~/features/triage/MeetingViews";
 import { TriageStore, rowKey, useTriage } from "~/features/triage/store";
 import { useTriageHotkeys } from "~/features/triage/useTriageHotkeys";
+import { SEND_TO_APPROVAL_EVENT } from "~/features/loop/DecisionReceipt";
 import { SelectionBar, StatusBar, TOOLBAR_COMPACT_QUERY, WorkspaceActions, WorkspaceNavContext, useMediaQuery, useProgress } from "~/features/triage/WorkspaceChrome";
 
 interface LayoutPrefs {
@@ -228,6 +229,12 @@ function Workspace({ loading, manualOk, onManual, onTestChange, onReload, onQuer
   const narrow = useNarrow(1280);
 
   useTriageHotkeys({ onSend: () => progress.ready > 0 && setSendOpen(true) });
+  // «Siguiente: Enviar a aprobación» of a decision receipt opens the same confirmation.
+  useEffect(() => {
+    const open = () => setSendOpen(true);
+    window.addEventListener(SEND_TO_APPROVAL_EVENT, open);
+    return () => window.removeEventListener(SEND_TO_APPROVAL_EVENT, open);
+  }, []);
 
   function resize(which: "list" | "detail", value: number) {
     const [min, max] = which === "list" ? [300, 600] : [340, 560];

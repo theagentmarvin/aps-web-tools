@@ -1,6 +1,6 @@
 # Circuito agente ↔ coordinador: hacerlo visible (propuesta UX)
 
-Fecha: 2026-11-11 · Estado: **propuesta** (no implementada) · Alcance: Coordinación (panel de grupo y de
+Fecha: 2026-11-11 · Estado: **implementada en WS-U** (ver §8) · Alcance: Coordinación (panel de grupo y de
 ubicación), chat, Qué sigue / página del proyecto, Reglas, Aprobaciones.
 Mockup navegable (fuera del repo): `loop-mockup.html` en el scratchpad de la sesión que produjo este documento.
 
@@ -322,3 +322,70 @@ preguntar después de 10 grupos «¿quién propuso esto?» y «¿qué pasa en AC
 5. ¿El tablero del ciclo va en la página del proyecto (propuesto) o como pestaña «Circuito» en Reglas?
 6. ¿Se quiere el acierto del **agente** visible para el coordinador (riesgo: sobreconfianza) o solo en Reglas?
 7. Color de ACC: ¿teal propio o el azul de Autodesk? (No usar marca de Autodesk sin revisar.)
+
+## 8. Implementado (WS-U, 2026-11-11)
+
+Rama `ws-U`. Decisiones del product owner aplicadas sobre lo propuesto arriba.
+
+**Fase 0 — correcciones**
+- **Bug P1 corregido:** `store.familyDraft()` usa los valores tipados de la propuesta pendiente del agente
+  (`pendingProposals[].payload` de `propose_family_decision`, `agentFamilyValues()`); el diálogo envía
+  `proposalId` y el servidor (`decisionFields`) completa los campos que falten desde esa propuesta.
+  «Aceptar propuesta» acepta exactamente lo que se muestra. Tests: `tests/ui/family-draft-agent.test.ts`,
+  `tests/server/agent-loop.test.ts`.
+- Encabezado del grupo: se mantiene «El agente propone»; debajo, el **sello de origen** dice quién propuso.
+  Ubicación: «Propuesta» + sello (la confianza queda en la fila del sello).
+- Verbos: «Guardar corrección», «Una por una» (tooltip «Decidir una por una»), «Corregir» en la ubicación,
+  «Abrir para decidir» en el chat. «Aplicar» queda reservado para ACC.
+
+**Fase 1 — consecuencias, recibo, aprendizaje**
+- `server/rule-accuracy.ts`: UNA función de acierto (`tallyTest`) usada por `RuleAuthoring.accuracy()`,
+  la vista previa, el recibo, las decisiones por ubicación y el tablero. `learningDelta()` = diferencia de
+  dos conteos del mismo test (no hay cálculo en el cliente).
+- `FamilyDecisionPreview.learning` / `uncuratedCorrections` / `curationThreshold`; `decideFamily` devuelve
+  `receipt` (`FamilyDecisionReceipt`: aciertos y correcciones por regla, total de correcciones iguales,
+  umbral cruzado, agente aceptado sin cambios, listas para enviar). `POST /triage/decisions` devuelve
+  `learning` por ubicación.
+- **Consecuencias como popover** en hover y foco de teclado (Ahora · Después · Reglas), con
+  `aria-describedby` y Escape; sin bloque visible (decisión PO). `families.actionsHelp` eliminado;
+  `families.acceptTip/correctTip/splitTip` como `title`. La línea «Reglas» de Aceptar sale de la vista
+  previa del servidor (se pide al primer hover/foco).
+- **Recibo** (`DecisionReceipt`) dentro del panel hasta cambiar de grupo, con «Deshacer»
+  (`POST /families/:id/undo`: versión nueva que restaura la anterior, o marca `undone` si no había; auditado
+  `family.undone`) y «Siguiente: Enviar a aprobación» (abre la confirmación de la barra). Variantes:
+  decisión, corrección, umbral cruzado, agente aceptado («Cuenta como corrección de EST-004 y acierto del
+  agente»), grupo liberado (una por una), deshecha. Corregir solo la acción: el texto dice que sigue
+  contando como acierto.
+- Sello con acierto y n (`provenance.rules[].accuracy`, misma cifra que Reglas, todas las pruebas).
+
+**Fase 2 — riel y lenguaje común**
+- Tokens `--color-actor-engine|agent|human|acc` (ACC en teal propio) y `ActorMark` (glifo + palabra + color).
+- `TriageFamily.provenance` / `ClashGroup.provenance` (rule · agent con `diffs` · inherited · human) y
+  `.batch` (`LoopBatchRef`: lote, estado, ítems aplicados/fallidos, ids de incidencia ACC).
+- `LoopRail` (Propuesta → Tu decisión → Lote → ACC, estado por forma) arriba del área de detalle (no en el
+  encabezado) y pista de aprendizaje en una línea (correcciones de la regla → sugerencia → publicada; clic
+  abre la regla).
+- Chat: «✦ Agente IA propone · …»; preguntas con borde punteado «? Pregunta del agente · decide N
+  ubicaciones»; «Rechazar» con motivo opcional → `POST /proposals/:id/reject` (propuesta `rejected` +
+  feedback `source: ui` al agente). Paridad #82–#84 en `docs/ai/agent-human-parity.md`.
+- Aprobaciones: `BatchItem.proposer` (`motor | agente | coordinador`) → «Aceptada · motor / agente IA»,
+  «Decisión del coordinador»; resumen de origen por proponente.
+- Reglas: chip de origen con glifo; `RuleSuggestion.feedbackIds` → «Respaldada por N correcciones · Ver»
+  abre Feedback filtrado.
+
+**Fase 3 — tablero**
+- `GET /projects/:id/cycle-loop?testKey` (`CycleLoop`) y `CycleLoopCard` en la página del proyecto bajo
+  «Qué sigue»: propuestas motor/agente, decisiones (aceptadas · corregidas · pendientes · una por una) con
+  barra con texto, lote, ACC, aprendizaje (correcciones del conteo → sugerencias → publicadas), acierto del
+  motor por versión (con serie en texto) y acierto del agente (solo aquí, decisión PO).
+
+**Desviaciones y extras**
+- Una decisión de grupo que cambia validez o responsable del motor ahora registra **un** feedback
+  (`source: decision`) para que «Curar reglas» (≥ 5 sin curar) también se alimente de decisiones de grupo;
+  antes solo las correcciones por ubicación contaban, y el recibo habría mentido.
+- La confianza del agente en grupos es una banda («confianza media»): `propose_family_decision` no guarda
+  un número. Se muestra el número cuando existe.
+- La ubicación muestra «Agente IA» solo si los valores mostrados vienen del agente (una propuesta de
+  grupo que la cubre no cambia sus valores).
+- No se hizo la versión compacta del tablero en Reglas (PO: el tablero vive en el proyecto).
+- El riel de la ubicación no muestra «una por una»; el del grupo cuenta ubicaciones decididas en la sesión.

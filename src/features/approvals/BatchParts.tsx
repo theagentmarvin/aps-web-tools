@@ -56,7 +56,14 @@ export function BatchSummaryView({ batch, preflight }: { batch: Batch; preflight
           </li>
         )}
       </ul>
-      <p className="text-gray-600">{t("batch.origin", batch.origin)}</p>
+      <p className="text-gray-600">
+        {t("loop.approvals.originSummary", {
+          engine: batch.items.filter((i) => !i.excluded && i.proposer === "motor").length,
+          agent: batch.items.filter((i) => !i.excluded && i.proposer === "agente").length,
+          corrected: batch.origin.corrected,
+          manual: batch.items.filter((i) => !i.excluded && (i.proposer === "coordinador" || (!i.proposer && i.origin === "manual"))).length,
+        })}
+      </p>
       <p className="text-gray-600">{t("batch.reviewCoverage", { pct: fmt.pct(batch.review.humanReviewedPct / 100), low: batch.review.lowConfidence })}</p>
       <div className="text-gray-600">{preflight}</div>
       {conflicts > 0 && <p className="text-amber-800">{t("batch.preflightConflicts", { count: conflicts })}</p>}

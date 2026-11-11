@@ -234,6 +234,15 @@ export type {
   ProblemTypeCode,
   ProblemTypeInfo,
   TriageFamily,
+  CycleLoop,
+  FamilyDecisionReceipt,
+  FamilyDecisionResponse,
+  LearningEntry,
+  LearningSummary,
+  LoopBatchRef,
+  Provenance,
+  ProvenanceRule,
+  ProposalDiffField,
 } from "../../../server/api/contract";
 import type { ClashGroup as WireGroup, FamilyDecisionFields as WireDecisionFields, TriageFamily as WireFamily, TriagePayload as WirePayload } from "../../../server/api/contract";
 

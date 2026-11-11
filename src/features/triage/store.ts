@@ -31,6 +31,8 @@ import type {
   FamiliesPayload,
   FamilyGroup,
   IssueDraft,
+  FamilyDecisionReceipt,
+  LearningEntry,
   ProblemTypeInfo,
   TriageFamily,
   TriagePayloadWithFamilies,
@@ -55,6 +57,29 @@ import {
   type ListQuery,
   type StaticFacts,
 } from "./filters";
+
+const VALIDITIES = new Set<Validity>(["real", "false_positive", "tolerated", "needs_info"]);
+const FAMILY_ACTIONS_SET = new Set<FamilyAction>(["create_issue", "close", "mark_reviewed", "hygiene_issue", "escalate"]);
+
+/**
+ * Typed values of the latest pending agent proposal (propose_family_decision) of a family, or
+ * undefined. Only well-formed fields are taken (the payload is server data, typed loosely on the wire).
+ */
+export function agentFamilyValues(f: Pick<TriageFamily, "pendingProposals">): (Partial<FamilyDraft> & { proposalId: string }) | undefined {
+  const p = f.pendingProposals[f.pendingProposals.length - 1];
+  if (!p) return undefined;
+  const pl = p.payload;
+  const str = (k: string) => (typeof pl[k] === "string" && pl[k] ? (pl[k] as string) : undefined);
+  const validity = str("validity") as Validity | undefined;
+  const action = str("action") as FamilyAction | undefined;
+  return {
+    proposalId: p.id,
+    ...(validity && VALIDITIES.has(validity) ? { validity } : {}),
+    ...(action && FAMILY_ACTIONS_SET.has(action) ? { action } : {}),
+    ...(str("responsibleDiscipline") ? { responsibleDiscipline: str("responsibleDiscipline") } : {}),
+    ...(str("solutionOption") ? { solutionOption: str("solutionOption") } : {}),
+  };
+}
 
 export type RowKind = "group" | "clash";
 /** List rows also include the family tree's levels (not decision targets). */
@@ -221,6 +246,10 @@ export interface TriageState {
   /** Pending exceptions per family: groupId → reason. */
   familyExceptions: Map<string, Map<string, string>>;
   familyDrafts: Map<string, Partial<FamilyDraft>>;
+  /** Receipt of the last family decision (shown in that family's panel until the group changes). */
+  familyReceipt: { familyId: string; receipt: FamilyDecisionReceipt; corrected: boolean } | null;
+  /** Learning of ubicación decisions returned by POST /triage/decisions (targetId → entries). */
+  groupLearning: Map<string, LearningEntry[]>;
   /** Families whose issue preview is split per instance. */
   familySplit: Set<string>;
   clashes: Map<string, Clash>;
@@ -319,6 +348,8 @@ export class TriageStore {
       familyVisits: new Map(),
       familyExceptions: new Map(),
       familyDrafts: new Map(),
+      familyReceipt: null,
+      groupLearning: new Map(),
       familySplit: new Set(),
       clashes: new Map(),
       clashesByGroup: new Map(),
@@ -423,6 +454,8 @@ export class TriageStore {
       familyVisits: new Map(),
       familyExceptions: new Map(familyExceptionsFrom(families)),
       familyDrafts: new Map(),
+      familyReceipt: null,
+      groupLearning: new Map(),
       familySplit: new Set([...families.values()].filter((f) => f.issue?.mode === "per_instance" || f.decision?.issueMode === "per_instance").map((f) => f.id)),
       clashes,
       clashesByGroup: byGroup,
@@ -1182,13 +1215,23 @@ export class TriageStore {
 
   // ── families ─────────────────────────────────────────────────────
 
+  /**
+   * What the family panel shows as the proposal and what «Aceptar propuesta» accepts: the approved
+   * decision, else the pending AGENT proposal's values (propose_family_decision payload) over the
+   * engine proposal, else the engine proposal; local edits («Corregir») on top.
+   */
   familyDraft(fid: string): FamilyDraft | undefined {
     const f = this.state.families.get(fid);
     if (!f) return undefined;
+    const agent = f.decision?.status === "approved" ? undefined : agentFamilyValues(f);
     const base: FamilyDraft = f.decision?.status === "approved"
       ? { validity: f.decision.validity, action: f.decision.action, responsibleDiscipline: f.decision.responsibleDiscipline, solutionOption: f.decision.solutionOption, typicalNote: f.decision.typicalDetail?.note }
-      : { validity: f.proposed.validity, action: f.proposed.action, responsibleDiscipline: f.proposed.responsibleDiscipline, solutionOption: f.proposed.solutionOption };
+      : { validity: agent?.validity ?? f.proposed.validity, action: agent?.action ?? f.proposed.action, responsibleDiscipline: agent?.responsibleDiscipline ?? f.proposed.responsibleDiscipline, solutionOption: agent?.solutionOption ?? f.proposed.solutionOption };
     return { ...base, ...this.state.familyDrafts.get(fid) };
+  }
+
+  setFamilyReceipt(r: TriageState["familyReceipt"]) {
+    this.set({ familyReceipt: r });
   }
 
   setFamilyDraft(fid: string, patch: Partial<FamilyDraft> | null) {
@@ -1523,6 +1566,11 @@ export class TriageStore {
     try {
       const res = await this.api.saveDecisions(batch);
       const saved = new Set(res.saved);
+      if (res.learning?.length) {
+        const m = new Map(this.state.groupLearning);
+        for (const l of res.learning) m.set(l.targetId, l.entries);
+        this.set({ groupLearning: m });
+      }
       this.saveQueue = this.saveQueue.filter((d) => !saved.has(d.id));
       this.mirror();
       this.set({ save: { status: this.saveQueue.length ? "saving" : "saved", failed: 0 } });

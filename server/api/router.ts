@@ -433,7 +433,7 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
   // Chat panel regroup proposals (move_groups / detach_clashes / merge_families / split_family): human applies or rejects.
   add("POST", "/proposals/:proposalId/regroup", async ({ params, body, user }) => ui.decideRegroup(params.proposalId, z.strictObject({ testId: TestIdZ, decision: z.enum(["apply", "reject"]) }).parse(body), await user()), true);
   add("POST", "/families/merge", async ({ body, user }) => ui.mergeFamilies(z.strictObject({ testId: TestIdZ, from: FamilyIdZ, into: FamilyIdZ }).parse(body), await user()), true);
-  add("POST", "/families/:familyId/decision-preview", async ({ params, body }) => ui.familyDecisionPreview(params.familyId, DecisionFieldsZ.extend({ testId: TestIdZ }).parse(body)), true);
+  add("POST", "/families/:familyId/decision-preview", async ({ params, body }) => ui.familyDecisionPreview(params.familyId, DecisionFieldsZ.extend({ testId: TestIdZ, proposalId: z.string().max(40).optional() }).parse(body)), true);
   add(
     "POST",
     "/families/:familyId/decision",
@@ -452,6 +452,12 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
       ),
     true,
   );
+  // «Deshacer» of the decision receipt: a new version restoring the previous one (human only, audited).
+  add("POST", "/families/:familyId/undo", async ({ params, body, user }) => ui.undoFamilyDecision(params.familyId, z.strictObject({ testId: TestIdZ, version: z.number().int().min(1).max(10_000) }).parse(body), await user()), true);
+  // Chat card «Rechazar»: the agent proposal moves to rejected and the rejection is recorded as feedback (human only).
+  add("POST", "/proposals/:proposalId/reject", async ({ params, body, user }) => ui.rejectAgentProposal(z.string().min(1).max(80).parse(params.proposalId), z.strictObject({ reason: z.string().max(300).optional() }).parse(body ?? {}), await user()), true);
+  // «Ciclo vNN · cómo va el circuito» (project page; read-only).
+  add("GET", "/projects/:projectId/cycle-loop", async ({ params, query }) => ui.cycleLoop(params.projectId, query.get("testKey") ? TestIdZ.parse(query.get("testKey")) : undefined));
   add(
     "POST",
     "/families/:familyId/exceptions",
