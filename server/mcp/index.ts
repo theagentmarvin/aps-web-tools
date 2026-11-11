@@ -12,6 +12,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Coordinator } from "../coordinator";
 import { loadRules } from "../engine";
+import { prepareDataHome } from "../store/migrate";
 import { log } from "../util";
 import { createCoordServer } from "./server";
 
@@ -21,6 +22,8 @@ console.info = console.log;
 
 async function main(): Promise<void> {
   const root = process.env.CLAUDE_PROJECT_DIR ?? resolve(fileURLToPath(new URL("../..", import.meta.url)));
+  // Same data home as the web server (server/store/home.ts); migrates the old folder if the UI has not yet.
+  await prepareDataHome({ root });
   const coord = new Coordinator({ root });
   try {
     loadRules(); // logs CompiledRuleSet.warnings once (stderr)

@@ -157,19 +157,20 @@ Estados posibles: **parity** · **agent-missing** · **human-missing** · **inte
 | 73 | Conversar con el agente | `POST /chat/messages`, SSE, `history`, `status` · `ChatPanel` | — | intentional: canal del humano al agente |
 | 74 | Cancelar el turno del chat | `POST /chat/:id/cancel` (bug de `http.ts` corregido en WS-E) | — | intentional: canal del humano |
 | 75 | Tarjetas de propuesta en el chat | Tarjeta con acción, validez y destino seleccionable; preguntas respondibles en la tarjeta | Las tarjetas salen de datos del servidor, nunca del texto del modelo | parity (WS-D) |
+| 76 | Datos y respaldos: carpeta de datos, respaldar ahora, carpeta externa, exportar, restaurar | Ajustes → «Datos y respaldos» (`DataBackupsSection`): `GET /data/status`, `POST /data/backups`, `PUT /data/settings`, `GET /data/export`, `POST /data/import` + `…/restore-options` + `…/restore` (passkey) — todas con CSRF | No tiene (ninguna herramienta MCP; test `data-home.test.ts`) | intentional (WS-H): exportar, restaurar o redirigir respaldos es una decisión humana sobre datos confidenciales; restaurar exige passkey |
 
 ### Conteo
 
 | Estado | Filas |
 |---|---|
 | parity | 47 |
-| intentional | 21 |
+| intentional | 22 |
 | human-missing | 3 (#23, #44, #66) |
 | agent-missing | 4 (#29, #40, #50, #63) |
 | en curso | 0 |
-| **Total** | **75** |
+| **Total** | **76** |
 
-Recuento tras integrar WS-A…F (2026-11-10).
+Recuento tras integrar WS-A…F (2026-11-10) y WS-H (2026-11-11).
 
 ## 3. Hallazgos que no son de herramientas
 

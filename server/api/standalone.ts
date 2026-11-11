@@ -7,9 +7,12 @@ import "../net/system-ca"; // first: trust the OS certificate store (corporate H
 import { createServer } from "node:http";
 import { log } from "../util";
 import { createCoordApi } from "./router";
+import { prepareDataHome } from "../store/migrate";
 
 const port = Number(process.env.COORD_API_PORT ?? 3001);
-const api = createCoordApi();
+// Data home outside the repo: one-time verified copy of <repo>/.coordinator (never throws).
+await prepareDataHome({ root: process.cwd() });
+const api = createCoordApi({ backupSchedule: true });
 const server = createServer((req, res) => api.middleware(req, res));
 server.listen(port, "127.0.0.1", () => {
   log.info("api.listening", { url: `http://127.0.0.1:${port}/api/coord`, dataSource: api.coordinator.source.kind, level: api.coordinator.effectiveLevel });

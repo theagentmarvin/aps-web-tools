@@ -11,4 +11,7 @@ tsconfig.tsbuildinfo
 !.coordinator/.gitkeep
 coordinator.config.local.json
 .coordinator-demo/
+# Backups of a repo-local / COORDINATOR_HOME data folder (<home>-backups); the default lives in %LOCALAPPDATA%
+.coordinator-backups/
+.coordinator-demo-backups/
 .mcp.demo.json

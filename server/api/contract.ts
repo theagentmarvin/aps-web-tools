@@ -1569,3 +1569,72 @@ export interface Endpoints {
   "GET /api/coord/reports/files/:name?projectId": { req: void; res: ReportFileContent };
   "GET /api/coord/learning/feedback?projectId&source&limit&cursor": { req: void; res: Page<FeedbackRow> };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Datos y respaldos (server/data-admin.ts). HUMAN-ONLY: every route needs the CSRF header;
+// restore also needs a passkey bound to the uploaded file. There is NO MCP tool for these.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type DataHomeMode = "override" | "fixtures" | "default" | "legacy";
+export type BackupKind = "scheduled" | "manual" | "pre-restore";
+
+export interface BackupInfo { name: string; bytes: number; createdAt: string; kind: BackupKind }
+export interface BackupSettings {
+  /** Absolute path of an external (synced corporate) folder; "" = none. */
+  targetDir: string;
+  /** Backups kept per kind (daily / others). Default 14. */
+  keep: number;
+}
+export interface DataStatus {
+  /** Folder in use. */
+  home: string;
+  mode: DataHomeMode;
+  defaultHome: string;
+  legacyHome: string;
+  backupsDir: string;
+  migration: {
+    migratedAt?: string;
+    from?: string;
+    fileCount?: number;
+    /** The old repo folder is still in use (migration pending or failed). */
+    pending: boolean;
+    error?: { at: string; message: string };
+    bothExistWarning?: string;
+  };
+  settings: BackupSettings;
+  backups: BackupInfo[];
+  lastBackup?: BackupInfo & { fileCount: number; external?: { ok: boolean; error?: string } };
+  lastError?: { at: string; message: string };
+  scheduleActive: boolean;
+}
+export interface DataSettingsRequest { targetDir?: string; keep?: number }
+/** POST /data/import (body: the .zip, Content-Type application/zip) → staged, validated, not yet applied. */
+export interface DataImportStage {
+  id: string;
+  payloadHash: string;
+  createdAt: string;
+  kind: BackupKind | "export";
+  fileCount: number;
+  bytes: number;
+  projects: number;
+  warnings: string[];
+}
+export interface DataRestoreOptions { nonce: string; options: unknown; payloadHash: string }
+export interface DataRestoreRequest {
+  webauthn?: { nonce: string; origin: string; response: unknown };
+  /** Fixtures mode only. */
+  demo?: boolean;
+}
+export interface DataRestoreResult { restoredFiles: number; preRestoreBackup: string; proof: "webauthn" | "demo"; restartRecommended: true }
+
+export interface DataEndpoints {
+  "GET /api/coord/data/status": { req: void; res: DataStatus };
+  "POST /api/coord/data/backups": { req: void; res: BackupInfo };
+  "PUT /api/coord/data/settings": { req: DataSettingsRequest; res: BackupSettings };
+  /** application/zip attachment; `projectId` limits it to one project (not restorable). */
+  "GET /api/coord/data/export?projectId": { req: void; res: Blob };
+  "POST /api/coord/data/import": { req: Blob; res: DataImportStage };
+  "GET /api/coord/data/import/:id/restore-options": { req: void; res: DataRestoreOptions };
+  "POST /api/coord/data/import/:id/restore": { req: DataRestoreRequest; res: DataRestoreResult };
+  "DELETE /api/coord/data/import/:id": { req: void; res: { ok: true } };
+}

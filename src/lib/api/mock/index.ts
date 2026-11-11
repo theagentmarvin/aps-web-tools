@@ -1597,4 +1597,54 @@ export class MockCoordinatorApi implements CoordinatorApi {
     resizeFamily(into, byId);
     return this.getFamilies(req.testId);
   }
+
+  // ── Datos y respaldos (demo: in memory, nothing is written) ──
+  private dataSettings: T.BackupSettings = { targetDir: "", keep: 14 };
+  private dataBackups: T.BackupInfo[] = [
+    { name: "coordinator-2026-11-10.zip", bytes: 3_482_113, createdAt: "2026-11-10T09:00:05.000Z", kind: "scheduled" },
+    { name: "coordinator-2026-11-09.zip", bytes: 3_401_920, createdAt: "2026-11-09T09:00:04.000Z", kind: "scheduled" },
+  ];
+  async getDataStatus(): Promise<T.DataStatus> {
+    await delay(80);
+    const last = this.dataBackups[0];
+    return {
+      home: "C:\\Users\\demo\\AppData\\Local\\bim-coordinator\\data",
+      mode: "default",
+      defaultHome: "C:\\Users\\demo\\AppData\\Local\\bim-coordinator\\data",
+      legacyHome: "C:\\proyectos\\coordination-agent\\.coordinator",
+      backupsDir: "C:\\Users\\demo\\AppData\\Local\\bim-coordinator\\backups",
+      migration: { migratedAt: "2026-11-09T08:59:58.000Z", from: "C:\\proyectos\\coordination-agent\\.coordinator", fileCount: 412, pending: false },
+      settings: clone(this.dataSettings),
+      backups: clone(this.dataBackups),
+      ...(last ? { lastBackup: { ...last, fileCount: 412 } } : {}),
+      scheduleActive: true,
+    };
+  }
+  async backupNow(): Promise<T.BackupInfo> {
+    await delay(400);
+    const d = new Date();
+    const p = (n: number) => String(n).padStart(2, "0");
+    const b: T.BackupInfo = { name: `coordinator-${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.zip`, bytes: 3_500_000, createdAt: d.toISOString(), kind: "manual" };
+    this.dataBackups = [b, ...this.dataBackups].slice(0, this.dataSettings.keep * 2);
+    return clone(b);
+  }
+  async saveDataSettings(req: T.DataSettingsRequest): Promise<T.BackupSettings> {
+    await delay(80);
+    if (req.targetDir && !/^([A-Za-z]:\\|\\\\|\/)/.test(req.targetDir)) throw new ApiError("La carpeta externa debe ser una ruta absoluta.", 400, "validation");
+    this.dataSettings = { targetDir: req.targetDir?.trim() ?? this.dataSettings.targetDir, keep: req.keep ?? this.dataSettings.keep };
+    return clone(this.dataSettings);
+  }
+  async exportData(): Promise<{ blob: Blob; fileName: string }> {
+    throw new ApiError("Modo demostración: no hay datos locales que exportar.", 400, "validation");
+  }
+  async stageDataImport(): Promise<T.DataImportStage> {
+    throw new ApiError("Modo demostración: la restauración solo existe con el servidor local.", 400, "validation");
+  }
+  async getDataRestoreOptions(): Promise<T.DataRestoreOptions> {
+    throw new ApiError("Modo demostración: la restauración solo existe con el servidor local.", 400, "validation");
+  }
+  async restoreData(): Promise<T.DataRestoreResult> {
+    throw new ApiError("Modo demostración: la restauración solo existe con el servidor local.", 400, "validation");
+  }
+  async cancelDataImport(): Promise<void> {}
 }
