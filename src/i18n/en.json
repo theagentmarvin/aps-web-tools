@@ -332,7 +332,7 @@
     "elementId": "ID",
     "compareProperties": "Compare properties (P)",
     "clashes": "Clashes ({count})",
-    "proposal": "Agent proposal",
+    "proposal": "Proposal",
     "field": {
       "validity": "Validity",
       "priority": "Priority",
@@ -2106,7 +2106,8 @@
     },
     "rules": {
       "backedBy_one": "Backed by 1 correction · See",
-      "backedBy_other": "Backed by {count} corrections · See"
+      "backedBy_other": "Backed by {count} corrections · See",
+      "showAll": "Showing {count} corrections of the suggestion · see all"
     }
   }
 }

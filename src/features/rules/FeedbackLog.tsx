@@ -5,6 +5,7 @@
  * (rule 7): only the origin. The statement is free text: rendered as text.
  */
 import { useState } from "react";
+import { useSearchParams } from "react-router";
 import { useI18n, useT, type TKey } from "~/i18n";
 import { useApi, useAsync } from "~/lib/api";
 import type { FeedbackRow, FeedbackSource, Validity } from "~/lib/api/types";
@@ -24,13 +25,27 @@ export function FeedbackLog() {
   const api = useApi();
   const [source, setSource] = useState<FeedbackSource | "all">("all");
   const q = useAsync(() => api.listFeedback({ source: source === "all" ? undefined : [source], limit: 500 }), [api, source]);
+  // «Respaldada por N correcciones · Ver» of a rule suggestion: only those records.
+  const [sp, setSp] = useSearchParams();
+  const only = new Set((sp.get("ids") ?? "").split(",").filter(Boolean));
+  const rows = (q.data?.items ?? []).filter((r) => !only.size || only.has(r.feedbackId));
   const validity = (v?: string) => (v && v in VALIDITY_KEY ? t(VALIDITY_KEY[v as Validity]) : v || "—");
   const chip = (on: boolean) => `rounded-full border px-2.5 py-0.5 text-xs ${on ? "border-brand-light/40 bg-brand/5 text-brand" : "border-brand-muted/30 text-gray-600 hover:text-brand"}`;
   const th = "px-3 py-2 font-medium";
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
-        <p className="mr-auto text-xs text-gray-600">{t("parity.feedback.intro")}</p>
+        <p className="mr-auto text-xs text-gray-600">
+          {t("parity.feedback.intro")}
+          {only.size > 0 && (
+            <>
+              {" "}
+              <button type="button" className="text-brand hover:underline" onClick={() => { sp.delete("ids"); setSp(sp, { replace: true }); }}>
+                {t("loop.rules.showAll", { count: only.size })}
+              </button>
+            </>
+          )}
+        </p>
         <div role="group" aria-label={t("parity.feedback.col.source")} className="flex gap-1">
           {(["all", ...SOURCES] as const).map((s) => (
             <button key={s} type="button" aria-pressed={source === s} className={chip(source === s)} onClick={() => setSource(s)}>
@@ -61,7 +76,7 @@ export function FeedbackLog() {
               </tr>
             </thead>
             <tbody>
-              {q.data.items.map((r: FeedbackRow) => (
+              {rows.map((r: FeedbackRow) => (
                 <tr key={r.feedbackId} className="border-b border-brand-muted/10 align-top last:border-0">
                   <td className="whitespace-nowrap px-3 py-1.5 text-gray-500">{fmt.dateTime(r.at)}</td>
                   <td className="px-3 py-1.5">

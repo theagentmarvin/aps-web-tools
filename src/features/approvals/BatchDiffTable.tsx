@@ -9,6 +9,7 @@ import { useI18n, useT } from "~/i18n";
 import type { Batch, BatchItem, BatchOperation } from "~/lib/api/types";
 import { ConfidenceBadge, ReasonChip } from "~/lib/components/badges";
 import { IconChevronDown, IconChevronRight, IconExternal } from "~/lib/components/icons";
+import { ActorMark } from "~/features/loop/actors";
 import { OPERATION_KEY } from "~/lib/labels";
 
 type FlatRow =
@@ -42,7 +43,14 @@ export function BatchDiffTable({ batch, readOnly, onToggle }: { batch: Batch; re
   }, [items, collapsed]);
 
   const v = useVirtualizer({ count: rows.length, getScrollElement: () => parentRef.current, estimateSize: () => ROW_H, overscan: 10 });
-  const originLabel = (o: BatchItem["origin"]) => (o === "ai_accepted" ? t("batch.originAccepted") : o === "ai_corrected" ? t("batch.originCorrected") : t("batch.originManual"));
+  // Who proposed it (motor / agente IA / coordinador), glyph + word: no more «Aceptada (IA)» for engine proposals.
+  const originLabel = (i: BatchItem) => {
+    const by = i.proposer;
+    if (by === "coordinador" || (!by && i.origin === "manual")) return <ActorMark actor="human">{t("loop.approvals.byCoordinator")}</ActorMark>;
+    const agent = by === "agente";
+    const key = i.origin === "ai_corrected" ? (agent ? "loop.approvals.correctedAgent" : "loop.approvals.correctedEngine") : agent ? "loop.approvals.acceptedAgent" : "loop.approvals.acceptedEngine";
+    return <ActorMark actor={agent ? "agent" : "engine"}>{t(key)}</ActorMark>;
+  };
   const grid = "grid grid-cols-[28px_minmax(140px,1.4fr)_110px_120px_1fr_1fr_120px_90px_110px] items-center gap-2 px-2";
 
   if (!items.length) return <p className="p-6 text-center text-sm text-gray-500">{t("batch.noChanges")}</p>;
@@ -135,7 +143,7 @@ export function BatchDiffTable({ batch, readOnly, onToggle }: { batch: Batch; re
                   <span className="rounded bg-green-50 px-1 text-green-800">{fmtVal(field.accNew)}</span>
                 </span>
                 <span className="flex items-center gap-1 truncate">
-                  {first && originLabel(item.origin)}
+                  {first && originLabel(item)}
                   {first && item.reasonCode && <ReasonChip code={item.reasonCode} />}
                 </span>
                 <span className="truncate">{first ? item.reviewer : ""}</span>

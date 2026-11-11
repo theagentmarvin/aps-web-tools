@@ -5,8 +5,9 @@
  *      review state (one chip; reasons in its tooltip) + ◀ ▶.
  *   2. Agent proposal: validity, suggested action, who moves, ONE confidence
  *      indicator, a one-line why.
- *   3. Actions right below: Aceptar (A) · Cambiar (E) · Rechazar (X) · Posponer (S),
- *      with a small inline hint only when a guard applies.
+ *   3. Actions right below: Aceptar (A) · Corregir (E) · Rechazar (X) · Posponer (S),
+ *      with a small inline hint only when a guard applies; each button shows its
+ *      consequences (Ahora · Después · Reglas) on hover / keyboard focus.
  *   4. Evidence strip: one line per side (A ■ / B ▲); full cards collapsed below.
  *   5. Everything else in collapsed sections (state remembered per user).
  */
@@ -20,7 +21,7 @@ import { categoryNoun, categoryTitle } from "~/lib/category-names";
 import { ConfidenceBadge, FlaggedChip, NatureBadge, PriorityChip, ReasonChip, SpotCheckChip, ValidityBadge } from "~/lib/components/badges";
 import { IconInherited, IconChevronLeft, IconChevronRight, SideASwatch, SideBSwatch } from "~/lib/components/icons";
 import { EmptyState, Kbd, Skeleton } from "~/lib/components/ui";
-import { DECISION_KEY } from "~/lib/labels";
+import { DECISION_KEY, VALIDITY_KEY } from "~/lib/labels";
 import { useTriageContext } from "./actions";
 import {
   ChangesContent,
@@ -47,6 +48,10 @@ import { Section, useCalibrationText, useSectionPrefs, type SectionId } from "./
 import { FamilyPanel, NodePanel } from "./FamilyPanel";
 import { IssuePanel, VerificationSection } from "./IssueViews";
 import { MeetingNoteSection } from "./MeetingViews";
+import { LoopRail, groupRail } from "../loop/LoopRail";
+import { NeqMark, OriginBadge } from "../loop/OriginBadge";
+import { ConsequencePopover, useConsequences, type Consequence } from "../loop/Consequences";
+import { learningParts } from "../loop/DecisionReceipt";
 
 // ── Helpers ────────────────────────────────────────────────────────
 
@@ -228,6 +233,7 @@ function InstancePanel() {
             {kind === "group" ? id : e.s.clash?.id.slice(-8)} · {t("list.clashesCount", { count: clashCount })}
           </span>
         </div>
+        {e.s.group && <GroupRail e={e} />}
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden" id="triage-detail" tabIndex={-1}>
@@ -486,6 +492,7 @@ function ProposalBlock({
 
   const row = (label: string, ai: ReactNode, field: "validity" | "owner" | "action", render: (v: unknown) => ReactNode) => {
     const ch = changes.get(field);
+    const neq = diffs.get(field === "owner" ? "responsibleDiscipline" : field === "validity" ? "validity" : "action");
     return (
       <div className="grid grid-cols-[96px_minmax(0,1fr)] items-baseline gap-2">
         <dt className="text-xs text-gray-500">{label}</dt>
@@ -497,7 +504,10 @@ function ProposalBlock({
               {reasonCode && <ReasonChip code={reasonCode} />}
             </span>
           ) : (
-            ai
+            <>
+              {ai}
+              {neq && <NeqMark value={field === "validity" ? t(VALIDITY_KEY[neq.ruleValue as Validity] ?? "loop.rail.none") : neq.ruleValue} />}
+            </>
           )}
         </dd>
       </div>
@@ -506,6 +516,8 @@ function ProposalBlock({
 
   const conf = proposal ? minConfidence(proposal) : null;
   const agentMade = !!proposal && proposal.origin === "agent" && !e.d.edited && decisionChanges.length === 0;
+  const prov = e.s.group?.provenance;
+  const diffs = new Map((agentMade && prov?.source === "agent" ? prov.agent?.diffs ?? [] : []).map((d) => [d.field, d]));
   return (
     // Thin violet bar = agent-prepared content; it disappears once the human edits or corrects it.
     <section
@@ -513,12 +525,16 @@ function ProposalBlock({
       className={`mx-4 mt-3 rounded-lg border border-brand-muted/30 bg-white p-3 ${agentMade ? "border-l-4 border-l-violet-400" : ""}`}
       title={agentMade ? t("detail.agentPrepared") : undefined}
     >
-      <div className="mb-2 flex flex-wrap items-center gap-1.5">
+      <div className="mb-1 flex flex-wrap items-center gap-1.5">
         <h3 id="dp-proposal" className="mr-auto text-xs font-semibold uppercase tracking-wide text-gray-500">
           {t("detail.proposal")}
         </h3>
         {proposal?.spotCheck && <SpotCheckChip />}
         {proposal?.flagged && <FlaggedChip />}
+      </div>
+      {/* Who proposed it (rule with its accuracy, agent, inherited, you), with the proposal's confidence inside the badge row. */}
+      <div className="mb-2 flex flex-wrap items-center gap-1">
+        <OriginBadge provenance={prov} />
         {conf !== null && <ConfidenceBadge value={conf} calibration={calibration(conf)} />}
       </div>
       {!proposal ? (
@@ -546,6 +562,19 @@ function ProposalBlock({
   );
 }
 
+/** Loop rail of the ubicación: Propuesta → Tu decisión → Lote → ACC (server batch + local decision). */
+function GroupRail({ e }: { e: Evaluated }) {
+  const t = useT();
+  const { store } = useTriageContext();
+  const g = e.s.group!;
+  const own = useTriage(store, (s) => s.latest.get(g.id));
+  const decided = !!own || (!!g.inherited && !g.inherited.needsConfirmation) || g.reviewState === "decided";
+  const sendable = !!own && (own.kind === "accept" || own.kind === "correct") && !own.batchId;
+  return <LoopRail model={groupRail(t, g, decided, sendable)} provenance={g.provenance} />;
+}
+
+type GroupButton = "accept" | "correct" | "reject" | "postpone";
+
 function DecisionActions({ e }: { e: Evaluated }) {
   const t = useT();
   const { fmt } = useI18n();
@@ -555,32 +584,63 @@ function DecisionActions({ e }: { e: Evaluated }) {
   const cursorKey = useTriage(store, (s) => s.cursorKey);
   const targetId = cursorKey ? parseKey(cursorKey).id : "";
   useTriage(store, (s) => s.latest.get(targetId));
+  const learning = useTriage(store, (s) => s.groupLearning.get(targetId));
+  const actionLabel = useActionLabel();
+  const cons = useConsequences<GroupButton>();
   const own = store.state.latest.get(targetId);
   if (editing) return null;
   const secondary = "flex min-w-0 items-center justify-center gap-1 rounded border border-brand-muted/30 px-1.5 py-1.5 text-xs text-gray-700 hover:border-brand-light/40 disabled:opacity-50";
+  const p = e.s.proposal;
+  const rule = e.s.group?.provenance?.rules.find((r) => !r.fallback)?.id ?? e.s.group?.ruleId ?? undefined;
+  const values = p ? [t(VALIDITY_KEY[p.fields.validity.value]), actionLabel(p.fields.action.value), p.fields.owner.value].join(" · ") : "";
+  const a = p?.fields.action.value;
+  const consequences: Record<GroupButton, Consequence> = {
+    accept: {
+      title: t("loop.cons.title.accept"),
+      now: t("loop.cons.acceptNowOne", { values }),
+      after: a?.createIssue ? t("loop.cons.afterIssue", { count: 1 }) : a?.setStatus === "closed" || a?.setStatus === "reviewed" ? t("loop.cons.afterClose", { count: e.s.group?.clashIds.length ?? 1 }) : t("loop.cons.afterNone"),
+      rules: rule ? t("loop.cons.acceptRulesOne", { id: rule }) : t("loop.cons.acceptRulesNone"),
+    },
+    correct: { title: t("loop.cons.title.correct"), now: t("loop.cons.correctNowOne"), after: t("loop.cons.correctAfter"), rules: t("loop.cons.correctRules") },
+    reject: { title: t("loop.cons.title.reject"), now: t("loop.cons.rejectNow"), after: t("loop.cons.rejectAfter"), rules: rule ? t("loop.cons.rejectRules", { id: rule }) : t("loop.cons.rejectRulesNone") },
+    postpone: { title: t("loop.cons.title.postpone"), now: t("loop.cons.postponeNow"), after: t("loop.cons.postponeAfter"), rules: t("loop.cons.postponeRules") },
+  };
+  const learned = learning ? learningParts(t, learning) : [];
   return (
     <div className="mt-3">
       {own ? (
-        <p className="flex flex-wrap items-center justify-between gap-2 text-xs text-gray-600">
-          <span>{t("decision.summary", { decision: t(DECISION_KEY[e.d.state]), user: own.userName, time: fmt.time(own.decidedAt) })}</span>
-          <button type="button" onClick={actions.undo} className="text-brand hover:underline">
-            {t("decision.undo")}
-          </button>
-        </p>
+        <>
+          <p className="flex flex-wrap items-center justify-between gap-2 text-xs text-gray-600">
+            <span>{t("decision.summary", { decision: t(DECISION_KEY[e.d.state]), user: own.userName, time: fmt.time(own.decidedAt) })}</span>
+            <button type="button" onClick={actions.undo} className="text-brand hover:underline">
+              {t("decision.undo")}
+            </button>
+          </p>
+          {/* Receipt of the ubicación decision: what its rule learned (server numbers, same tally as Reglas). */}
+          {learned.length > 0 && (
+            <p role="status" className="mt-1 rounded border border-actor-human-bd bg-actor-human-bg px-2 py-1 text-[11px] text-gray-800">
+              <span aria-hidden="true" className="text-actor-human">● </span>
+              {t("loop.receipt.groupLearn", { text: learned.join(" · ") })}
+            </p>
+          )}
+        </>
       ) : (
-        <div className="grid grid-cols-4 gap-1.5">
-          <button type="button" title={t("actions.acceptTooltip")} onClick={() => actions.accept()} disabled={!e.s.proposal} className="flex min-w-0 items-center justify-center gap-1 rounded bg-brand px-1.5 py-1.5 text-xs font-medium text-white hover:bg-brand-light disabled:opacity-50">
-            {t("actions.accept")} <kbd className="rounded border border-white/40 px-1 font-mono text-[10px]">A</kbd>
-          </button>
-          <button type="button" title={`${t("actions.change")} (E)`} onClick={() => store.setEditing(true)} disabled={!e.s.proposal} className={secondary}>
-            {t("actions.change")} <Kbd>E</Kbd>
-          </button>
-          <button type="button" title={`${t("actions.reject")} (X)`} onClick={() => actions.reject()} className={secondary}>
-            {t("actions.reject")} <Kbd>X</Kbd>
-          </button>
-          <button type="button" title={`${t("actions.postpone")} (S)`} onClick={() => actions.postpone()} className={secondary}>
-            {t("actions.postpone")} <Kbd>S</Kbd>
-          </button>
+        <div className="relative">
+          <div className="grid grid-cols-4 gap-1.5">
+            <button type="button" title={t("actions.acceptTooltip")} {...cons.bind("accept")} onClick={() => actions.accept()} disabled={!e.s.proposal} className="flex min-w-0 items-center justify-center gap-1 rounded bg-brand px-1.5 py-1.5 text-xs font-medium text-white hover:bg-brand-light disabled:opacity-50">
+              {t("actions.accept")} <kbd className="rounded border border-white/40 px-1 font-mono text-[10px]">A</kbd>
+            </button>
+            <button type="button" title={`${t("actions.change")} (E)`} {...cons.bind("correct")} onClick={() => store.setEditing(true)} disabled={!e.s.proposal} className={secondary}>
+              {t("actions.change")} <Kbd>E</Kbd>
+            </button>
+            <button type="button" title={`${t("actions.reject")} (X)`} {...cons.bind("reject")} onClick={() => actions.reject()} className={secondary}>
+              {t("actions.reject")} <Kbd>X</Kbd>
+            </button>
+            <button type="button" title={`${t("actions.postpone")} (S)`} {...cons.bind("postpone")} onClick={() => actions.postpone()} className={secondary}>
+              {t("actions.postpone")} <Kbd>S</Kbd>
+            </button>
+          </div>
+          <ConsequencePopover items={consequences} active={cons.active} idOf={cons.idOf} />
         </div>
       )}
       {hint && (

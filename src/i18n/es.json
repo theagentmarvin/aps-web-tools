@@ -332,7 +332,7 @@
     "elementId": "ID",
     "compareProperties": "Comparar propiedades (P)",
     "clashes": "Interferencias ({count})",
-    "proposal": "Propuesta del agente",
+    "proposal": "Propuesta",
     "field": {
       "validity": "Validez",
       "priority": "Prioridad",
@@ -2106,7 +2106,8 @@
     },
     "rules": {
       "backedBy_one": "Respaldada por 1 corrección · Ver",
-      "backedBy_other": "Respaldada por {count} correcciones · Ver"
+      "backedBy_other": "Respaldada por {count} correcciones · Ver",
+      "showAll": "Mostrando {count} correcciones de la sugerencia · ver todas"
     }
   }
 }
