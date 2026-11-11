@@ -19,7 +19,7 @@ import { minConfidence } from "~/lib/api/decision-utils";
 import type { Clash, InheritedDecision, DecisionChange, ElementInfo, IssueDraft, Nature, Proposal, Validity } from "~/lib/api/types";
 import { categoryNoun, categoryTitle } from "~/lib/category-names";
 import { ConfidenceBadge, FlaggedChip, NatureBadge, PriorityChip, ReasonChip, SpotCheckChip, ValidityBadge } from "~/lib/components/badges";
-import { IconInherited, IconChevronLeft, IconChevronRight, SideASwatch, SideBSwatch } from "~/lib/components/icons";
+import { IconInherited, IconChevronLeft, IconChevronRight, IconSparkle, SideASwatch, SideBSwatch } from "~/lib/components/icons";
 import { EmptyState, Kbd, Skeleton } from "~/lib/components/ui";
 import { DECISION_KEY, VALIDITY_KEY } from "~/lib/labels";
 import { useTriageContext } from "./actions";
@@ -375,15 +375,20 @@ function InheritedCallout({ targetKey, inherited }: { targetKey: string; inherit
 }
 
 /** Switches to the Agente tab with this row as the focus chip. */
+/** "Preguntar al agente sobre esto" as a compact icon in the proposal heading (label on hover / for screen readers). */
 export function AskAgentLink() {
   const t = useT();
   const { store } = useTriageContext();
   return (
-    <p className="mt-2 text-right">
-      <button type="button" onClick={() => store.askAgent()} className="text-[11px] text-violet-800 hover:underline">
-        {t("chat.askAbout")}
-      </button>
-    </p>
+    <button
+      type="button"
+      onClick={() => store.askAgent()}
+      title={t("chat.askAbout")}
+      aria-label={t("chat.askAbout")}
+      className="shrink-0 rounded p-1 text-violet-700 hover:bg-violet-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-500"
+    >
+      <IconSparkle size={14} />
+    </button>
   );
 }
 
@@ -536,6 +541,7 @@ function ProposalBlock({
         </h3>
         {proposal?.spotCheck && <SpotCheckChip />}
         {proposal?.flagged && <FlaggedChip />}
+        <AskAgentLink />
       </div>
       {/* Who proposed it (rule with its accuracy, agent, inherited, you), with the proposal's confidence inside the badge row. */}
       <div className="mb-2 flex flex-wrap items-center gap-1">
@@ -562,7 +568,6 @@ function ProposalBlock({
         </>
       )}
       <DecisionActions e={e} />
-      <AskAgentLink />
     </section>
   );
 }

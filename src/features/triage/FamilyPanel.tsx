@@ -314,6 +314,7 @@ function FamilyProposal({ f, draft, options, impact }: { f: TriageFamily; draft:
         <h3 id="fp-proposal" className="mr-auto text-xs font-semibold uppercase tracking-wide text-gray-500">
           {decided ? t("families.decisionTitle") : t("families.proposal")}
         </h3>
+        <AskAgentLink />
       </div>
       <OriginBadge provenance={prov} className="mb-2" />
       {editing ? (
@@ -430,7 +431,6 @@ function FamilyProposal({ f, draft, options, impact }: { f: TriageFamily; draft:
               {hint}
             </p>
           )}
-          <AskAgentLink />
         </div>
       )}
     </section>
