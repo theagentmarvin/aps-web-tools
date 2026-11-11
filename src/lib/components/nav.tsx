@@ -8,6 +8,7 @@ import { useT, type TKey } from "~/i18n";
 import { useApi } from "~/lib/api";
 import { useCoordAuth } from "~/lib/coord-auth";
 import { AgentStatusIndicator, LanguageSwitch } from "./shell-widgets";
+import { FlowsNavButton } from "~/features/flows/NextSteps";
 
 const LINKS: { to: string; key: TKey; end?: boolean }[] = [
   { to: "/proyectos", key: "nav.projects" },
@@ -126,6 +127,7 @@ export function Nav() {
         ) : (
           coordStatus?.dataSource === "fixtures" && <span title={t("auth.demoSession")} className={`hidden rounded border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] text-amber-800 lg:inline`}>{workspace ? t("app.demoShort") : t("auth.demoSession")}</span>
         )}
+        <FlowsNavButton />
         <AgentStatusIndicator />
         <LanguageSwitch />
         <UserMenu />

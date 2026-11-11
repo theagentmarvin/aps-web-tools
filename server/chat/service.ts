@@ -14,6 +14,8 @@ import { authStatus, ChatRunError, childEnv, claudeArgs, mcpConfigJson, resolveC
 import { chatCard } from "./cards";
 import { chatPrompt, contextBlock } from "./context";
 import { ChatStore, type StoredChatSession } from "./store";
+import type { FlowService } from "../flows/service";
+import { FlowRunStore, isRunId, runView } from "../flows/store";
 
 export const CHAT_MESSAGE_MAX = 4000;
 /** Pre-flight cache: a positive `claude auth status` for 5 min, a negative one briefly (the user may log in). */
@@ -42,6 +44,10 @@ export interface ChatServiceOptions {
   /** Repo root holding .claude/agents or harness-staging/.claude/agents (default: coordinator root). */
   agentRoot?: string;
   model?: string;
+  /** Flow runner: a start_flow result is picked up at once and shown as a "Flujo" card. */
+  flows?: FlowService;
+  /** Next steps (server-computed) shown as suggestion cards when the agent calls get_next_steps. */
+  nextSteps?: (q: { projectId?: string; testKey?: string }) => Promise<C.NextStepsPayload>;
 }
 
 export class ChatService {
@@ -101,10 +107,13 @@ export class ChatService {
     // Cards are resolved now (current state of each proposal / question), never stored text.
     const cache = new Map();
     const messages: C.ChatHistoryMessage[] = [];
+    const runs = new FlowRunStore(this.coord.store);
     for (const m of stored?.messages ?? []) {
       const ids = [...(m.proposalIds ?? []).map((id) => [id, "proposal"] as const), ...(m.questionIds ?? []).map((id) => [id, "question"] as const)];
       const cards = (await Promise.all(ids.map(([id, kind]) => chatCard(this.coord, id, kind, cache).catch(() => undefined)))).filter((c): c is C.ChatCard => !!c);
-      messages.push(cards.length ? { ...m, cards } : m);
+      // Flow cards: the current state of each run, from the flow store (never stored text).
+      const flows = (await Promise.all((m.flowRunIds ?? []).map((id) => runs.get(id).catch(() => undefined)))).filter((r): r is NonNullable<typeof r> => !!r).map(runView);
+      messages.push({ ...m, ...(cards.length ? { cards } : {}), ...(flows.length ? { flows } : {}) });
     }
     return { sessionId: stored?.sessionId ?? "", testKey: test.testKey, messages, ...(running ? { running } : {}) };
   }
@@ -173,6 +182,8 @@ export class ChatService {
   private async execute(run: MessageRun, session: StoredChatSession, message: string, context: C.ChatContext, user: { id: string; name: string }): Promise<void> {
     const started = Date.now();
     const created: Array<{ id: string; kind: "proposal" | "question" }> = [];
+    const flowRunIds: string[] = [];
+    const turn: { nextSteps?: C.NextStep[] } = {};
     const pending: Array<Promise<void>> = [];
     let text = "";
     let costUsd: number | undefined;
@@ -213,6 +224,38 @@ export class ChatService {
           })().catch(() => undefined),
         );
       };
+      const onToolResult = (tool: string, raw: string) => {
+        if (tool !== "start_flow" && tool !== "get_next_steps") return;
+        let data: Record<string, unknown> | undefined;
+        try {
+          const env = JSON.parse(raw) as { ok?: boolean; data?: Record<string, unknown> };
+          if (env.ok !== false) data = env.data;
+        } catch {
+          return;
+        }
+        if (!data) return;
+        pending.push(
+          (async () => {
+            if (tool === "start_flow") {
+              // Verify against the flow store, start it now (the poll would too), then show its card.
+              const runId = typeof data.runId === "string" && isRunId(data.runId) ? data.runId : undefined;
+              const rec = runId ? await new FlowRunStore(this.coord.store).get(runId) : undefined;
+              if (!rec || flowRunIds.includes(rec.runId)) return;
+              flowRunIds.push(rec.runId);
+              await this.opts.flows?.pickup(rec.runId).catch(() => undefined);
+              const fresh = (await new FlowRunStore(this.coord.store).get(rec.runId)) ?? rec;
+              this.emit(run, { type: "flow", run: runView(fresh) });
+            } else if (this.opts.nextSteps && !turn.nextSteps) {
+              // Recomputed by the server for the same scope (never the tool text): suggestion cards.
+              const q = { ...(typeof data.projectId === "string" ? { projectId: data.projectId } : {}), ...(typeof data.testKey === "string" ? { testKey: data.testKey } : {}) };
+              const p = await this.opts.nextSteps(q).catch(() => undefined);
+              if (!p?.steps.length) return;
+              turn.nextSteps = p.steps.slice(0, 3);
+              this.emit(run, { type: "next_steps", steps: turn.nextSteps });
+            }
+          })().catch(() => undefined),
+        );
+      };
       const once = (resume: boolean) =>
         runClaude({
           bin,
@@ -226,6 +269,7 @@ export class ChatService {
             if (run.cancelled) stop();
           },
           onCreated,
+          onToolResult,
           onEvent: (e) => this.emit(run, e.type === "delta" ? { type: "delta", text: e.text } : e),
         });
       let result;
@@ -262,6 +306,8 @@ export class ChatService {
         at: nowIso(this.coord.now()),
         ...(proposalIds.length ? { proposalIds } : {}),
         ...(questionIds.length ? { questionIds } : {}),
+        ...(flowRunIds.length ? { flowRunIds } : {}),
+        ...(turn.nextSteps?.length ? { nextSteps: turn.nextSteps } : {}),
         ...(costUsd !== undefined ? { costUsd } : {}),
         durationMs,
         ...(error ? { error } : {}),
@@ -274,8 +320,8 @@ export class ChatService {
         projectId: session.projectId,
         modelSetId: session.modelSetId,
         testId: session.testKey,
-        targetIds: [run.messageId, ...proposalIds.slice(0, 10), ...questionIds.slice(0, 5)],
-        details: { proposals: proposalIds.length, questions: questionIds.length, costUsd: costUsd ?? null, durationMs, error: error?.code ?? null, stoppedBy: stoppedBy ?? null },
+        targetIds: [run.messageId, ...proposalIds.slice(0, 10), ...questionIds.slice(0, 5), ...flowRunIds.slice(0, 3)],
+        details: { proposals: proposalIds.length, questions: questionIds.length, flows: flowRunIds.length, costUsd: costUsd ?? null, durationMs, error: error?.code ?? null, stoppedBy: stoppedBy ?? null },
       });
     } catch (err) {
       log.warn("chat.persist_failed", { message: (err as Error).message });

@@ -9,7 +9,9 @@ import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "
 import { Link } from "react-router";
 import { useI18n, useT, type TFunction } from "~/i18n";
 import { useApi } from "~/lib/api";
-import type { ChatContext, ChatErrorCode, ChatMessage, ChatProposal, ChatSelectedElement, ChatStatus } from "~/lib/api/types";
+import type { ChatContext, ChatErrorCode, ChatMessage, ChatProposal, ChatSelectedElement, ChatStatus, FlowRunView } from "~/lib/api/types";
+import { FlowRunPanel, NextStepRow, useFlowRun } from "~/features/flows/FlowParts";
+import { flowsChanged, openFlows } from "~/features/flows/links";
 import { VALIDITY_KEY } from "~/lib/labels";
 import { useToast } from "~/lib/components/Toast";
 import { IconChevronDown, IconSparkle } from "~/lib/components/icons";
@@ -126,6 +128,8 @@ export function suggestedPrompts(t: TFunction, store: TriageStore, selectionCoun
   if (selectionCount) out.push(t("chat.prompt.regroup"));
   if (store.hasPrevious()) out.push(t("chat.prompt.changed"));
   if (!row) out.push(t("chat.prompt.first"));
+  // WS-N: always offer "what's next" (the server computes it; the agent offers to run the flow).
+  out.push(t("chat.prompt.nextSteps"));
   return out;
 }
 
@@ -267,6 +271,14 @@ export function ChatPanel() {
           current = { ...current, proposals: [...(current.proposals ?? []), e.proposal] };
           setStreaming(current);
           store.noteChatProposal();
+        } else if (e.type === "flow") {
+          // WS-N: a flow the agent started (server card); its state is followed live by the card.
+          current = { ...current, flows: [...(current.flows ?? []).filter((r) => r.runId !== e.run.runId), e.run] };
+          setStreaming(current);
+          flowsChanged();
+        } else if (e.type === "next_steps") {
+          current = { ...current, nextSteps: e.steps };
+          setStreaming(current);
         } else if (e.type === "done") {
           current = { ...current, cost: e.cost, durationMs: e.durationMs };
           if (e.chatId) {
@@ -278,7 +290,7 @@ export function ChatPanel() {
     } catch (err) {
       setError({ code: "failed", message: err instanceof Error ? err.message : String(err) });
     } finally {
-      if (current.text || current.proposals?.length) setMessages((m) => [...m, current]);
+      if (current.text || current.proposals?.length || current.flows?.length || current.nextSteps?.length) setMessages((m) => [...m, current]);
       setStreaming(null);
       setStatus(null);
       abort.current = null;
@@ -382,6 +394,14 @@ export function ChatPanel() {
               <div className="mr-2 rounded-lg border border-violet-200 bg-white px-3 py-2 text-gray-900">
                 <MarkdownLite text={m.text || "…"} />
                 {m.proposals?.map((p) => <ProposalCard key={p.id} proposal={p} />)}
+                {m.nextSteps?.length ? (
+                  <ul className="mt-2 divide-y divide-violet-100 rounded border border-violet-200 bg-violet-50/40 px-2 text-xs">
+                    {m.nextSteps.map((s) => (
+                      <NextStepRow key={s.id} step={s} compact />
+                    ))}
+                  </ul>
+                ) : null}
+                {m.flows?.map((r) => <FlowChatCard key={r.runId} run={r} />)}
                 {(m.cost !== undefined || m.durationMs !== undefined) && (
                   <p className="mt-1 text-right text-[10px] text-gray-400">
                     {[m.cost !== undefined ? t("chat.cost", { usd: m.cost.toFixed(2) }) : "", m.durationMs !== undefined ? t("chat.duration", { s: fmt.number(m.durationMs / 1000, 1) }) : ""].filter(Boolean).join(" · ")}
@@ -590,6 +610,26 @@ export function cardSummary(t: TFunction, p: ChatProposal): string {
 }
 const CARD_ACTIONS = new Set(["create_issue", "close", "close_not_issue", "mark_reviewed", "hygiene_issue", "escalate", "request_info", "reopen", "regroup", "issue", "classify"]);
 const KIND_LABELS = new Set(["decision", "family_decision", "regroup", "question", "classification", "issue_draft", "status_change", "rule_change"]);
+
+/** WS-N: a flow the agent started — live state from the flow store, cancel, and a link to the Flujos drawer. */
+function FlowChatCard({ run: initial }: { run: FlowRunView }) {
+  const t = useT();
+  const run = useFlowRun(initial.runId, initial) ?? initial;
+  return (
+    <div className="mt-2 rounded border border-sky-300 bg-sky-50/60 px-2 py-1.5 text-xs">
+      <p className="flex items-center gap-1.5">
+        <span className="rounded bg-sky-700 px-1 text-[10px] font-medium text-white">{t("flows.chatCard")}</span>
+        <span className="min-w-0 flex-1 truncate font-medium text-gray-900">{run.label}</span>
+        <button type="button" onClick={() => openFlows(run.runId)} className="shrink-0 text-[11px] text-brand hover:underline">
+          {t("flows.chatSee")}
+        </button>
+      </p>
+      <div className="mt-1">
+        <FlowRunPanel run={run} compact />
+      </div>
+    </div>
+  );
+}
 
 /** A proposal from the agent: Aplicar uses the EXISTING human paths; nothing applies without a click. */
 function ProposalCard({ proposal }: { proposal: ChatProposal }) {

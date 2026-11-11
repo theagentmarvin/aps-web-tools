@@ -352,6 +352,10 @@ export type ChatEvent =
   | { type: "status"; text: string; chatId?: string }
   | { type: "delta"; text: string }
   | { type: "proposal"; proposal: ChatProposal }
+  /** WS-N: a flow the agent started (server card from the flow store). */
+  | { type: "flow"; run: FlowRunView }
+  /** WS-N: next steps the server computed when the agent asked. */
+  | { type: "next_steps"; steps: NextStep[] }
   | { type: "done"; chatId?: string; cost?: number; durationMs?: number }
   | { type: "error"; code: ChatErrorCode; message: string };
 export interface ChatMessage {
@@ -359,6 +363,9 @@ export interface ChatMessage {
   text: string;
   at: string;
   proposals?: ChatProposal[];
+  /** WS-N: flow runs started in this turn and suggested next steps (server data). */
+  flows?: FlowRunView[];
+  nextSteps?: NextStep[];
   context?: ChatContext;
   /** Agent turns: USD cost and duration (shown small and muted). */
   cost?: number;
@@ -379,3 +386,22 @@ export interface ChatHistory {
 
 // Human-side parity (docs/ai/agent-human-parity.md): hygiene, report files, agent/UI feedback.
 export type { FeedbackRow, FeedbackSource, HygieneCheck, ReportFile, ReportFileContent, TestHygiene } from "../../../server/api/contract";
+
+// WS-N: "Qué sigue" and domain flows (docs/domain/next-steps-and-flows.md).
+export type {
+  FlowDef,
+  FlowEvent,
+  FlowId,
+  FlowLogLine,
+  FlowOutcome,
+  FlowRunRequest,
+  FlowRunsPayload,
+  FlowRunState,
+  FlowRunView,
+  NextStep,
+  NextStepAction,
+  NextStepKind,
+  NextStepRoute,
+  NextStepsPayload,
+} from "../../../server/api/contract";
+import type { FlowRunView, NextStep } from "../../../server/api/contract";

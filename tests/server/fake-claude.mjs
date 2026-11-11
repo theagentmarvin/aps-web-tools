@@ -85,6 +85,42 @@ process.stdin.on("end", () => {
     result("El grupo es un **Conflicto**: el ducto CLI cruza la viga EST.");
     process.exit(0);
   }
+  if (mode === "flow") {
+    // WS-N flow run: English preamble (dropped), a read, a created proposal, a report, a Spanish summary.
+    const ev = (event) => out({ type: "stream_event", session_id: session, event });
+    init();
+    ev({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
+    ev({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "I'll check the groups first." } });
+    ev({ type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "f1", name: "mcp__coord__get_group", input: {} } });
+    out({ type: "assistant", session_id: session, message: { content: [{ type: "tool_use", id: "f1", name: "mcp__coord__get_group", input: { groupId: "G-0000000000" } }] } });
+    out({ type: "user", session_id: session, message: { content: [{ type: "tool_result", tool_use_id: "f1", content: [{ type: "text", text: "{\"ok\":true,\"data\":{}}" }] }] } });
+    const pid = process.env.FAKE_PROPOSAL_ID;
+    if (pid) {
+      out({ type: "assistant", session_id: session, message: { content: [{ type: "tool_use", id: "f2", name: "mcp__coord__propose_classification", input: {} }] } });
+      out({ type: "user", session_id: session, message: { content: [{ type: "tool_result", tool_use_id: "f2", content: [{ type: "text", text: JSON.stringify({ ok: true, data: { proposalId: pid } }) }] }] } });
+    }
+    out({ type: "assistant", session_id: session, message: { content: [{ type: "tool_use", id: "f3", name: "mcp__coord__generate_report", input: { kind: "weekly" } }] } });
+    out({ type: "user", session_id: session, message: { content: [{ type: "tool_result", tool_use_id: "f3", content: [{ type: "text", text: JSON.stringify({ ok: true, data: { path: "C:\\x\\reports\\demo\\2026-11-11-weekly-T-0000aaaa.html" } }) }] }] } });
+    ev({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
+    ev({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Revisé las ubicaciones pendientes y dejé una propuesta para tu revisión.\n\nQueda el informe semanal listo en Informes." } });
+    ev({ type: "message_delta", delta: { stop_reason: "end_turn" } });
+    out({ type: "result", subtype: "success", is_error: false, total_cost_usd: 0.42, session_id: session, result: "ok" });
+    process.exit(0);
+  }
+  if (mode === "chat_flow") {
+    // WS-N chat turn: get_next_steps then start_flow (FAKE_FLOW_RUN_ID).
+    init();
+    out({ type: "assistant", session_id: session, message: { content: [{ type: "tool_use", id: "c1", name: "mcp__coord__get_next_steps", input: {} }] } });
+    out({ type: "user", session_id: session, message: { content: [{ type: "tool_result", tool_use_id: "c1", content: [{ type: "text", text: JSON.stringify({ ok: true, data: { projectId: "demo-proyecto", steps: [{ id: "x", title: "texto del modelo" }] } }) }] }] } });
+    const run = process.env.FAKE_FLOW_RUN_ID;
+    if (run) {
+      out({ type: "assistant", session_id: session, message: { content: [{ type: "tool_use", id: "c2", name: "mcp__coord__start_flow", input: { flowId: "triage" } }] } });
+      out({ type: "user", session_id: session, message: { content: [{ type: "tool_result", tool_use_id: "c2", content: [{ type: "text", text: JSON.stringify({ ok: true, data: { runId: run, state: "queued" } }) }] }] } });
+    }
+    delta("Inicié la revisión IA de lo pendiente.");
+    result("Inicié la revisión IA de lo pendiente.");
+    process.exit(0);
+  }
   init();
   delta("Hola, ");
   delta("revisé la selección. Ver P-20991231-0001 (texto del modelo, no es una propuesta).");

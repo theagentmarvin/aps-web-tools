@@ -55,6 +55,26 @@ export function proposalFromCard(card: import("./types").ChatCard): import("./ty
   };
 }
 
+/** SSE message → typed flow event (GET /flows/runs/:id/events; unknown events are ignored). */
+export function toFlowEvent(m: SseMessage): import("./types").FlowEvent | null {
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(m.data) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  switch (m.event) {
+    case "status":
+    case "log":
+    case "created":
+    case "done":
+    case "error":
+      return { ...payload, type: m.event } as import("./types").FlowEvent;
+    default:
+      return null;
+  }
+}
+
 /** SSE message → typed chat event (unknown events are ignored). */
 export function toChatEvent(m: SseMessage): import("./types").ChatEvent | null {
   let payload: Record<string, unknown>;
@@ -92,6 +112,15 @@ export function toChatEvent(m: SseMessage): import("./types").ChatEvent | null {
         return { type: "proposal", proposal: { ...rest, kind: "question", summary: String(question ?? p.summary ?? ""), questionId: (p.questionId ?? p.id) as string } };
       }
       return { type: "proposal", proposal: { ...p, summary: String(p.summary ?? "") } };
+    }
+    case "flow": {
+      // WS-N: the server's flow card (read from the flow store, never the model's text).
+      const run = payload.run as import("./types").FlowRunView | undefined;
+      return run && typeof run.runId === "string" ? { type: "flow", run } : null;
+    }
+    case "next_steps": {
+      const steps = payload.steps as import("./types").NextStep[] | undefined;
+      return Array.isArray(steps) ? { type: "next_steps", steps: steps.slice(0, 3) } : null;
     }
     case "done":
     {

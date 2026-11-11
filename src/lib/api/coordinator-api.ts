@@ -254,6 +254,19 @@ export interface CoordinatorApi {
   detachFamilyInstance(familyId: string, req: { testId: string; groupId: string }): Promise<FamiliesPayload>;
   /** Human-only: merge family `from` into `into`. Local only. */
   mergeFamilies(req: { testId: string; from: string; into: string }): Promise<FamiliesPayload>;
+
+  // ── WS-N: "Qué sigue" and domain flows (docs/domain/next-steps-and-flows.md) ──
+  /** Ordered next steps of a project / test, computed by the server (no LLM). */
+  getNextSteps(params: { projectId?: string; testKey?: string }): Promise<import("./types").NextStepsPayload>;
+  /** Flow catalog, availability (installed flow agent), daily agent cap and recent runs. */
+  listFlowRuns(projectId?: string): Promise<import("./types").FlowRunsPayload>;
+  getFlowRun(runId: string): Promise<import("./types").FlowRunView>;
+  /** Human-only: queue a catalog flow (one per project); it produces proposals / questions / drafts / reports only. */
+  runFlow(flowId: import("./types").FlowId, req: import("./types").FlowRunRequest): Promise<import("./types").FlowRunView>;
+  /** Human-only: cancel a queued or running flow. */
+  cancelFlowRun(runId: string): Promise<{ cancelled: boolean }>;
+  /** Progress events of a run (SSE; replayed from the start). Resolves when the stream ends. */
+  watchFlowRun(runId: string, onEvent: (e: import("./types").FlowEvent) => void, signal?: AbortSignal): Promise<void>;
 }
 
 /** Error with an HTTP-ish status and a stable code for the UI to translate. */

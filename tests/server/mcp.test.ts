@@ -5,7 +5,7 @@ import { approveBatch } from "../../server/approval";
 import type { Coordinator } from "../../server/coordinator";
 import { CoordinatorUi } from "../../server/coordinator-ui";
 import { createCoordServer } from "../../server/mcp/server";
-import { TOOLS } from "../../server/mcp/contracts";
+import { toolInMode, TOOLS } from "../../server/mcp/contracts";
 import { acceptGroups, HUMAN, makeCoord, MODEL_SET_ID, tempHome, testConfig } from "./helpers";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -40,8 +40,11 @@ afterAll(async () => {
 describe("coord MCP server (fixtures)", () => {
   it("lists every contract tool and no approve tool", async () => {
     const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name).sort()).toEqual(TOOLS.map((t) => t.name).sort());
-    expect(tools).toHaveLength(46);
+    // Main mode (VS Code agent and its subagents): every tool except the chat-only flow tools (WS-N).
+    expect(tools.map((t) => t.name).sort()).toEqual(TOOLS.filter((t) => toolInMode(t, "main")).map((t) => t.name).sort());
+    expect(tools).toHaveLength(47);
+    expect(tools.map((t) => t.name)).toContain("get_next_steps");
+    expect(tools.map((t) => t.name)).not.toContain("start_flow");
     // No MCP tool may approve, sign, edit, exclude, return, discard, publish rules or answer questions.
     expect(tools.map((t) => t.name).filter((n) => /approve|sign|exclude|discard|return_|publish|answer|decide/.test(n) && n !== "apply_approved_proposals")).toEqual([]);
     const apply = tools.find((t) => t.name === "apply_approved_proposals")!;

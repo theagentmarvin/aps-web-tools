@@ -9,11 +9,14 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { applyApproved, type ApplyResult } from "../approval";
 import { getAgendaForAgent, getBatchForAgent, listBatchesForAgent, listDecisionsForAgent, listRemindersForAgent } from "../agent-reads";
-import { AGENT_ACTOR, CHAT_AGENT_ACTOR, SERVER_VERSION, type Coordinator } from "../coordinator";
+import { AGENT_ACTOR, CHAT_AGENT_ACTOR, FLOW_AGENT_ACTOR, SERVER_VERSION, type Coordinator } from "../coordinator";
 import { selectionContext } from "../chat/context";
+import { flowStatusForAgent, requestFlowRun } from "../flows/request";
+import { FlowRunStore } from "../flows/store";
+import { nextSteps } from "../next-steps";
 import type { Actor } from "../store/types";
 import { hashOf, CoordError } from "../util";
-import { TOOLS, type ToolSpec } from "./contracts";
+import { toolInMode, TOOLS, type ServerMode, type ToolSpec } from "./contracts";
 import { capResponse, errorEnvelope, okEnvelope } from "./format";
 
 type Args = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -21,6 +24,15 @@ type Extra = { _meta?: { progressToken?: string | number }; sendNotification?: (
 
 /** Chat panel mode (COORD_CHAT=1): no apply tool, proposals tagged createdBy agent-chat. */
 export const isChatMode = (env: NodeJS.ProcessEnv = process.env) => env.COORD_CHAT === "1";
+/** Flow mode (COORD_FLOW=1, server/flows): no apply tool, no flow tools (no recursion), proposals tagged agent-flow. */
+export const isFlowMode = (env: NodeJS.ProcessEnv = process.env) => env.COORD_FLOW === "1";
+
+export function serverMode(opts: { chat?: boolean; flow?: boolean } = {}, env: NodeJS.ProcessEnv = process.env): ServerMode {
+  // Flow wins over chat (the stricter of the two when both are set).
+  if (opts.flow ?? isFlowMode(env)) return "flow";
+  if (opts.chat ?? isChatMode(env)) return "chat";
+  return "main";
+}
 
 export function toolHandlers(coord: Coordinator, actor: Actor = AGENT_ACTOR): Record<string, (a: Args, extra: Extra) => Promise<unknown>> {
   const ctx = { actor };
@@ -80,6 +92,17 @@ export function toolHandlers(coord: Coordinator, actor: Actor = AGENT_ACTOR): Re
     get_agenda: async (a) => getAgendaForAgent(coord, a as never),
     list_reminders: async (a) => listRemindersForAgent(coord, a as never),
     propose_family_exception: async (a) => coord.proposeFamilyException(a as never, ctx),
+    get_next_steps: async (a) => nextSteps(coord, a as { projectId?: string; testKey?: string }),
+    start_flow: async (a) => {
+      // Registered only in chat mode (toolInMode); the web server runs the queued run.
+      const r = await requestFlowRun(coord, { flowId: String(a.flowId), projectId: String(a.projectId), ...(a.testKey ? { testKey: String(a.testKey) } : {}), reason: String(a.reason ?? ""), startedBy: "agent:chat" });
+      return flowStatusForAgent(r);
+    },
+    get_flow_status: async (a) => {
+      const r = await new FlowRunStore(coord.store).get(String(a.runId));
+      if (!r) throw new CoordError("not_found", `Flujo ${String(a.runId)} no existe`);
+      return flowStatusForAgent(r);
+    },
   };
 }
 
@@ -123,15 +146,17 @@ export interface CreateServerOptions {
   audit?: boolean;
   /** Chat panel mode (default: COORD_CHAT=1). */
   chat?: boolean;
+  /** Flow mode (default: COORD_FLOW=1). */
+  flow?: boolean;
 }
 
 export function createCoordServer(coord: Coordinator, opts: CreateServerOptions = {}): McpServer {
   const server = new McpServer({ name: "coord", version: SERVER_VERSION }, { capabilities: { logging: {} } });
-  const chat = opts.chat ?? isChatMode();
-  const actor = chat ? CHAT_AGENT_ACTOR : AGENT_ACTOR;
+  const mode = serverMode(opts);
+  const actor = mode === "chat" ? CHAT_AGENT_ACTOR : mode === "flow" ? FLOW_AGENT_ACTOR : AGENT_ACTOR;
   const handlers = toolHandlers(coord, actor);
   for (const spec of TOOLS) {
-    if (chat && spec.family === "apply") continue;
+    if (!toolInMode(spec, mode)) continue;
     registerOne(server, coord, spec, handlers[spec.name]!, opts.audit !== false, actor);
   }
   return server;

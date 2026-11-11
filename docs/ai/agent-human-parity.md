@@ -30,7 +30,8 @@ Abreviaturas que usa la matriz:
 | **IW** | `issue-writer` | `get_group`, `get_element_properties`, `list_proposals`, `draft_issue`, `withdraw_proposal` |
 | **HA** | `model-hygiene-auditor` | Solo lectura: sesión, higiene, `summarize`, grupos, propiedades |
 | **RC** | `rules-curator` | `list_feedback`, `get_group`, `evaluate_ruleset`, `propose_rule_change`, Read/Grep/Glob. Staging (WS-R) agrega `get_rule_insights` y la propuesta estructurada (nueva · calibración · condiciones · retiro · restauración) |
-| **Chat** | `coordinador-chat` (staging) | Lectura de grupos, familias, clashes, propiedades, selección, propuestas, preguntas y `list_issue_checks`. Propone familias, clasificación, acciones de grupo, cambios de estado e incidencias. También tiene `withdraw`, `ask_coordinator` y `record_feedback`. WS-E agregó sesión, diff, higiene, `list_meeting_notes`, `list_disciplines`, `list_batches`, `get_batch`, `list_decisions`, `get_agenda`, `list_reminders` y `propose_family_exception`; WS-R agregó `get_rule_insights` (lista `CHAT_READ_TOOLS` en `server/chat/bridge.ts`). **No tiene** `Read`. **Tiene bloqueados** apply, ingest, `run_classification`, `propose_rule_change`, `evaluate_ruleset`, `generate_report` y `propose_discipline_mapping`. |
+| **Chat** | `coordinador-chat` (staging) | Lectura de grupos, familias, clashes, propiedades, selección, propuestas, preguntas y `list_issue_checks`. Propone familias, clasificación, acciones de grupo, cambios de estado e incidencias. También tiene `withdraw`, `ask_coordinator` y `record_feedback`. WS-E agregó sesión, diff, higiene, `list_meeting_notes`, `list_disciplines`, `list_batches`, `get_batch`, `list_decisions`, `get_agenda`, `list_reminders` y `propose_family_exception`; WS-R agregó `get_rule_insights` (lista `CHAT_READ_TOOLS` en `server/chat/bridge.ts`); luego `propose_rule_change` y `list_feedback`. WS-N agregó `get_next_steps`, `start_flow`, `get_flow_status` (solo en modo chat), `propose_discipline_mapping` y `generate_report`. **No tiene** `Read`. **Tiene bloqueados** apply, ingest, `run_classification` y `evaluate_ruleset`. |
+| **Flujos** | `coordinador-flujos` (WS-N; solo la copia **instalada**) | Lanzado por el servidor para UN flujo del catálogo (`server/flows/catalog.ts`): las herramientas de su skill y de sus subagentes (T, IW, HA, RC), `Agent`, `Read`/`Grep`/`Glob`. **Nunca**: apply, `start_flow`/`get_flow_status` (sin recursión), Bash, PowerShell, Edit, Write, MultiEdit, NotebookEdit, WebFetch, WebSearch, Skill. MCP en modo `COORD_FLOW=1` (sin apply ni herramientas de flujo). |
 
 Skills: en `.claude/skills/` están instalados `coordinar-test`, `triage`, `redactar-issues`, `informe-semanal`, `auditar-modelo` (fork a HA) y `curar-reglas` (fork a RC, solo humano). En `harness-staging/` están `preparar-ciclo`, `acta` y `coordinar-test` como alias.
 
@@ -158,19 +159,23 @@ Estados posibles: **parity** · **agent-missing** · **human-missing** · **inte
 | 74 | Cancelar el turno del chat | `POST /chat/:id/cancel` (bug de `http.ts` corregido en WS-E) | — | intentional: canal del humano |
 | 75 | Tarjetas de propuesta en el chat | Tarjeta con acción, validez y destino seleccionable; preguntas respondibles en la tarjeta | Las tarjetas salen de datos del servidor, nunca del texto del modelo | parity (WS-D) |
 | 76 | Actualizar el agente (instalar `harness-staging/` en `.claude/` + `CLAUDE.md`) | `GET /harness/status` (aviso «Hay una actualización del agente (N archivos)» en el shell); `GET /harness/diff?path=` y `GET /harness/install-options` (CSRF); `POST /harness/install` con CSRF + mismo origen + `Sec-Fetch-Site: same-origin` + passkey fresca sobre los hashes exactos de los archivos; prueba los hooks nuevos, respalda en `backups/harness-<fecha>/`, verifica y audita `harness.installed`. Se rechaza si el servidor lo inició un agente (`CLAUDECODE`). Alternativa: `npm run setup` (TTY, fuera de Claude Code). Lanzador `Coordinador BIM.cmd` | No tiene: ninguna herramienta MCP ni del chat llega a estas rutas (test `tests/server/harness-install.test.ts`) | intentional (WS-L; regla 8 y harness-design: el agente nunca modifica su propio harness; solo humano) |
+| 77 | Saber qué sigue en el ciclo | `GET /next-steps?projectId&testKey` · tarjeta «Qué sigue» en `project.tsx` y en el panel «Flujos» del shell (incluye «Actualizar el agente» cuando falta) | `get_next_steps` (lectura, mismas cifras; sin el paso de actualización del agente) · CC, Chat, Flujos | parity (WS-N) |
+| 78 | Ejecutar un flujo de dominio (preparar-ciclo, triage, acta, redactar-issues, informe-semanal, auditar-modelo, curar-reglas) | `POST /flows/:flowId/run` (CSRF + mismo origen) tras un diálogo de confirmación (qué hace, qué deja, alcance, tope USD) | `start_flow` · **solo Chat**, con acuerdo del coordinador; catálogo cerrado, uno por proyecto, tope diario (`flows.dailyAgentCap`, 10). CC usa las skills (`/triage`, …). Subagentes y el agente de flujos **no** tienen `start_flow` | parity (WS-N); intentional para subagentes y flujos (sin recursión) |
+| 79 | Seguir / cancelar un flujo | `GET /flows/runs`, `GET /flows/runs/:id`, SSE `GET /flows/runs/:id/events`, `POST /flows/runs/:id/cancel` (CSRF) · panel «Flujos» y tarjeta «Flujo» del chat | `get_flow_status` (lectura) · Chat. Cancelar es humano | intentional (cancelar: canal del humano) |
+| 80 | Lo que produce un flujo | Las mismas tarjetas, preguntas, borradores, sugerencias de reglas e informes de siempre; se deciden en la UI | Solo propuestas, preguntas e informes (`coordinador-flujos`); nunca apply, aprobar, publicar ni instalar | intentional (reglas 1, 4, 8) |
 
 ### Conteo
 
 | Estado | Filas |
 |---|---|
-| parity | 47 |
-| intentional | 22 |
+| parity | 49 |
+| intentional | 24 |
 | human-missing | 3 (#23, #44, #66) |
 | agent-missing | 4 (#29, #40, #50, #63) |
 | en curso | 0 |
-| **Total** | **76** |
+| **Total** | **80** |
 
-Recuento tras integrar WS-A…F (2026-11-10); #76 agregado en WS-L (2026-11-11).
+Recuento tras integrar WS-A…F (2026-11-10); #76 agregado en WS-L (2026-11-11); #77–#80 en WS-N (2026-11-11, `docs/domain/next-steps-and-flows.md`).
 
 ## 3. Hallazgos que no son de herramientas
 

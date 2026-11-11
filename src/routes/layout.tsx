@@ -3,6 +3,7 @@ import { useT } from "~/i18n";
 import { Nav } from "~/lib/components/nav";
 import { isIpHost } from "~/lib/webauthn";
 import { HarnessUpdateBanner } from "~/features/harness/HarnessUpdate";
+import { FlowsDrawer } from "~/features/flows/NextSteps";
 
 export function Layout() {
   const t = useT();
@@ -15,6 +16,7 @@ export function Layout() {
       <Nav />
       <WrongHostBanner />
       <HarnessUpdateBanner />
+      <FlowsDrawer />
       <main id="main" className="min-h-0 flex-1">
         {workspace ? (
           <Outlet />

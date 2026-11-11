@@ -17,6 +17,8 @@ import { brotliCompressSync, constants as zlibConstants, gzipSync } from "node:z
 import { z } from "zod";
 import { isFrozen } from "./frozen";
 import { ChatService } from "../chat/service";
+import { FlowService } from "../flows/service";
+import { nextSteps } from "../next-steps";
 import { ApsAuth } from "../aps/auth";
 import { Coordinator, type CoordinatorOptions } from "../coordinator";
 import { CoordinatorUi, type HumanUser } from "../coordinator-ui";
@@ -252,6 +254,10 @@ export interface CoordApiOptions extends CoordinatorOptions {
   coordinator?: Coordinator;
   /** Chat agent timeout (tests). */
   chatTimeoutMs?: number;
+  /** Flow timeout override (tests). */
+  flowTimeoutMs?: number;
+  /** Poll the store for flow runs queued by the chat's MCP process (default true). */
+  flowPolling?: boolean;
 }
 
 export interface CoordApi {
@@ -462,7 +468,62 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
 
   // ── Chat panel (domain agent, propose-only, local `claude -p`) ─────────
   // POST /chat/messages → {messageId}; GET /chat/:messageId/events (SSE, replayable); status; history; cancel.
-  const chat = new ChatService(coord, { ...(opts.chatTimeoutMs ? { timeoutMs: opts.chatTimeoutMs } : {}) });
+  // ── WS-N: next steps + domain flows (server/next-steps.ts, server/flows/) ──
+  const flows = new FlowService(coord, { ...(opts.flowTimeoutMs ? { timeoutMs: opts.flowTimeoutMs } : {}) });
+  if (opts.flowPolling !== false) flows.startPolling();
+  const steps = (q: { projectId?: string; testKey?: string }) => nextSteps(coord, q, { harness: () => coord.harnessInstaller.status() });
+  const chat = new ChatService(coord, { ...(opts.chatTimeoutMs ? { timeoutMs: opts.chatTimeoutMs } : {}), flows, nextSteps: (q) => nextSteps(coord, q) });
+  const FlowRunIdZ = z.string().regex(/^FR-\d{8}-[0-9a-f]{6}$/);
+  add("GET", "/next-steps", async ({ query }) =>
+    steps({ ...(query.get("projectId") ? { projectId: QueryId.parse(query.get("projectId")) } : {}), ...(query.get("testKey") ? { testKey: TestIdZ.parse(query.get("testKey")) } : {}) }),
+  );
+  add("GET", "/flows/runs", async ({ query }) => flows.overview(query.get("projectId") ? QueryId.parse(query.get("projectId")) : undefined));
+  add("GET", "/flows/runs/:id", async ({ params }) => flows.get(FlowRunIdZ.parse(params.id)));
+  add(
+    "POST",
+    "/flows/:flowId/run",
+    async ({ params, body, user }) =>
+      flows.start(
+        z.enum(["preparar-ciclo", "triage", "acta", "redactar-issues", "informe-semanal", "auditar-modelo", "curar-reglas"]).parse(params.flowId),
+        z.strictObject({ projectId: QueryId, testKey: TestIdZ.optional(), reason: z.string().max(300).optional() }).parse(body ?? {}),
+        await user(),
+      ),
+    true,
+  );
+  add("POST", "/flows/runs/:id/cancel", async ({ params, user }) => {
+    const u = await user();
+    return flows.cancel(FlowRunIdZ.parse(params.id), { type: "user", id: u.id, name: "Coordinador" });
+  }, true);
+  // SSE (EventSource cannot send the CSRF header): same-origin checks; replayable with Last-Event-ID.
+  add("GET", "/flows/runs/:id/events", async ({ req, res, params }) => {
+    const id = FlowRunIdZ.parse(params.id);
+    await flows.get(id); // 404 stays a JSON error
+    const after = Number(req.headers["last-event-id"] ?? -1);
+    let n = -1;
+    let open = true;
+    const write = (chunk: string) => {
+      if (open && !res.writableEnded) res.write(chunk);
+    };
+    res.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", Connection: "keep-alive", "X-Accel-Buffering": "no" });
+    res.write(": ok\n\n");
+    const ping = setInterval(() => write(": ping\n\n"), 15_000);
+    ping.unref?.();
+    const off = await flows.subscribe(id, (e, last) => {
+      n++;
+      if (n > after) write(`id: ${n}\nevent: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`);
+      if (last) {
+        open = false;
+        clearInterval(ping);
+        if (!res.writableEnded) res.end();
+      }
+    });
+    req.on("close", () => {
+      open = false;
+      clearInterval(ping);
+      off();
+    });
+    return undefined;
+  });
   const ChatContextZ = z.strictObject({
     lens: z.string().max(40).optional(),
     focus: z

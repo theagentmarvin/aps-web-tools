@@ -25,6 +25,7 @@ import { RECENT_KEY } from "./projects";
 import { CycleReportMenu } from "~/features/modelset/CycleReportMenu";
 import { HygienePanel } from "~/features/modelset/HygienePanel";
 import { ProjectNotesPanel } from "~/features/modelset/ProjectNotesPanel";
+import { NextStepsCard } from "~/features/flows/NextSteps";
 
 const TABS = ["matriz", "pruebas", "disciplinas", "higiene", "cerradas"] as const;
 type Tab = (typeof TABS)[number];
@@ -52,6 +53,7 @@ export function ProjectPage() {
     <div>
       <PageHeader title={project.data?.name ?? t("common.loading")} crumbs={[{ label: t("nav.projects"), to: "/proyectos" }, { label: project.data?.name ?? "…" }]} />
       <ProjectNotesPanel projectId={projectId} />
+      <NextStepsCard projectId={projectId} />
       {sets.loading ? (
         <Skeleton className="h-96" />
       ) : sets.error ? (

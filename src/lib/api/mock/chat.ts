@@ -5,6 +5,7 @@
  * message starting with "/error <code>" (for UI checks).
  */
 import type { ChatErrorCode, ChatEvent, ChatHistory, ChatMessage, ChatProposal, ChatRequest } from "../types";
+import type { MockFlows } from "./flows";
 
 const sleep = (ms: number, signal?: AbortSignal) =>
   new Promise<void>((resolve, reject) => {
@@ -19,6 +20,40 @@ export class MockChat {
   private chats = new Map<string, ChatHistory>();
   private seq = 0;
   private running = new Set<string>();
+
+  constructor(private readonly flows?: MockFlows) {}
+
+  /** WS-N: "¿qué sigue?" → next-step cards; "ejecuta la revisión" → a Flujo card (mock flows). */
+  private async nextStepsTurn(req: ChatRequest, chatId: string, answer: ChatMessage, onEvent: (e: ChatEvent) => void, signal?: AbortSignal): Promise<boolean> {
+    if (!this.flows) return false;
+    const projectId = req.projectId;
+    if (/ejecut|inicia|corre|lanza/i.test(req.message)) {
+      onEvent({ type: "status", text: "tool:start_flow", chatId });
+      await sleep(400, signal);
+      try {
+        const run = this.flows.start("triage", { projectId, testKey: req.testId, reason: "Pedido en el chat." }, "agent:chat");
+        answer.flows = [run];
+        answer.text = "Inicié la **revisión IA de lo pendiente**. Verás el avance en la tarjeta; deja solo propuestas y preguntas.";
+        onEvent({ type: "delta", text: answer.text });
+        onEvent({ type: "flow", run });
+      } catch (err) {
+        answer.text = err instanceof Error ? err.message : String(err);
+        onEvent({ type: "delta", text: answer.text });
+      }
+      return true;
+    }
+    if (/qu[eé] sigue|qu[eé] hago|siguiente paso|por d[oó]nde/i.test(req.message)) {
+      onEvent({ type: "status", text: "tool:get_next_steps", chatId });
+      await sleep(400, signal);
+      const steps = this.flows.nextSteps({ projectId, testKey: req.testId }).steps.slice(0, 3);
+      answer.nextSteps = steps;
+      answer.text = ["Lo siguiente, en orden:", ...steps.map((s, i) => `${i + 1}. **${s.title}**: ${s.reason}`), "", "¿Ejecuto el primero?"].join("\n");
+      onEvent({ type: "delta", text: answer.text });
+      onEvent({ type: "next_steps", steps });
+      return true;
+    }
+    return false;
+  }
 
   get(chatId: string): ChatHistory {
     return this.chats.get(chatId) ?? { chatId, testId: "", messages: [] };
@@ -42,6 +77,10 @@ export class MockChat {
     try {
       onEvent({ type: "status", text: "phase:thinking", chatId });
       await sleep(400, signal);
+      if (await this.nextStepsTurn(req, chatId, answer, onEvent, signal)) {
+        onEvent({ type: "done", chatId, cost: 0.02, durationMs: Date.now() - Date.parse(answer.at) });
+        return;
+      }
       const focus = req.context.focus;
       const sel = req.context.selection?.length ?? 0;
       if (focus || sel) {
