@@ -125,10 +125,11 @@ export function FamilyApproveDialog({ familyId }: { familyId: string }) {
         <p className="rounded border border-brand/30 bg-brand-surface px-3 py-2 text-base font-semibold text-gray-900" role="status">
           {t("families.blastRadius", { clashes: impact.affectedClashes, instances: impact.applied.length })}
         </p>
-        <p className="text-xs text-gray-600">
+        <p className="text-sm font-medium text-gray-900">
           {t("families.approveSummary", { validity: t(VALIDITY_KEY[draft.validity]), action: t(FAMILY_ACTION_KEY[draft.action]), owner: draft.responsibleDiscipline })}
           {impact.excepted.length > 0 && ` · ${t("families.exceptionsCount", { count: impact.excepted.length })}`}
         </p>
+        <p className="text-xs text-gray-700">{t("families.approveExplain", { instances: impact.applied.length })}</p>
 
         {changeRows.length > 0 && (
           <fieldset className="min-w-0 rounded border border-amber-300 bg-amber-50 p-2">
@@ -173,7 +174,12 @@ export function FamilyApproveDialog({ familyId }: { familyId: string }) {
         )}
 
         {preview && <p className="text-xs text-gray-600">{t("families.previewIssues", { count: preview.issues })}</p>}
-        {!spotOk && <p className="text-xs text-amber-800">{t("families.spotCheckNeeded", { count: impact.spotRequired, done: impact.spotDone.length })}</p>}
+        {!spotOk && (
+          <div className="rounded border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-900">
+            <p className="font-medium">{t("families.spotCheckNeeded", { count: impact.spotRequired, done: impact.spotDone.length })}</p>
+            {impact.spotRequired > 1 && <p className="mt-0.5">{t("families.spotCheckWhy")}</p>}
+          </div>
+        )}
         {missingReason.length > 0 && <p className="text-xs text-amber-800">{t("families.exceptionReasonMissing", { count: missingReason.length })}</p>}
         {impact.applied.length === 0 && <p className="text-xs text-amber-800">{t("families.nothingToApply")}</p>}
         <p className="text-[11px] text-gray-500">{t("families.approveFootnote")}</p>
