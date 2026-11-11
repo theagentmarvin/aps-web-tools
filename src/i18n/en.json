@@ -1249,7 +1249,7 @@
     "goToFamily": "Go to the group",
     "instancesOnLevels_one": "{count} location on {levels} levels",
     "instancesOnLevels_other": "{count} locations on {levels} levels",
-    "proposal": "The agent proposes · Proposed decision for the group",
+    "proposal": "The agent proposes",
     "agentSuggested": "Suggested by the agent",
     "whyDefault": "Same physical situation in {count} locations ({levels} levels), penetration {min}–{max} mm: one decision for all.",
     "solution": "Solution",
