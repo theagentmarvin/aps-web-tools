@@ -9,7 +9,7 @@ import { useT, type TKey } from "~/i18n";
 import { useApi } from "~/lib/api";
 import type { CoordinatorApi } from "~/lib/api";
 import type { LoopBatchRef, Provenance, RuleSuggestion } from "~/lib/api/types";
-import { ACTOR_CLASS, ACTOR_GLYPH, ActorMark, type Actor } from "./actors";
+import { ACTOR_CLASS, ACTOR_GLYPH, type Actor } from "./actors";
 
 export type StepState = "done" | "current" | "pending" | "failed";
 export interface RailModel {
@@ -79,14 +79,15 @@ function LearningTrack({ provenance }: { provenance: Provenance | undefined }) {
   const corrections = rule.accuracy.n - rule.accuracy.agree;
   const s = suggestions?.filter((x) => x.ruleIds?.includes(rule.id) && x.state !== "rejected").sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0];
   return (
-    <Link to={`/reglas/${encodeURIComponent(rule.id)}`} title={t("loop.rail.learnTip", { id: rule.id })} className="mt-1 flex min-w-0 flex-wrap items-center gap-1 border-t border-dashed border-brand-muted/20 pt-1 text-[11px] text-gray-600 hover:text-brand">
-      <span className="font-semibold">{t("loop.rail.learn")}</span>
-      <span className="font-mono">{rule.id}</span>
-      <ActorMark actor="human">{corrections > 0 ? t("loop.rail.corrections", { count: corrections }) : t("loop.rail.noCorrections")}</ActorMark>
+    // One dense line (details on hover): «Aprendizaje EST-004 ● 2 correcciones → ✦ sin sugerencia aún → ⚙ —».
+    <Link to={`/reglas/${encodeURIComponent(rule.id)}`} title={t("loop.rail.learnTip", { id: rule.id })} className="mt-1 flex min-w-0 items-center gap-1 overflow-hidden whitespace-nowrap border-t border-dashed border-brand-muted/20 pt-1 text-[11px] text-gray-600 hover:text-brand">
+      <span className="shrink-0 font-semibold">{t("loop.rail.learn")}</span>
+      <span className="shrink-0 font-mono">{rule.id}</span>
+      <span className="shrink-0 text-actor-human">● {corrections > 0 ? t("loop.rail.corrections", { count: corrections }) : t("loop.rail.noCorrections")}</span>
       <span aria-hidden="true">→</span>
-      <ActorMark actor="agent">{s ? t("loop.rail.suggestion", { state: t(`rules.stage.${s.state}` as TKey) }) : t("loop.rail.noSuggestion")}</ActorMark>
+      <span className="min-w-0 truncate text-actor-agent">✦ {s ? t("loop.rail.suggestion", { state: t(`rules.stage.${s.state}` as TKey) }) : t("loop.rail.noSuggestion")}</span>
       <span aria-hidden="true">→</span>
-      <ActorMark actor="engine">{s?.state === "published" ? t("loop.rail.published") : t("loop.rail.none")}</ActorMark>
+      <span className="shrink-0 text-actor-engine">⚙ {s?.state === "published" ? t("loop.rail.published") : t("loop.rail.none")}</span>
     </Link>
   );
 }

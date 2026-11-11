@@ -2047,9 +2047,10 @@
       "agentChanged": "You changed it before accepting: counts as a correction of the agent.",
       "rejectedBody": "Decide each location in its panel. Does not count for the rule; your per-location decisions do.",
       "undoneBody": "The group is back to how it was. Rule accuracy was reverted.",
-      "next": "Next: Send to approval ({count} ready)",
       "groupLearn": "Decision recorded · {text}",
-      "toast": "Decision recorded · {instances} locations"
+      "toast": "Decision recorded · {instances} locations",
+      "next_one": "Next: Send to approval (1 ready)",
+      "next_other": "Next: Send to approval ({count} ready)"
     },
     "cycle": {
       "title": "Cycle v{version} · how the loop is going",
@@ -2091,10 +2092,11 @@
       "questionNone": "Agent question · decides nothing",
       "open": "Open to decide",
       "reject": "Reject",
-      "rejectReason": "Reason (optional, sent to the agent)",
+      "rejectReason": "Reason (optional)",
       "rejectConfirm": "Reject proposal",
       "rejected": "Rejected · the agent receives your rejection as feedback.",
-      "rejectFailed": "Could not record the rejection: {message}"
+      "rejectFailed": "Could not record the rejection: {message}",
+      "rejectTip": "The rejection is stored and reaches the agent as feedback."
     },
     "approvals": {
       "acceptedEngine": "Accepted · engine",

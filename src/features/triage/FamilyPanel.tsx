@@ -175,11 +175,13 @@ ${f.signature}`}>
             </ul>
           </div>
         )}
-        <LoopRail model={familyRail(t, f, { done: f.groupIds.filter((id) => store.state.latest.has(id)).length, total: f.groupIds.length })} provenance={f.provenance} />
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden" id="triage-detail" tabIndex={-1}>
         {lens === "reunion" && <MeetingNoteSection key={f.id} rowKey={`f:${f.id}`} />}
+        <div className="mx-4">
+          <LoopRail model={familyRail(t, f, { done: f.groupIds.filter((id) => store.state.latest.has(id)).length, total: f.groupIds.length })} provenance={f.provenance} />
+        </div>
         <FamilyReceipt f={f} />
         <FamilyProposal f={f} draft={draft} options={pt?.options ?? []} impact={impact} />
 

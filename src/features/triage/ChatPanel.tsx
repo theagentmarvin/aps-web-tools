@@ -813,7 +813,7 @@ function ProposalCard({ proposal }: { proposal: ChatProposal }) {
                 </button>
               )}
               {!isRule && (
-                <button type="button" onClick={() => void reject()} title={t("loop.chat.rejectReason")} className="rounded border border-brand-muted/30 bg-white px-2 py-0.5 text-gray-700">
+                <button type="button" onClick={() => void reject()} title={t("loop.chat.rejectTip")} className="rounded border border-brand-muted/30 bg-white px-2 py-0.5 text-gray-700">
                   {t("loop.chat.reject")}
                 </button>
               )}

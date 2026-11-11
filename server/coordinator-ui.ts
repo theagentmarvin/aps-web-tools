@@ -2443,6 +2443,18 @@ export class CoordinatorUi {
         await this.store.transitionProposal(prop.id, "applied", user.name, "decisión de familia registrada (local)");
       } else await this.store.transitionProposal(prop.id, "rejected", user.name);
     }
+    // A group decision that changes the engine's validity or responsible is a correction of its rule: it
+    // feeds the learning loop like an ubicación correction does («Curar reglas» counts uncurated feedback).
+    if (req.decision === "approve" && covered.length && (fields.validity !== v.proposed.validity || fields.responsibleDiscipline !== v.proposed.responsibleDiscipline)) {
+      const what = fields.validity !== v.proposed.validity ? `validez ${v.proposed.validity} → ${fields.validity}` : `responsable ${v.proposed.responsibleDiscipline} → ${fields.responsibleDiscipline}`;
+      await this.core
+        .recordFeedback(
+          { target: { groupId: covered[0]!, testKey: test.testKey }, verdict: "partially_correct", ...(fields.validity !== v.proposed.validity ? { corrected: { validity: fields.validity } } : {}), coordinatorStatement: `Decisión de grupo ${v.id} (${covered.length} ubicaciones): ${what}${note ? ` · ${note}` : ""}`, generalizable: "unsure", scope: "project" },
+          { actor: { type: "user", id: user.id, name: user.name } },
+          "decision",
+        )
+        .catch(() => undefined);
+    }
     const fam = await this.family(test.testKey, v.id);
     const learn = await learningSummary(this.core, learnBefore, await this.core.ruleAuthoring.accuracyForTest(test.testKey), globalBefore);
     const pl = prop?.payload.kind === "family_decision" ? prop.payload : undefined;

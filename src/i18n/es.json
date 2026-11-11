@@ -2047,9 +2047,10 @@
       "agentChanged": "La cambiaste antes de aceptar: cuenta como corrección del agente.",
       "rejectedBody": "Decide cada ubicación en su panel. No cuenta para la regla; cuentan tus decisiones por ubicación.",
       "undoneBody": "El grupo volvió a como estaba. El acierto de las reglas se revirtió.",
-      "next": "Siguiente: Enviar a aprobación ({count} listas)",
       "groupLearn": "Decisión registrada · {text}",
-      "toast": "Decisión registrada · {instances} ubicaciones"
+      "toast": "Decisión registrada · {instances} ubicaciones",
+      "next_one": "Siguiente: Enviar a aprobación (1 lista)",
+      "next_other": "Siguiente: Enviar a aprobación ({count} listas)"
     },
     "cycle": {
       "title": "Ciclo v{version} · cómo va el circuito",
@@ -2091,10 +2092,11 @@
       "questionNone": "Pregunta del agente · no decide nada",
       "open": "Abrir para decidir",
       "reject": "Rechazar",
-      "rejectReason": "Motivo (opcional, llega al agente)",
+      "rejectReason": "Motivo (opcional)",
       "rejectConfirm": "Rechazar propuesta",
       "rejected": "Rechazada · el agente recibe tu rechazo como feedback.",
-      "rejectFailed": "No se pudo registrar el rechazo: {message}"
+      "rejectFailed": "No se pudo registrar el rechazo: {message}",
+      "rejectTip": "El rechazo queda como propuesta rechazada y le llega al agente como feedback."
     },
     "approvals": {
       "acceptedEngine": "Aceptada · motor",

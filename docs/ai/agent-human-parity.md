@@ -164,19 +164,22 @@ Estados posibles: **parity** · **agent-missing** · **human-missing** · **inte
 | 79 | Seguir / cancelar un flujo | `GET /flows/runs`, `GET /flows/runs/:id`, SSE `GET /flows/runs/:id/events`, `POST /flows/runs/:id/cancel` (CSRF) · panel «Flujos» y tarjeta «Flujo» del chat | `get_flow_status` (lectura) · Chat. Cancelar es humano | intentional (cancelar: canal del humano) |
 | 80 | Lo que produce un flujo | Las mismas tarjetas, preguntas, borradores, sugerencias de reglas e informes de siempre; se deciden en la UI | Solo propuestas, preguntas e informes (`coordinador-flujos`); nunca apply, aprobar, publicar ni instalar | intentional (reglas 1, 4, 8) |
 | 81 | Datos y respaldos: carpeta de datos, respaldar ahora, carpeta externa, exportar, restaurar | Ajustes → «Datos y respaldos» (`DataBackupsSection`): `GET /data/status`, `POST /data/backups`, `PUT /data/settings`, `GET /data/export`, `POST /data/import` + `…/restore-options` + `…/restore` (passkey) — todas con CSRF | No tiene (ninguna herramienta MCP; test `data-home.test.ts`) | intentional (WS-H): exportar, restaurar o redirigir respaldos es una decisión humana sobre datos confidenciales; restaurar exige passkey |
+| 82 | Rechazar una propuesta del agente desde el chat | Tarjeta del chat «Rechazar» (motivo opcional) → `POST /proposals/:id/reject` (CSRF, humano): la propuesta pasa a `rejected` con el motivo y queda un registro de feedback (`source: ui`, `verdict: incorrect`, `target.proposalId`). Antes «Descartar» era solo estado local | El agente lo ve con `list_proposals` (estado `rejected`) y `list_feedback`; no puede rechazar por el humano | parity (WS-U) |
+| 83 | Deshacer la decisión de un grupo (recibo «Deshacer») | `POST /families/:id/undo` (CSRF): nueva versión que restaura la anterior, o marca `undone` si no había; auditado (`family.undone`) | No tiene: el agente nunca decide un grupo | intentional (regla 1) |
+| 84 | Ver cómo va el circuito del ciclo (quién propuso, decisiones, lote, ACC, aprendizaje, acierto por versión, acierto del agente) | `GET /projects/:id/cycle-loop?testKey` · tarjeta «Ciclo vNN · cómo va el circuito» en `project.tsx` | Lee las mismas fuentes (`list_decisions`, `list_batches`, `list_feedback`, `get_rule_insights`); el acierto del agente se muestra solo al coordinador | intentional (WS-U: evitar sobreconfianza) |
 
 ### Conteo
 
 | Estado | Filas |
 |---|---|
-| parity | 49 |
-| intentional | 25 |
+| parity | 50 |
+| intentional | 27 |
 | human-missing | 3 (#23, #44, #66) |
 | agent-missing | 4 (#29, #40, #50, #63) |
 | en curso | 0 |
-| **Total** | **81** |
+| **Total** | **84** |
 
-Recuento tras integrar WS-A…F (2026-11-10); #76 (WS-L), #77–#80 (WS-N, `docs/domain/next-steps-and-flows.md`) y #81 (WS-H) agregados el 2026-11-11.
+Recuento tras integrar WS-A…F (2026-11-10); #76 (WS-L), #77–#80 (WS-N, `docs/domain/next-steps-and-flows.md`) y #81 (WS-H) agregados el 2026-11-11; #82–#84 (WS-U, circuito agente ↔ coordinador) el 2026-11-11.
 
 ## 3. Hallazgos que no son de herramientas
 

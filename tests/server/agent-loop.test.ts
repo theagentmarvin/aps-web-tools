@@ -72,6 +72,9 @@ describe("agent ↔ coordinator loop", () => {
     expect((await coord.store.getProposal(r.proposalId))!.state).toBe("applied");
     expect(d.receipt?.kind).toBe("approved");
     expect(d.receipt?.agent).toEqual({ proposalId: r.proposalId, unchanged: true });
+    // A group correction of the rule feeds «Curar reglas» (one feedback record per decision).
+    expect(d.receipt!.uncuratedCorrections).toBeGreaterThanOrEqual(1);
+    expect((await coord.store.listFeedback()).some((x) => x.coordinatorStatement.startsWith(`Decisión de grupo ${f.id}`))).toBe(true);
     // Same learning as the preview (same function, nothing changed in between).
     expect(d.receipt!.learning).toEqual(prev.learning);
     expect(d.provenance?.source).toBe("human");
@@ -154,7 +157,7 @@ describe("agent ↔ coordinator loop", () => {
     expect(c.agent.rejected).toBeGreaterThanOrEqual(1);
     expect(c.accuracyByVersion.map((x) => x.version)).toContain(42);
     for (const v of c.accuracyByVersion) expect(v.agree).toBeLessThanOrEqual(v.n);
-    expect(c.learning.corrections).toBeGreaterThanOrEqual(1);
+    expect(c.learning.corrections).toBe(c.accuracyByVersion.reduce((n, v) => n + v.n - v.agree, 0));
     // Default test: the latest classified.
     expect((await ui.cycleLoop(P)).version).toBe(42);
   });

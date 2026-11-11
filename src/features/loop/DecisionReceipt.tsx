@@ -6,7 +6,6 @@
 import { Link } from "react-router";
 import { useT } from "~/i18n";
 import type { FamilyDecisionReceipt, LearningEntry } from "~/lib/api/types";
-import { ActorMark } from "./actors";
 import { pct } from "./OriginBadge";
 
 /** Event the triage workspace listens to: opens «Enviar a aprobación». */
@@ -46,9 +45,8 @@ export function DecisionReceipt({ receipt, onUndo, undoBusy, corrected }: { rece
       {r.kind === "rejected" && <p className="mt-0.5">{t("loop.receipt.rejectedBody")}</p>}
       {r.kind === "undone" && <p className="mt-0.5">{t("loop.receipt.undoneBody")}</p>}
       {r.kind !== "rejected" && (
-        <p className="mt-1 flex flex-wrap items-center gap-1">
-          <span className="font-semibold">{t("loop.receipt.learn")}</span>
-          {parts.length ? parts.map((p) => <ActorMark key={p} actor="engine">{p}</ActorMark>) : <span>{t("loop.receipt.learnNone")}</span>}
+        <p className="mt-0.5">
+          <span className="font-semibold">{t("loop.receipt.learn")}</span> <span className="text-actor-engine">⚙</span> {parts.length ? parts.join(" · ") : t("loop.receipt.learnNone")}
         </p>
       )}
       {r.kind === "approved" && r.agent && (

@@ -233,7 +233,6 @@ function InstancePanel() {
             {kind === "group" ? id : e.s.clash?.id.slice(-8)} · {t("list.clashesCount", { count: clashCount })}
           </span>
         </div>
-        {e.s.group && <GroupRail e={e} />}
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden" id="triage-detail" tabIndex={-1}>
@@ -244,6 +243,11 @@ function InstancePanel() {
           <p role="note" className="mx-4 mt-3 rounded border border-amber-300 bg-amber-50 px-2 py-1 text-xs text-amber-900">
             ⚠ {t("acc.closedWhileReal", { reason: e.s.group.acc?.closedReason ?? "—" })}
           </p>
+        )}
+        {e.s.group && (
+          <div className="mx-4">
+            <GroupRail e={e} />
+          </div>
         )}
         <QuestionCallout groupId={groupId} />
         {!decision && e.s.group?.inherited && (groupChange(e.s.group) === "unchanged" || e.s.group.inherited.needsConfirmation) && <InheritedCallout targetKey={cursorKey} inherited={e.s.group.inherited} />}
@@ -515,8 +519,9 @@ function ProposalBlock({
   };
 
   const conf = proposal ? minConfidence(proposal) : null;
-  const agentMade = !!proposal && proposal.origin === "agent" && !e.d.edited && decisionChanges.length === 0;
   const prov = e.s.group?.provenance;
+  // Violet bar only when what is shown was prepared by the agent (provenance from the server when present).
+  const agentMade = !!proposal && (prov ? prov.source === "agent" : proposal.origin === "agent") && !e.d.edited && decisionChanges.length === 0;
   const diffs = new Map((agentMade && prov?.source === "agent" ? prov.agent?.diffs ?? [] : []).map((d) => [d.field, d]));
   return (
     // Thin violet bar = agent-prepared content; it disappears once the human edits or corrects it.

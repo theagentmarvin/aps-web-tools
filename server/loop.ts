@@ -143,12 +143,14 @@ export function groupProvenance(ctx: LoopCtx, g: GroupRecord, view: C.Proposal, 
   const rules = ruleRows(ctx, [g.id]);
   if (decided && (decided.kind === "accept" || decided.kind === "correct" || decided.kind === "reject")) return { source: "human", rules, human: { decidedBy: decided.userName, decidedAt: decided.decidedAt } };
   if (inherited) return { source: "inherited", rules, inheritedFrom: { version: inherited.fromVersion, source: inherited.source, ...(inherited.decidedBy ? { decidedBy: inherited.decidedBy } : {}) } };
-  if (view.origin === "agent") {
+  // Agent only when the values shown come from it (a family proposal touching the group does not change them).
+  const agentValues = view.fields.validity.source !== "rule" || view.fields.owner.source !== "rule";
+  if (view.origin === "agent" && agentValues) {
     const agentId = view.sourceProposalIds.find((id) => !id.startsWith("E-")) ?? view.id;
     const diffs: NonNullable<C.Provenance["agent"]>["diffs"] = [];
     if (view.fields.validity.value !== g.validity) diffs.push({ field: "validity", ruleValue: g.validity, agentValue: view.fields.validity.value });
     if (view.fields.owner.value !== g.responsibleDiscipline) diffs.push({ field: "responsibleDiscipline", ruleValue: g.responsibleDiscipline, agentValue: view.fields.owner.value });
-    const conf = view.fields.validity.source === "llm" ? view.fields.validity.confidence : null;
+    const conf = view.fields.validity.source !== "rule" ? view.fields.validity.confidence : null;
     return { source: "agent", rules, agent: { proposalId: agentId, confidence: conf, diffs } };
   }
   return { source: "rule", rules };
@@ -261,7 +263,8 @@ export async function cycleLoop(
     decisions,
     ...(lb ? { batch: { id: lb.id, state: lb.state, items: lb.items.filter((i) => !i.excluded).length, approved: lb.state === "approved" || lb.state === "applied" || lb.state === "partial" } } : {}),
     acc,
-    learning: { corrections: fb.filter((f) => f.verdict !== "correct").length, uncurated: fb.filter((f) => !f.curated).length, suggestions: rc.length, published },
+    // Corrections = decisions that did not keep their rule's outcome (same tally as Reglas) on this model set.
+    learning: { corrections: accuracyByVersion.reduce((n, v) => n + v.n - v.agree, 0), uncurated: fb.filter((f) => !f.curated).length, suggestions: rc.length, published },
     accuracyByVersion,
     agent,
   };
