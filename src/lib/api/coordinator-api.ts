@@ -267,6 +267,18 @@ export interface CoordinatorApi {
   cancelFlowRun(runId: string): Promise<{ cancelled: boolean }>;
   /** Progress events of a run (SSE; replayed from the start). Resolves when the stream ends. */
   watchFlowRun(runId: string, onEvent: (e: import("./types").FlowEvent) => void, signal?: AbortSignal): Promise<void>;
+
+  // ── Datos y respaldos (human-only; no agent tool) ──
+  getDataStatus(): Promise<import("./types").DataStatus>;
+  backupNow(): Promise<import("./types").BackupInfo>;
+  saveDataSettings(req: import("./types").DataSettingsRequest): Promise<import("./types").BackupSettings>;
+  /** The export ZIP (whole data folder, or one project — not restorable). */
+  exportData(projectId?: string): Promise<{ blob: Blob; fileName: string }>;
+  /** Step 1 of a restore: upload + validate; nothing changes yet. */
+  stageDataImport(file: Blob): Promise<import("./types").DataImportStage>;
+  getDataRestoreOptions(importId: string): Promise<import("./types").DataRestoreOptions>;
+  restoreData(importId: string, req: import("./types").DataRestoreRequest): Promise<import("./types").DataRestoreResult>;
+  cancelDataImport(importId: string): Promise<void>;
 }
 
 /** Error with an HTTP-ish status and a stable code for the UI to translate. */

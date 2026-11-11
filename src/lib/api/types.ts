@@ -107,6 +107,16 @@ export type {
   Validity,
 } from "../../../server/api/contract";
 export type { AccIssueType, IssueAssigneeMapping, IssueSettings } from "../../../server/api/contract";
+export type {
+  BackupInfo,
+  BackupSettings,
+  DataImportStage,
+  DataRestoreOptions,
+  DataRestoreRequest,
+  DataRestoreResult,
+  DataSettingsRequest,
+  DataStatus,
+} from "../../../server/api/contract";
 
 import type { ReasonCode, Validity, Nature, Severity } from "../../../server/api/contract";
 

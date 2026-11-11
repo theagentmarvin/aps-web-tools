@@ -13,7 +13,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 let tmpCounter = 0;
 
-async function renameWithRetry(from: string, to: string): Promise<void> {
+export async function renameWithRetry(from: string, to: string): Promise<void> {
   for (let attempt = 0; ; attempt++) {
     try {
       await rename(from, to);

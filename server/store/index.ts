@@ -1,5 +1,6 @@
 /**
- * File-based store under `.coordinator/` (git-ignored).
+ * File-based store in the data home (server/store/home.ts: per-user folder outside the repo,
+ * formerly `<repo>/.coordinator/`).
  *
  *   secret/approval.key             HMAC key (server/approval only)
  *   cache/…                         normalized clash tests (server/cache/clash-cache.ts)
@@ -26,6 +27,7 @@ import { createHmac } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { appendJsonl, listFiles, readJsonFile, readJsonl, readTextFile, withFileLock, writeFileAtomic, writeJsonAtomic } from "./fs";
+import { resolveDataHome } from "./home";
 import { assertBatchTransition, assertProposalTransition } from "./state-machine";
 import type {
   ActiveContext,
@@ -82,7 +84,9 @@ export class Store {
   private readonly auditKeyRead?: () => Promise<Buffer | undefined>;
 
   constructor(opts: StoreOptions = {}) {
-    this.home = resolve(opts.home ?? process.env.COORDINATOR_HOME ?? ".coordinator");
+    // Callers normally pass the home resolved by ./home.ts (resolveDataHome); this fallback keeps
+    // direct `new Store()` uses (scripts, tests) working from the current directory.
+    this.home = resolve(opts.home ?? process.env.COORDINATOR_HOME ?? resolveDataHome({ root: process.cwd() }).home);
     this.now = opts.now ?? Date.now;
     this.auditKey = opts.auditKey;
     this.auditKeyRead = opts.auditKeyRead ?? opts.auditKey;

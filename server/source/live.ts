@@ -30,6 +30,7 @@ import { normalizeLinkedExternalIds } from "../group-titles";
 import { join } from "node:path";
 import { getModelSetVersion, listModelSets, listModelSetVersions, getModelSet, listModelSetViews } from "../aps/modelset";
 import { log } from "../util";
+import { resolveDataHome } from "../store/home";
 
 /** APS OIDC userinfo host (https://aps.autodesk.com/en/docs/profile/v1/reference/profile/oidcuserinfo/). */
 const USERINFO_BASE_URL = "https://api.userprofile.autodesk.com";
@@ -67,7 +68,7 @@ export class LiveSource implements DataSource {
   /** undefined when the APS client id is not configured: every APS call then fails with auth_required. */
   readonly auth: ApsAuth | undefined;
 
-  /** Root of the property row cache (default <root>/.coordinator/cache). */
+  /** Root of the property row cache (default <data home>/cache, server/store/home.ts). */
   private readonly cacheRoot: string;
 
   constructor(auth: ApsAuth | (() => ApsAuth), opts: { region?: "US" | "EMEA"; root?: string; cacheRoot?: string } = {}) {
@@ -93,7 +94,7 @@ export class LiveSource implements DataSource {
       waitJob: async (projectId, jobId, timeoutMs) => waitClashJob(this.ctx, projectId, jobId, { timeoutMs }),
     };
     this.root = opts.root ?? process.cwd();
-    this.cacheRoot = opts.cacheRoot ?? join(this.root, ".coordinator", "cache");
+    this.cacheRoot = opts.cacheRoot ?? join(resolveDataHome({ root: this.root, dataSource: "live" }).home, "cache");
   }
 
   private readonly root: string;

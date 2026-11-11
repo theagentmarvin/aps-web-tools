@@ -545,4 +545,53 @@ export class HttpCoordinatorApi implements CoordinatorApi {
       if ((err as Error).name !== "AbortError") throw err;
     }
   }
+
+  // ── Datos y respaldos (human-only: CSRF on every call; restore also needs the passkey) ──
+  getDataStatus() { return this.get<T.DataStatus>("/data/status"); }
+  backupNow() { return this.req<T.BackupInfo>("POST", "/data/backups"); }
+  saveDataSettings(r: T.DataSettingsRequest) { return this.req<T.BackupSettings>("PUT", "/data/settings", r); }
+  getDataRestoreOptions(importId: string) { return this.get<T.DataRestoreOptions>(`/data/import/${enc(importId)}/restore-options`); }
+  restoreData(importId: string, r: T.DataRestoreRequest) { return this.req<T.DataRestoreResult>("POST", `/data/import/${enc(importId)}/restore`, r); }
+  async cancelDataImport(importId: string) { await this.req<{ ok: true }>("DELETE", `/data/import/${enc(importId)}`); }
+
+  /** Binary request (ZIP download / upload) with the CSRF header and the same error mapping as `req`. */
+  private async binary(method: "GET" | "POST", path: string, body?: Blob, retried = false): Promise<Response> {
+    let res: Response;
+    try {
+      res = await fetch(`${BASE}${path}`, {
+        method,
+        headers: { "X-Coord-CSRF": await this.token(), ...(body ? { "Content-Type": "application/zip" } : {}) },
+        body,
+        credentials: "same-origin",
+      });
+    } catch (err) {
+      throw new ApiError(String(err), 0, "network");
+    }
+    if (res.ok) return res;
+    let message = `${res.status} ${res.statusText}`;
+    let serverCode: string | undefined;
+    try {
+      const j = (await res.json()) as { error?: { code?: string; message?: string } };
+      if (j.error?.message) message = j.error.message;
+      serverCode = j.error?.code;
+    } catch {
+      /* non-JSON error body */
+    }
+    if (res.status === 403 && /csrf/i.test(message) && !retried) {
+      await this.token(true);
+      return this.binary(method, path, body, true);
+    }
+    const code = res.status === 404 ? "not_found" : res.status === 403 ? "forbidden" : res.status === 401 ? "not_authenticated" : res.status === 409 ? "conflict" : res.status === 400 ? "validation" : "server";
+    throw new ApiError(message, res.status, code, serverCode);
+  }
+  async exportData(projectId?: string) {
+    const res = await this.binary("GET", `/data/export${qs({ projectId })}`);
+    const cd = res.headers.get("Content-Disposition") ?? "";
+    const fileName = /filename="([^"]+)"/.exec(cd)?.[1] ?? "coordinator-export.zip";
+    return { blob: await res.blob(), fileName };
+  }
+  async stageDataImport(file: Blob) {
+    const res = await this.binary("POST", "/data/import", file);
+    return (await res.json()) as T.DataImportStage;
+  }
 }
