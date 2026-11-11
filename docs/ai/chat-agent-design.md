@@ -3,7 +3,8 @@
 Owner: AI specialist. Builders: coder C (server bridge), coder D (UI). Status: design, 2026-11-10.
 Model: the local Node server spawns **headless Claude Code** (`claude -p`) once per chat message, using the
 coordinator's own Claude Code login (no API key). The agent is `coordinador-chat`
-(`harness-staging/.claude/agents/coordinador-chat.md`; installed by `npm run setup`). Propose-only, autonomy L1.
+(`agent-runtime/agents/coordinador-chat.md`, shipped with the app and materialised by `server/agent-runtime.ts`;
+the run's cwd is the runtime folder — WS-S). Propose-only, autonomy L1.
 
 ## 1. Verified invocation (Claude Code 2.1.267, Windows; probed 2026-11-10)
 

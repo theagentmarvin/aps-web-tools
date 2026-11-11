@@ -3,17 +3,17 @@
  * coordination cycle and what to do next, computed ONLY from server state (store, ledger, cached
  * ACC reads) — no LLM, no free text from models in titles or reasons. Each step either runs a
  * domain flow (agent work: proposals, questions, drafts, reports) or opens a UI location where a
- * human decides (answer, send, approve with passkey, apply, publish, install).
+ * human decides (answer, send, approve with passkey, apply, publish).
  *
  * Used by GET /next-steps (UI), the MCP read tool get_next_steps (chat / VS Code) and the chat cards.
- * The harness-update step is only added when the caller passes a harness status (the HTTP route);
- * the MCP and chat layers never touch the installer.
+ * The in-app agent ships with the app (agent-runtime/): there is no "update the agent" step.
  */
+import { runtimeAgentSourceExists } from "./agent-runtime";
 import type * as C from "./api/contract";
 import type { Coordinator } from "./coordinator";
 import { CoordinatorUi } from "./coordinator-ui";
 import { outCode, SIN } from "./disciplines";
-import { loadFlowAgent } from "./flows/agent";
+import { FLOW_AGENT } from "./flows/agent";
 import { FlowRunStore, runView } from "./flows/store";
 import { listReportFiles } from "./parity";
 import type { ClassificationRecord, ProposalRecord, TestRecord } from "./store/types";
@@ -35,9 +35,7 @@ export const THRESHOLDS = {
 } as const;
 
 export interface NextStepsOptions {
-  /** Harness status (HTTP route only). */
-  harness?: () => { upToDate: boolean; staging: boolean; files?: Array<{ state: string }> } | undefined;
-  /** Repo root holding .claude/agents (tests). Default coord.root. */
+  /** App folder holding agent-runtime/ (tests). Default coord.root. */
   agentRoot?: string;
   /** Override "now" (tests). */
   now?: number;
@@ -82,31 +80,13 @@ export async function nextSteps(coord: Coordinator, q: { projectId?: string; tes
       log.warn("next_steps.partial", { what, message: (err as Error).message.slice(0, 200) });
     }
   };
-  const flowsAvailable = !!loadFlowAgent(opts.agentRoot ?? coord.root);
+  const flowsAvailable = runtimeAgentSourceExists(opts.agentRoot ?? coord.root, FLOW_AGENT);
   const runs = new FlowRunStore(coord.store);
   const projectRuns = projectId ? await runs.list({ projectId }).catch(() => []) : [];
   const active = projectRuns.find((r) => runs.isActive(r, now));
   /** A finished run of `flow` for this test within RECENT_FLOW_MS (the suggestion would repeat itself). */
   const ranRecently = (flow: C.FlowId, testKey?: string, since?: string) =>
     projectRuns.some((r) => r.flowId === flow && r.state === "finished" && (!testKey || r.testKey === testKey) && !!r.finishedAt && now - Date.parse(r.finishedAt) < RECENT_FLOW_MS && (!since || r.finishedAt > since));
-
-  // ── harness (HTTP only) ────────────────────────────────────────────────────
-  await safe("harness", async () => {
-    const h = opts.harness?.();
-    if (!h || h.upToDate || !h.staging) return;
-    const files = (h.files ?? []).filter((f) => f.state !== "same").length;
-    add({
-      id: "harness_update",
-      kind: "harness_update",
-      priority: flowsAvailable ? 85 : 15,
-      title: "Actualizar el agente",
-      reason: flowsAvailable
-        ? `Hay una versión nueva del agente (${plural(files, "archivo", "archivos")}): revísala e instálala con passkey.`
-        : "Los flujos de la app necesitan la versión nueva del agente: revísala e instálala con passkey.",
-      counts: { files },
-      action: { type: "open", route: "harness", params: {} },
-    });
-  });
 
   if (!projectId) return { computedAt: nowIso(now), steps: finish(steps), flowsAvailable, ...(active ? { runningFlow: runView(active) } : {}) };
 

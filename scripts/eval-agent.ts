@@ -12,7 +12,7 @@
  *   npx tsx scripts/eval-agent.ts --suite ciclo --yes         # /preparar-ciclo selection logic, offline (no MCP)
  *   npx tsx scripts/eval-agent.ts --suite acta --yes          # /acta notes → drafts, offline (no MCP)
  *   npx tsx scripts/eval-agent.ts --suite all --yes           # classify + ciclo + acta + workflow + issues (E3)
- *   … --skills-dir harness-staging/.claude/skills             # test the staged skill text before installing it
+ *   … --skills-dir <dir>                                      # skill texts (default: agent-runtime/skills, the in-app agent)
  *   npx tsx scripts/eval-agent.ts --suite classify --dry-run  # print the claude invocations only
  *
  * Options: --model <alias> (agent model, default: your Claude Code default) · --judge-model <alias> (default opus)
@@ -29,6 +29,8 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import YAML from "yaml";
 import { parseScenarioMarkdown, type Scenario } from "../core/eval/scenarios";
+import { materializeRuntime } from "../server/agent-runtime";
+import { mcpConfigJson } from "../server/chat/bridge";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APPLY = "mcp__coord__apply_approved_proposals";
@@ -47,7 +49,7 @@ const { values: args } = parseArgs({
     budget: { type: "string" },
     claude: { type: "string" },
     out: { type: "string", default: path.join(root, "evals", "results") },
-    "skills-dir": { type: "string", default: path.join(root, ".claude", "skills") },
+    "skills-dir": { type: "string", default: path.join(root, "agent-runtime", "skills") },
     "dry-run": { type: "boolean", default: false },
     "self-test": { type: "boolean", default: false },
     "allow-ci": { type: "boolean", default: false },
@@ -671,7 +673,7 @@ function claudeEnv(extra: Record<string, string>): NodeJS.ProcessEnv {
   return { ...env, ...extra };
 }
 
-function runClaude(claudeArgs: string[], env: NodeJS.ProcessEnv, timeoutMs = 20 * 60_000): Promise<ClaudeRun> {
+function runClaude(claudeArgs: string[], env: NodeJS.ProcessEnv, timeoutMs = 20 * 60_000, cwd = root): Promise<ClaudeRun> {
   const bin = args.claude ?? process.env.CLAUDE_BIN ?? "claude";
   if (args["dry-run"]) {
     console.log(`[dry-run] ${bin} ${claudeArgs.map((a) => (/\s/.test(a) ? JSON.stringify(a.length > 120 ? `${a.slice(0, 120)}…` : a) : a)).join(" ")}`);
@@ -679,7 +681,7 @@ function runClaude(claudeArgs: string[], env: NodeJS.ProcessEnv, timeoutMs = 20 
   }
   return new Promise((resolve) => {
     const t0 = Date.now();
-    const child = spawn(bin, claudeArgs, { cwd: root, env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(bin, claudeArgs, { cwd, env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
     let buf = "";
     let stderr = "";
     const events: any[] = [];
@@ -805,7 +807,11 @@ async function runWorkflow(cfg: ScenarioFile, runs: number) {
           const s = spawnSync(process.execPath, argv, { cwd: root, env, encoding: "utf8", windowsHide: true, timeout: 10 * 60_000 });
           if (s.status !== 0) throw new Error(`setup ${def.id} failed (${step.join(" ")}): ${(s.stderr || s.stdout).slice(0, 300)}`);
         }
-        const res = await runClaude(baseArgs(def.prompt, Number(args.budget ?? def.maxBudgetUsd ?? 3)), env);
+        // The in-app agent (agent-runtime/, materialised like the app server does), never the repo's dev harness.
+        const rt = materializeRuntime({ appRoot: root, base: path.join(tmpdir(), "coord-eval-runtime") });
+        if (!rt) throw new Error("agent-runtime/ no existe");
+        const mcp = mcpConfigJson({ root, dataSource: "fixtures", homeOverride: home, mode: "flow" });
+        const res = await runClaude([...baseArgs(def.prompt, Number(args.budget ?? def.maxBudgetUsd ?? 3)), "--strict-mcp-config", "--mcp-config", mcp], { ...env, COORD_APP_ROOT: root }, undefined, rt.dir);
         if (args["dry-run"]) continue;
         const t = parseTranscript(res.events);
         const score = scoreWorkflow(def, t);
@@ -966,7 +972,7 @@ function selfTest(): number {
   check(!leaked.pass && leaked.gates.namesLeaked.includes("María González"), "a personal name must fail");
   check(!scoreActa(acta, { ...perfectActa, suspicious: [] }).pass, "an unreported injected note must fail");
   check(isoFromQuote("para el 20-11-2026") === "2026-11-20" && isoFromQuote("antes del 2026-11-27") === "2026-11-27", "date quote parsing");
-  check(skillText("acta").includes("propose_family_decision") || args["skills-dir"]!.includes(".claude"), "acta skill readable");
+  check(skillText("acta").includes("propose_family_decision"), "acta skill readable");
 
   // Workflow gates for M2–M4 (synthetic transcript).
   const FX = "F-x1y2z3a4";

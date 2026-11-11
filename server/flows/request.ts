@@ -2,14 +2,15 @@
  * Creating a flow run (queued) — the single entry point for both starters:
  *  - a human, through POST /flows/:flowId/run (CSRF + same-origin; server/api/router.ts);
  *  - the chat agent, through the MCP tool start_flow (chat mode only; server/mcp/server.ts).
- * Checks: the flow is in the catalog, the installed harness has the flow agent, the project / test
+ * Checks: the flow is in the catalog, the app ships the flow agent (agent-runtime/), the project / test
  * exist, one active run per project and (agent) the daily cap. The web server then runs it.
  */
 import type * as C from "../api/contract";
 import type { Coordinator } from "../coordinator";
 import { sanitizeModelText } from "../sanitize";
 import { bareProjectId, CoordError } from "../util";
-import { FLOW_AGENT_MISSING, loadFlowAgent } from "./agent";
+import { runtimeAgentSourceExists } from "../agent-runtime";
+import { FLOW_AGENT, FLOW_AGENT_MISSING } from "./agent";
 import { flowDef } from "./catalog";
 import { FlowRunStore, runView, type FlowRunRecord } from "./store";
 
@@ -36,7 +37,8 @@ async function defaultTest(coord: Coordinator, projectId: string): Promise<strin
 export async function requestFlowRun(coord: Coordinator, req: FlowRequest, opts: { agentRoot?: string } = {}): Promise<FlowRunRecord> {
   const def = flowDef(req.flowId);
   if (!def) throw new CoordError("validation_error", `El flujo «${req.flowId}» no está en el catálogo.`, "Flujos: preparar-ciclo, triage, acta, redactar-issues, informe-semanal, auditar-modelo, curar-reglas.");
-  if (!loadFlowAgent(opts.agentRoot ?? coord.root)) throw new CoordError("invalid_state", FLOW_AGENT_MISSING, "Instala la actualización del agente desde el aviso de la app (passkey).");
+  // The flow agent ships with the app (agent-runtime/); the web server materialises it before running.
+  if (!runtimeAgentSourceExists(opts.agentRoot ?? coord.root, FLOW_AGENT)) throw new CoordError("invalid_state", FLOW_AGENT_MISSING, "Reinicia la app con «Coordinador BIM.cmd».");
   let projectId = req.projectId ? bareProjectId(req.projectId) : undefined;
   let testKey = req.testKey;
   let modelSetId: string | undefined;

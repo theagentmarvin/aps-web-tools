@@ -13,6 +13,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { ChatEvent, FlowEvent } from "../../server/api/contract";
+import { materializeRuntime } from "../../server/agent-runtime";
 import { createCoordApi } from "../../server/api/router";
 import { parseAgentFile } from "../../server/chat/agent";
 import { chatAllowedTools, headlessArgs, mcpConfigJson } from "../../server/chat/bridge";
@@ -30,9 +31,9 @@ import { HUMAN, ingest, makeCoord, ROOT, tempHome, testConfig } from "./helpers"
 
 const FAKE = join(ROOT, "tests", "server", "fake-claude.mjs");
 const fakeBin = () => ({ command: process.execPath, prefixArgs: [FAKE] });
-const STAGED_FLOW_AGENT = join(ROOT, "harness-staging", ".claude", "agents", "coordinador-flujos.md");
+const FLOW_AGENT_SRC = join(ROOT, "agent-runtime", "agents", "coordinador-flujos.md");
 const PROJECT = "demo-proyecto";
-/** Never reachable by any flow (ACC writes, approvals, rules publication, harness install, recursion). */
+/** Never reachable by any flow (ACC writes, approvals, rules publication, agent install, recursion). */
 const DANGEROUS = /apply|approve|sign|publish|revert|install|harness|setup|start_flow|get_flow_status/i;
 
 let coord: Coordinator;
@@ -40,15 +41,18 @@ let home: string;
 let cleanup: () => void;
 let testKey: string;
 let agentRoot: string;
+let runtimeBase: string;
+/** The app's own agent-runtime/, materialised once (skills + agents as the flows see them). */
+let rootRuntime: string;
 
-/** A repo-like root with the flow agent INSTALLED (.claude/agents) and one SKILL.md per flow. */
+/** An app-like root whose agent-runtime/ ships the flow agent and one SKILL.md per flow. */
 function makeAgentRoot(): string {
   const root = mkdtempSync(join(tmpdir(), "coord-flows-root-"));
-  mkdirSync(join(root, ".claude", "agents"), { recursive: true });
-  copyFileSync(STAGED_FLOW_AGENT, join(root, ".claude", "agents", "coordinador-flujos.md"));
+  mkdirSync(join(root, "agent-runtime", "agents"), { recursive: true });
+  copyFileSync(FLOW_AGENT_SRC, join(root, "agent-runtime", "agents", "coordinador-flujos.md"));
   for (const f of FLOWS) {
-    mkdirSync(join(root, ".claude", "skills", f.skill), { recursive: true });
-    writeFileSync(join(root, ".claude", "skills", f.skill, "SKILL.md"), `---\nname: ${f.skill}\n${f.skill === "curar-reglas" ? "agent: rules-curator\n" : ""}---\n\n# ${f.label}\n\nArgumentos: $ARGUMENTS\n`);
+    mkdirSync(join(root, "agent-runtime", "skills", f.skill), { recursive: true });
+    writeFileSync(join(root, "agent-runtime", "skills", f.skill, "SKILL.md"), `---\nname: ${f.skill}\n${f.skill === "curar-reglas" ? "agent: rules-curator\n" : ""}---\n\n# ${f.label}\n\nArgumentos: $ARGUMENTS\n`);
   }
   return root;
 }
@@ -77,10 +81,13 @@ beforeAll(async () => {
   coord = makeCoord(home);
   testKey = await ingest(coord, 42);
   agentRoot = makeAgentRoot();
+  runtimeBase = mkdtempSync(join(tmpdir(), "coord-flows-rt-"));
+  rootRuntime = materializeRuntime({ appRoot: ROOT, base: runtimeBase })!.dir;
 }, 120_000);
 afterAll(() => {
   cleanup();
   rmSync(agentRoot, { recursive: true, force: true });
+  rmSync(runtimeBase, { recursive: true, force: true });
 });
 afterEach(() => {
   delete process.env.FAKE_CLAUDE_MODE;
@@ -89,12 +96,12 @@ afterEach(() => {
 });
 
 describe("flow catalog and the flow agent's tool lists", () => {
-  const staged = parseAgentFile(readFileSync(STAGED_FLOW_AGENT, "utf8"), "staged");
+  const staged = parseAgentFile(readFileSync(FLOW_AGENT_SRC, "utf8"));
 
   it("every catalog flow maps to a real skill and lists only tools the flow agent has", () => {
     expect(FLOWS.map((f) => f.id)).toEqual(["preparar-ciclo", "triage", "acta", "redactar-issues", "informe-semanal", "auditar-modelo", "curar-reglas"]);
     for (const f of FLOWS) {
-      expect(skillBody(ROOT, f.skill), f.skill).toBeDefined();
+      expect(skillBody(rootRuntime, f.skill), f.skill).toBeDefined();
       expect(f.tools.filter((t) => !staged.tools.includes(t)), f.id).toEqual([]);
       expect(f.tools.filter((t) => DANGEROUS.test(t)), f.id).toEqual([]);
       expect(f.costCapUsd).toBeGreaterThan(0);
@@ -120,12 +127,12 @@ describe("flow catalog and the flow agent's tool lists", () => {
 
   it("spawn args: flow agent by name, read-only built-ins, flow-mode MCP, apply denied", () => {
     const def = FLOWS.find((f) => f.id === "triage")!;
-    const agent = { ...staged, source: "installed" as const };
+    const agent = staged;
     const allowed = flowAllowedTools(agent, def);
     const args = headlessArgs({ agentName: FLOW_AGENT, agent, mcpConfig: mcpConfigJson({ root: ROOT, dataSource: "fixtures", homeOverride: home, mode: "flow" }), sessionId: "s", resume: false, builtinTools: flowBuiltins(allowed), allowedTools: allowed, disallowedTools: flowDisallowed(agent), budgetUsd: def.costCapUsd });
     const at = (f: string) => args[args.indexOf(f) + 1]!;
     expect(at("--agent")).toBe("coordinador-flujos");
-    expect(args).not.toContain("--agents"); // installed: by name, never inline
+    expect(args).not.toContain("--agents"); // by name from the runtime folder, never inline
     expect(at("--tools").split(",").sort()).toEqual(["Agent", "Glob", "Grep", "Read"]);
     expect(at("--disallowedTools")).toContain("mcp__coord__apply_approved_proposals");
     expect(at("--allowedTools")).not.toMatch(DANGEROUS);
@@ -142,13 +149,15 @@ describe("flow catalog and the flow agent's tool lists", () => {
     expect(p).not.toContain("motivo");
   });
 
-  it("only the INSTALLED flow agent counts (no staged fallback)", () => {
-    expect(loadFlowAgent(agentRoot)?.source).toBe("installed");
-    const stagedOnly = mkdtempSync(join(tmpdir(), "coord-flows-staged-"));
-    mkdirSync(join(stagedOnly, "harness-staging", ".claude", "agents"), { recursive: true });
-    copyFileSync(STAGED_FLOW_AGENT, join(stagedOnly, "harness-staging", ".claude", "agents", "coordinador-flujos.md"));
-    expect(loadFlowAgent(stagedOnly)).toBeUndefined();
-    rmSync(stagedOnly, { recursive: true, force: true });
+  it("the flow agent comes only from the materialised runtime (no fallback to .claude/ or a staging copy)", () => {
+    const rt = materializeRuntime({ appRoot: agentRoot, base: runtimeBase })!;
+    expect(loadFlowAgent(rt.dir)?.source).toBe("runtime");
+    expect(loadFlowAgent(agentRoot)).toBeUndefined(); // the app folder itself is not a runtime
+    const legacyOnly = mkdtempSync(join(tmpdir(), "coord-flows-legacy-"));
+    mkdirSync(join(legacyOnly, ".claude", "agents"), { recursive: true });
+    copyFileSync(FLOW_AGENT_SRC, join(legacyOnly, ".claude", "agents", "coordinador-flujos.md"));
+    expect(materializeRuntime({ appRoot: legacyOnly, base: runtimeBase })).toBeUndefined();
+    rmSync(legacyOnly, { recursive: true, force: true });
   });
 });
 
@@ -182,14 +191,16 @@ describe("start_flow availability matrix", () => {
     expect(TOOLS.filter((t) => toolInMode(t, "chat")).map((t) => t.name)).toContain("start_flow");
   });
 
-  it("no subagent definition (installed or staged) and not the flow agent list a flow tool; the chat may", () => {
-    for (const dir of [join(ROOT, ".claude", "agents"), join(ROOT, "harness-staging", ".claude", "agents")]) {
-      for (const f of existsSync(dir) ? readdirSync(dir).filter((x) => x.endsWith(".md") && x !== "coordinador-chat.md") : []) {
-        const def = parseAgentFile(readFileSync(join(dir, f), "utf8"), "staged");
-        expect(def.tools.filter((t) => /start_flow|get_flow_status/.test(t)), f).toEqual([]);
-      }
+  it("no subagent definition and not the flow agent list a flow tool; the chat may", () => {
+    const dir = join(ROOT, "agent-runtime", "agents");
+    const files = readdirSync(dir).filter((x) => x.endsWith(".md") && x !== "coordinador-chat.md");
+    expect(files.sort()).toEqual(["clash-triager.md", "coordinador-flujos.md", "issue-writer.md", "model-hygiene-auditor.md", "rules-curator.md"]);
+    for (const f of files) {
+      const def = parseAgentFile(readFileSync(join(dir, f), "utf8"));
+      expect(def.tools.filter((t) => /start_flow|get_flow_status|apply_approved_proposals/.test(t)), f).toEqual([]);
+      expect(def.disallowedTools, f).toContain("mcp__coord__apply_approved_proposals");
     }
-    const chat = parseAgentFile(readFileSync(join(ROOT, "harness-staging", ".claude", "agents", "coordinador-chat.md"), "utf8"), "staged");
+    const chat = parseAgentFile(readFileSync(join(dir, "coordinador-chat.md"), "utf8"));
     const allowed = chatAllowedTools(chat);
     for (const t of ["start_flow", "get_flow_status", "get_next_steps", "propose_discipline_mapping", "generate_report", "propose_rule_change", "get_rule_insights", "list_feedback"]) expect(allowed).toContain(`mcp__coord__${t}`);
     expect(allowed.filter((t) => /apply|approve|publish|revert|install|harness|ingest|run_classification/.test(t))).toEqual([]);
@@ -198,18 +209,14 @@ describe("start_flow availability matrix", () => {
     expect(chat.disallowedTools).not.toContain("mcp__coord__propose_rule_change");
   });
 
-  it("chat-mode start_flow refuses without the installed flow agent (repo root) and unknown flows", async () => {
+  it("chat-mode start_flow refuses unknown flows", async () => {
     const server = createCoordServer(coord, { chat: true, audit: false });
     const [a, b] = InMemoryTransport.createLinkedPair();
     await server.connect(a);
     const client = new Client({ name: "t", version: "0" });
     await client.connect(b);
     const call = async (args: Record<string, unknown>) => JSON.parse(((await client.callTool({ name: "start_flow", arguments: args })).content as Array<{ text: string }>)[0]!.text);
-    if (!existsSync(join(ROOT, ".claude", "agents", "coordinador-flujos.md"))) {
-      const r = await call({ flowId: "triage", projectId: PROJECT, reason: "Hay ubicaciones sin revisar." });
-      expect(r.ok).toBe(false);
-      expect(r.error.message).toContain("Actualiza el agente");
-    }
+    expect(typeof call).toBe("function");
     // Outside the catalog: rejected by the input schema (enum) before any handler runs.
     const bad = (await client.callTool({ name: "start_flow", arguments: { flowId: "aplicar-lote", projectId: PROJECT, reason: "x" } })) as { isError?: boolean; content: Array<{ text: string }> };
     expect(bad.isError).toBe(true);
@@ -224,7 +231,7 @@ describe("flow runs: one per project, agent daily cap, chat start", () => {
     try {
       const base = makeCoord(h, { config: testConfig({ flows: { dailyAgentCap: 2 } }) });
       const tk = await ingest(base, 42);
-      // Same data home, a root whose .claude/agents has the flow agent installed.
+      // Same data home, an app root whose agent-runtime/ ships the flow agent.
       const chatCoord = new Coordinator({ root: agentRoot, home: h, dataSource: "fixtures", source: new FixtureSource({ home: h }), config: testConfig({ flows: { dailyAgentCap: 2 } }) });
       const server = createCoordServer(chatCoord, { chat: true, audit: false });
       const [a, b] = InMemoryTransport.createLinkedPair();
@@ -267,6 +274,8 @@ describe("flow runner with a fake claude", () => {
     const pid = await engineAgreeingProposal();
     process.env.FAKE_CLAUDE_MODE = "flow";
     process.env.FAKE_PROPOSAL_ID = pid;
+    const flog = join(home, "fake-flow.jsonl");
+    process.env.FAKE_CLAUDE_LOG = flog;
     const flows = new FlowService(coord, { resolveBin: fakeBin, agentRoot });
     const run = await flows.start("triage", { projectId: PROJECT, testKey, reason: "Qué sigue: revisión IA." }, HUMAN);
     expect(run).toMatchObject({ state: "queued", startedBy: "human", testKey, flowId: "triage" });
@@ -282,6 +291,15 @@ describe("flow runner with a fake claude", () => {
     expect(text).not.toMatch(/I'll check/);
     expect(text).toContain("Revisé las ubicaciones pendientes");
     expect(view.summary).toContain("informe semanal");
+    // Spawned in the materialised runtime of the app root (flow agent + skills there), outside repo and data home.
+    const spawned = JSON.parse(readFileSync(flog, "utf8").trim().split("\n").at(-1)!) as { cwd: string; args: string[]; env: Record<string, string | null> };
+    delete process.env.FAKE_CLAUDE_LOG;
+    expect(existsSync(join(spawned.cwd, ".claude", "agents", "coordinador-flujos.md"))).toBe(true);
+    expect(existsSync(join(spawned.cwd, ".claude", "skills", "triage", "SKILL.md"))).toBe(true);
+    expect(spawned.cwd.toLowerCase().startsWith(agentRoot.toLowerCase())).toBe(false);
+    expect(spawned.cwd.toLowerCase().startsWith(home.toLowerCase())).toBe(false);
+    expect(spawned.env.COORD_APP_ROOT).toBe(coord.root);
+    expect(spawned.args[spawned.args.indexOf("--agent") + 1]).toBe("coordinador-flujos");
     // Persisted run + event log; GET after the end replays the stored events.
     const stored = await flows.runs.get(run.runId);
     expect(stored).toMatchObject({ state: "finished", startedBy: "human" });

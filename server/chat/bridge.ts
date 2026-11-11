@@ -8,7 +8,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import type * as C from "../api/contract";
-import { CHAT_AGENT, inlineAgentsJson, type ChatAgentDef } from "./agent";
+import { CHAT_AGENT, type ChatAgentDef } from "./agent";
 import { NarrationFilter } from "./narration";
 
 export const CHAT_TIMEOUT_MS = 120_000;
@@ -76,6 +76,15 @@ export function childEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessE
 }
 
 /**
+ * Environment of an in-app agent run: {@link childEnv} plus what the runtime hooks need
+ * (agent-runtime/hooks/_lib.mjs): the application folder (coordinator.config*.json) and the data home's
+ * audit folder for the agent-side audit mirror. CLAUDE_PROJECT_DIR is left to Claude Code (= the runtime cwd).
+ */
+export function agentEnv(opts: { appRoot: string; auditDir?: string }, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  return { ...childEnv(base), COORD_APP_ROOT: resolve(opts.appRoot), ...(opts.auditDir ? { COORD_AGENT_AUDIT_DIR: resolve(opts.auditDir) } : {}) };
+}
+
+/**
  * Inline MCP config: only the coord server, the same data source and home as this server.
  * mode "chat" → COORD_CHAT=1 (no apply; start_flow available); "flow" → COORD_FLOW=1 (no apply, no flow tools).
  */
@@ -89,7 +98,7 @@ export function mcpConfigJson(opts: { root: string; dataSource: "live" | "fixtur
 /**
  * Headless spawn args shared by the chat and the flows (§1): stream-json, strict MCP config, an explicit
  * built-in tool set (`--tools`), pre-approved tools, denied tools, dontAsk, no prompts, a USD cap.
- * The installed agent is used by name; a staged one is passed inline with --agents.
+ * The agent is used by name from the materialised runtime folder (the run's cwd; server/agent-runtime.ts).
  */
 export function headlessArgs(opts: {
   agentName: string;
@@ -105,7 +114,6 @@ export function headlessArgs(opts: {
 }): string[] {
   return [
     "-p",
-    ...(opts.agent.source === "staged" ? ["--agents", inlineAgentsJson(opts.agent)] : []),
     "--agent",
     opts.agentName,
     "--output-format",

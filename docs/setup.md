@@ -66,19 +66,15 @@ VITE_COORD_API=http
 
 `.env.example` todavía trae `VITE_APS_HUB_ID` / `VITE_APS_PROJECT_ID`: no se usan, puedes borrarlas.
 
-## 4. `npm run setup`
+## 4. El agente de la app (sin instalación)
 
-Ejecútalo **en tu propia terminal**, no dentro de Claude Code (requiere una terminal interactiva y se niega a correr sin ella):
+El agente de coordinación (chat y flujos) **viaja con la aplicación** en `agent-runtime/`: no hay que instalarlo
+ni actualizarlo aparte. Al iniciar, el servidor lo copia a una carpeta privada
+(`%LOCALAPPDATA%\bim-coordinator\agent-runtime\`, fuera de tus datos y de los respaldos) y desde ahí lo lanza.
+Cuando actualizas la app, el agente se actualiza con ella.
 
-```bash
-npm run setup
-```
-
-Qué hace:
-- Escribe `.mcp.json` (registra el servidor MCP `coord` del agente) y `coordinator.config.json` desde `server/templates/`.
-- Instala la versión vigente de los hooks de protección de Claude Code.
-
-El agente no puede crear ni modificar estos archivos (los hooks lo bloquean); por eso este paso lo haces tú. Para ajustes personales usa `coordinator.config.local.json` (ignorado por git); solo puede bajar el nivel de autonomía, nunca subirlo.
+La configuración usa valores por defecto (`server/templates/coordinator.config.json`). Para ajustes personales
+crea `coordinator.config.local.json` (ignorado por git); solo puede bajar el nivel de autonomía, nunca subirlo.
 
 ## 5. Iniciar sesión en Autodesk (agente)
 
@@ -113,8 +109,10 @@ Para agregar otra passkey (otro equipo o llave física) entra a la misma página
 **Doble clic en `Coordinador BIM.cmd`** (en la carpeta del repo). El lanzador:
 
 1. comprueba que Node.js 22+ esté instalado (si no, te dice dónde descargarlo);
-2. ejecuta `npm install` solo si falta `node_modules` o cambió `package-lock.json`;
-3. si la app ya está corriendo, solo abre el navegador; si no, inicia el servidor (lo mismo que `npm run dev`, puerto 3000), espera a que responda y abre `http://localhost:3000`.
+2. si la carpeta es un clon de git sin cambios locales y hay una versión nueva de la app, pregunta
+   **«¿Actualizar ahora? (S/N)»** (`git pull --ff-only`; si falla, sigue con la versión actual);
+3. ejecuta `npm install` solo si falta `node_modules` o cambió `package-lock.json`;
+4. si la app ya está corriendo, solo abre el navegador; si no, inicia el servidor (lo mismo que `npm run dev`, puerto 3000), espera a que responda y abre `http://localhost:3000`.
 
 La ventana muestra un estado corto y el registro queda en `%LOCALAPPDATA%\CoordinadorBIM\server.log`. **Cierra esa ventana para detener el servidor.** No requiere permisos de administrador.
 
@@ -130,19 +128,32 @@ Abre **`http://localhost:3000`** — exactamente `localhost`, **no** `127.0.0.1`
 
 1. **Iniciar sesión con Autodesk** (para el visor 3D).
 2. **Proyectos** → tu hub → tu proyecto → verás los conjuntos de modelos.
-3. En otra terminal, en la carpeta del repo: `claude`, y luego `/coordinar-test`. Al iniciar, el agente te recuerda el Procedimiento, el nivel de autonomía (L1) y si hay sesión APS.
+3. La tarjeta **Qué sigue** te propone el siguiente paso (p. ej. «Preparar el ciclo» → **Ejecutar**), y el
+   **chat** del espacio de coordinación responde preguntas y puede lanzar los flujos. Ambos usan el agente de la
+   app; Claude Code debe estar instalado y con sesión iniciada (`claude` → `/login`, una vez).
 
 Listo. El flujo semanal está en el [README](../README.md#flujo-diario-proyecto-real).
 
-## 8. Actualizar el agente desde la app
+## 8. Mejorar la app o el agente (VS Code, modo desarrollo)
 
-Cuando el repositorio trae una versión nueva del agente (instrucciones, habilidades u hooks en `harness-staging/`) distinta de la instalada en `.claude/`, la app muestra el aviso **"Hay una actualización del agente (N archivos)"**:
+VS Code (o `claude` en la carpeta del repo) es el **agente de desarrollo**: le pides mejoras de la app o del
+agente de la app («que el chat explique X», «agrega un filtro por nivel»), las implementa, corre los tests y te
+resume los cambios en español; hace commit cuando estás de acuerdo. Comando: `/mejorar` (o lenguaje natural).
+Trabaja con **datos de prueba**: no puede leer tus datos reales, respaldos ni secretos, ni escribir en ACC.
 
-1. **Revisar e instalar** → lista de archivos (nuevo / modificado) con **Ver cambios** para cada uno.
-2. **Instalar con passkey** → Windows Hello firma exactamente esos archivos. El servidor prueba los hooks nuevos, respalda la versión anterior en la carpeta de datos (`backups/harness-<fecha>/`), copia los archivos, verifica cada uno y lo registra en la auditoría (`harness.installed`).
-3. **Reinicia las sesiones del agente** (VS Code / `claude` / chat) para que usen la versión nueva.
+**Activarlo (una vez, en tu propia terminal, no dentro de Claude Code):**
 
-Solo una persona puede hacerlo: exige passkey, CSRF y el mismo origen, y ningún agente (MCP ni chat) tiene una herramienta para llegar ahí. Si el servidor lo inició un agente (Claude Code), la instalación se rechaza: ábrelo con `Coordinador BIM.cmd`. `npm run setup` en tu terminal sigue siendo la alternativa.
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\activate-dev-harness.ps1
+```
+
+Respalda la configuración anterior (`CLAUDE.md`, `.mcp.json`, `.claude\`) en
+`%LOCALAPPDATA%\bim-coordinator\backups\harness-<fecha>\`, copia `dev-harness\` a su lugar y muestra qué cambió
+(confírmalo con `git add -A CLAUDE.md .mcp.json .claude` y `git commit`). Luego reabre Claude Code y acepta el
+servidor MCP `coord` del proyecto. Para que el agente de desarrollo lea ACC real en **solo lectura**:
+`$env:COORD_DEV_LIVE = "1"; claude`.
+
+Después de una mejora: **reinicia la app con `Coordinador BIM.cmd`**.
 
 ## 9. Dónde viven tus datos y cómo respaldarlos
 
@@ -192,14 +203,13 @@ Cada respaldo queda en la auditoría (sin rutas ni datos personales).
 | **Passkey**: "código inválido o expirado" al registrar | El código dura 10 min y sirve una vez | Genera otro con `npm run coordinator -- passkey-enroll`. |
 | **Passkey**: `passkey-enroll` se niega a correr | Lo ejecutaste dentro de Claude Code o sin terminal interactiva | Ejecútalo en una terminal normal (PowerShell, Git Bash). |
 | **Passkey**: la aprobación se rechaza tras editar el lote | La firma cubre el contenido exacto; cualquier exclusión o edición la invalida | Vuelve a pulsar **Aprobar**: se pide una nueva firma. |
-| **Versión desactualizada**: banner "Hay una versión más reciente del conjunto", o la aprobación/aplicación se rechaza por versión | Se publicó una versión nueva del conjunto de modelos después del análisis | Copia el comando del banner y pídele al agente re-analizar (`/coordinar-test`); revisa y aprueba sobre la versión nueva. Las aprobaciones no se pueden aplicar sobre una versión vieja. |
+| **Versión desactualizada**: banner "Hay una versión más reciente del conjunto", o la aprobación/aplicación se rechaza por versión | Se publicó una versión nueva del conjunto de modelos después del análisis | Ejecuta el flujo **Preparar el ciclo** (Qué sigue o el chat); revisa y aprueba sobre la versión nueva. Las aprobaciones no se pueden aplicar sobre una versión vieja. |
 | "Pre-chequeo requerido" al aprobar | El pre-chequeo con ACC tiene más de 10 minutos | **Comprobar con ACC** en el lote y vuelve a aprobar. |
 | **Puerto 3000 en uso**: Vite arranca en 3001 u otro | Otro proceso usa el 3000 | Cierra ese proceso (`netstat -ano \| findstr :3000` y luego `taskkill /PID <pid> /F`). No uses otro puerto: la callback del navegador y la passkey están ligadas a `localhost:3000`. |
 | **Puerto 8765 en uso** al iniciar sesión | Otro proceso usa el puerto de la callback | Libéralo, o define `APS_CALLBACK_PORT` en `.env.local` y registra la nueva callback en la app APS. |
-| Claude Code no muestra las herramientas `mcp__coord__*` | Falta `.mcp.json` o no aprobaste el servidor MCP | Corre `npm run setup`; al abrir `claude`, acepta el servidor `coord` del proyecto. |
-| **Actualización del agente**: "Este servidor fue iniciado por un agente" | `npm run dev` se lanzó desde Claude Code | Cierra ese servidor y abre la app con `Coordinador BIM.cmd`. |
-| **Actualización del agente**: "Las pruebas de los hooks… fallaron" | La versión nueva en `harness-staging/` no pasa `tests/hooks.test.ts` | No se instaló nada. Avisa a quien mantiene el agente. |
+| VS Code no muestra las herramientas `mcp__coord__*` | No se activó el modo desarrollo o no aprobaste el servidor MCP | Corre una vez `scripts\activate-dev-harness.ps1` (sección 8); al abrir `claude`, acepta el servidor `coord` del proyecto. |
+| **Flujos**: «Los flujos no están disponibles» | La app no encontró su agente (`agent-runtime/`) o no pudo copiarlo a su carpeta privada | Reinicia la app con `Coordinador BIM.cmd`; si persiste, revisa que la carpeta del repo esté completa (`git status`). |
 | `Coordinador BIM.cmd` dice que el servidor no respondió | Otro programa usa el puerto 3000, o falló `npm install` | Revisa `%LOCALAPPDATA%\CoordinadorBIM\server.log`; libera el puerto 3000 y vuelve a abrirlo. |
-| Un hook bloquea algo ("guardia coordinador") | Es intencional: secretos, escritura directa en ACC o configuración protegida | Haz tú la acción fuera del agente si corresponde. Para desarrollar el harness: `COORD_HARNESS_DEV=1 claude` (ver README). |
+| Un hook bloquea algo ("guardia desarrollo" o "guardia coordinador") | Es intencional: datos reales, respaldos, secretos o escritura en ACC | Haz tú la acción fuera del agente si corresponde. El agente de desarrollo trabaja con fixtures. |
 
 Si algo no calza, `npm run coordinator -- status` y la página **Ajustes** de la UI muestran el estado de sesión, el modo de datos y el nivel de autonomía.

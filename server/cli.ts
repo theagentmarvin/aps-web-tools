@@ -12,13 +12,10 @@
  *   passkey-enroll                one-time code to register the FIRST passkey (interactive TTY only)
  *   apply <batchId> [--no-dry-run]
  *   verify-approval <batchId> [--json]   read-only check used by the guard-apply hook
- *   setup [--check]               single human install step (TTY only, refused under Claude Code);
- *                                 --check is read-only and fails if the harness dev marker exists
  *
  * Data source: COORD_DATA_SOURCE=fixtures for offline mode.
  */
 import "./net/system-ca"; // first: trust the OS certificate store (corporate HTTPS inspection)
-import { userInfo } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,7 +24,6 @@ import { ApsAuth } from "./aps/auth";
 import { coordinatorAuthConfig } from "./secure/aps-paths";
 import { Coordinator } from "./coordinator";
 import { CoordinatorUi } from "./coordinator-ui";
-import { harnessBackupName, runSetup, setupCheck } from "./setup";
 import { CoordError } from "./util";
 import { FIXTURE_PROJECT_ID } from "./source/fixtures";
 
@@ -85,33 +81,6 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     } catch (e) {
       out(JSON.stringify({ valid: false, ok: false, reason: "error", message: (e as Error).message }));
       return 1;
-    }
-  }
-
-  if (cmd === "setup") {
-    const home = process.env.COORDINATOR_HOME;
-    // --check: non-interactive and read-only (allowed anywhere, including under Claude Code).
-    if (flag(rest, "--check")) return setupCheck(root, { out }, home);
-    const blocked = approvalChannelBlocked();
-    if (blocked) {
-      err(blocked.replace("La aprobación", "La instalación (setup)"));
-      return 2;
-    }
-    const rl = createInterface({ input: process.stdin, output: process.stderr });
-    let coordForSetup: Coordinator | undefined;
-    const setupCoord = () => (coordForSetup ??= new Coordinator({ root }));
-    try {
-      return await runSetup({
-        root,
-        ...(home ? { home } : {}),
-        io: { out, err, ask: (q) => rl.question(q) },
-        backupDir: setupCoord().store.path("backups", harnessBackupName(Date.now())),
-        audit: async (details) => {
-          await setupCoord().store.audit({ actor: { type: "user", id: `os:${userInfo().username}`, name: userInfo().username }, action: "harness.installed", details });
-        },
-      });
-    } finally {
-      rl.close();
     }
   }
 

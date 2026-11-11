@@ -1,6 +1,6 @@
 // Fake `claude` binary for the chat tests (selected with COORD_CLAUDE_BIN / resolveBin).
 // FAKE_CLAUDE_MODE: ok | notlogged | slow | mcpdown | manytools | resume_missing | preamble
-// FAKE_CLAUDE_AUTH=out → `auth status` reports logged out. FAKE_CLAUDE_LOG: JSONL of {args, prompt}.
+// FAKE_CLAUDE_AUTH=out → `auth status` reports logged out. FAKE_CLAUDE_LOG: JSONL of {args, prompt, cwd, env}.
 // FAKE_PROPOSAL_ID: id returned by the fake propose_group_action tool result.
 import { appendFileSync } from "node:fs";
 
@@ -25,7 +25,10 @@ let prompt = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (d) => (prompt += d));
 process.stdin.on("end", () => {
-  if (process.env.FAKE_CLAUDE_LOG) appendFileSync(process.env.FAKE_CLAUDE_LOG, JSON.stringify({ args, prompt }) + "\n");
+  if (process.env.FAKE_CLAUDE_LOG) {
+    const env = { COORD_APP_ROOT: process.env.COORD_APP_ROOT ?? null, COORD_AGENT_AUDIT_DIR: process.env.COORD_AGENT_AUDIT_DIR ?? null, CLAUDECODE: process.env.CLAUDECODE ?? null, CLAUDE_PROJECT_DIR: process.env.CLAUDE_PROJECT_DIR ?? null };
+    appendFileSync(process.env.FAKE_CLAUDE_LOG, JSON.stringify({ args, prompt, cwd: process.cwd(), env }) + "\n");
+  }
   const at = (f) => (args.includes(f) ? args[args.indexOf(f) + 1] : undefined);
   const session = at("--session-id") ?? at("--resume");
   const init = (status = "connected") => out({ type: "system", subtype: "init", session_id: session, mcp_servers: [{ name: "coord", status }], tools: [] });

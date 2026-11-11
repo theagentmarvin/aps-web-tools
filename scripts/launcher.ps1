@@ -1,7 +1,8 @@
 ﻿# Coordinador BIM - lanzador (lo llama "Coordinador BIM.cmd").
 #
 #  1. Verifica que Node.js (22 o superior) este instalado.
-#  2. Ejecuta "npm install" solo si falta node_modules o cambio package-lock.json (marca con hash).
+#  2. Si es un clon de git limpio y hay una versión nueva, pregunta si actualizar (git pull --ff-only).
+#     Ejecuta "npm install" solo si falta node_modules o cambio package-lock.json (marca con hash).
 #  3. Si el servidor ya responde en http://localhost:3000, solo abre el navegador.
 #  4. Si no, lo inicia (igual que "npm run dev", puerto 3000), espera a que responda y abre el navegador.
 #     El servidor vive mientras esta ventana este abierta: cerrarla lo detiene.
@@ -61,6 +62,29 @@ if (Test-Server) {
   Start-Sleep -Seconds 2
   exit 0
 }
+
+# 2a. Optional app update: only when this is a git clone with a clean working tree whose upstream has new
+#     commits; asks first and only fast-forwards (git pull --ff-only). Any error: skipped, the app starts as is.
+#     The in-app agent (agent-runtime/) ships with the app, so this also updates the agent.
+function Update-App {
+  if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return }
+  if (-not (Test-Path -LiteralPath (Join-Path $Root ".git"))) { return }
+  try {
+    $dirty = & git -C $Root status --porcelain 2>$null
+    if ($LASTEXITCODE -ne 0 -or $dirty) { return }
+    & git -C $Root fetch --quiet 2>$null
+    if ($LASTEXITCODE -ne 0) { return }
+    $behind = [int](& git -C $Root rev-list --count "HEAD..@{u}" 2>$null)
+    if ($LASTEXITCODE -ne 0 -or $behind -le 0) { return }
+    $a = Read-Host "Hay una versión nueva de la aplicación ($behind cambios). ¿Actualizar ahora? (S/N)"
+    if ($a -notmatch '^(s|si|sí|y|yes)$') { return }
+    & git -C $Root pull --ff-only --quiet
+    if ($LASTEXITCODE -eq 0) { Say "Aplicación actualizada." "Green" } else { Say "No se pudo actualizar (se sigue con la versión actual)." "Yellow" }
+  } catch {
+    return
+  }
+}
+Update-App
 
 # 2. Dependencies (only when node_modules is missing or package-lock.json changed)
 $lock = Join-Path $Root "package-lock.json"

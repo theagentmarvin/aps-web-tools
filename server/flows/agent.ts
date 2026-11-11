@@ -1,7 +1,7 @@
 /**
- * The `coordinador-flujos` agent: runs ONE skill procedure headless. Only the INSTALLED copy
- * (.claude/agents/coordinador-flujos.md) is used — there is no fallback to the staged copy or to a
- * more permissive agent: without it the flows answer "Actualiza el agente (banner) para usar flujos".
+ * The `coordinador-flujos` agent: runs ONE skill procedure headless, from the materialised in-app agent
+ * runtime (server/agent-runtime.ts; source agent-runtime/agents/coordinador-flujos.md, shipped with the app).
+ * There is no fallback to a more permissive agent: without it the flows are unavailable.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -10,13 +10,14 @@ import { loadAgentDef, type ChatAgentDef } from "../chat/agent";
 import { FLOW_FORBIDDEN } from "./catalog";
 
 export const FLOW_AGENT = "coordinador-flujos";
-export const FLOW_AGENT_MISSING = "Actualiza el agente (banner) para usar flujos: falta el agente de flujos instalado (.claude/agents/coordinador-flujos.md).";
+export const FLOW_AGENT_MISSING = "Los flujos no están disponibles: falta el agente de flujos de la aplicación (agent-runtime/agents/coordinador-flujos.md). Reinicia la app con «Coordinador BIM.cmd»; si persiste, avisa a quien mantiene la app.";
 
 /** Built-in tools a flow may have: delegate to subagents and read project notes / rules (never write). */
 export const FLOW_BUILTINS = ["Agent", "Read", "Grep", "Glob"];
 
-export function loadFlowAgent(root: string): ChatAgentDef | undefined {
-  return loadAgentDef(root, FLOW_AGENT, { installedOnly: true });
+/** Flow agent from a materialised runtime folder. */
+export function loadFlowAgent(runtimeDir: string | undefined): ChatAgentDef | undefined {
+  return loadAgentDef(runtimeDir, FLOW_AGENT);
 }
 
 /** Pre-approved tools of one flow: the catalog list ∩ the agent's own list, never a forbidden one. */
@@ -36,9 +37,9 @@ export function flowDisallowed(agent: Pick<ChatAgentDef, "disallowedTools">): st
   return [...new Set([...FLOW_FORBIDDEN, ...agent.disallowedTools])];
 }
 
-/** SKILL.md body (front matter dropped): installed copy first, else the staged one. */
-export function skillBody(root: string, skill: string): { body: string; agent?: string } | undefined {
-  for (const p of [join(root, ".claude", "skills", skill, "SKILL.md"), join(root, "harness-staging", ".claude", "skills", skill, "SKILL.md")]) {
+/** SKILL.md body (front matter dropped) from a materialised runtime folder. */
+export function skillBody(runtimeDir: string, skill: string): { body: string; agent?: string } | undefined {
+  for (const p of [join(runtimeDir, ".claude", "skills", skill, "SKILL.md")]) {
     if (!existsSync(p)) continue;
     const text = readFileSync(p, "utf8");
     const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(text);

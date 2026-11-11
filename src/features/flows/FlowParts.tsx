@@ -11,7 +11,7 @@ import type { FlowDef, FlowId, FlowRunView, NextStep } from "~/lib/api/types";
 import { Modal } from "~/lib/components/Modal";
 import { useToast } from "~/lib/components/Toast";
 import { Button } from "~/lib/components/ui";
-import { flowsChanged, openFlows, openHarnessDialog, runHref, stepHref } from "./links";
+import { flowsChanged, openFlows, runHref, stepHref } from "./links";
 
 const TERMINAL = new Set(["finished", "failed", "cancelled"]);
 export const isTerminal = (r: Pick<FlowRunView, "state">) => TERMINAL.has(r.state);
@@ -263,7 +263,6 @@ export function NextStepRow({ step, flowsAvailable = true, busy = false, compact
   const disabled = isFlow && (!flowsAvailable || busy);
   function open() {
     if (a.type !== "open") return;
-    if (a.route === "harness") return openHarnessDialog();
     const href = stepHref(a);
     if (href) navigate(href);
   }
