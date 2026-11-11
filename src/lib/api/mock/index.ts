@@ -18,6 +18,7 @@ import { applyM2, type M2Data } from "./m2";
 import { buildIssueChecks } from "./m3";
 import { AGENDA_CAP, buildAgenda } from "./m4";
 import { MockChat } from "./chat";
+import { MockFlows } from "./flows";
 import { PROBLEM_TYPES } from "~/lib/problem-types";
 import { MOCK_REPORT_FILES, mockFeedback, mockHygiene, mockReport, resizeFamily } from "./parity";
 
@@ -810,8 +811,36 @@ export class MockCoordinatorApi implements CoordinatorApi {
     return m;
   }
 
+  // ── WS-N: "Qué sigue" and flows (mock) ──
+  private mockFlows = new MockFlows();
+  async getNextSteps(p: { projectId?: string; testKey?: string }): Promise<T.NextStepsPayload> {
+    await delay(80);
+    return this.mockFlows.nextSteps(p);
+  }
+  async listFlowRuns(projectId?: string): Promise<T.FlowRunsPayload> {
+    await delay(60);
+    return this.mockFlows.list(projectId);
+  }
+  async getFlowRun(runId: string): Promise<T.FlowRunView> {
+    await delay(40);
+    return this.mockFlows.get(runId);
+  }
+  async runFlow(flowId: T.FlowId, req: T.FlowRunRequest): Promise<T.FlowRunView> {
+    await delay(150);
+    const run = this.mockFlows.start(flowId, req);
+    this.log({ actor: { type: "user", id: ME.id, name: "Coordinador" }, action: "flow.started", projectId: req.projectId, targetIds: [run.runId], details: { flow: flowId, startedBy: "human" } });
+    return run;
+  }
+  async cancelFlowRun(runId: string): Promise<{ cancelled: boolean }> {
+    await delay(60);
+    return this.mockFlows.cancel(runId);
+  }
+  async watchFlowRun(runId: string, onEvent: (e: T.FlowEvent) => void, signal?: AbortSignal): Promise<void> {
+    await this.mockFlows.watch(runId, onEvent, signal);
+  }
+
   // ── Agent chat (mock streaming agent) ──
-  private mockChat = new MockChat();
+  private mockChat = new MockChat(this.mockFlows);
   async chat(req: T.ChatRequest, onEvent: (e: T.ChatEvent) => void, signal?: AbortSignal): Promise<void> {
     await this.mockChat.run(req, onEvent, signal);
   }

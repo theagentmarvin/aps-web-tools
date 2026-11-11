@@ -44,10 +44,15 @@ export function parseAgentFile(text: string, source: ChatAgentDef["source"]): Ch
 }
 
 export function loadChatAgent(root: string): ChatAgentDef | undefined {
-  const installed = join(root, ".claude", "agents", `${CHAT_AGENT}.md`);
-  const staged = join(root, "harness-staging", ".claude", "agents", `${CHAT_AGENT}.md`);
+  return loadAgentDef(root, CHAT_AGENT);
+}
+
+/** Installed copy first, else (unless installedOnly) the staged copy. */
+export function loadAgentDef(root: string, name: string, opts: { installedOnly?: boolean } = {}): ChatAgentDef | undefined {
+  const installed = join(root, ".claude", "agents", `${name}.md`);
+  const staged = join(root, "harness-staging", ".claude", "agents", `${name}.md`);
   if (existsSync(installed)) return parseAgentFile(readFileSync(installed, "utf8"), "installed");
-  if (existsSync(staged)) return parseAgentFile(readFileSync(staged, "utf8"), "staged");
+  if (!opts.installedOnly && existsSync(staged)) return parseAgentFile(readFileSync(staged, "utf8"), "staged");
   return undefined;
 }
 

@@ -1595,7 +1595,8 @@
       "explain": "Explícame este grupo",
       "solution": "¿Qué solución recomiendas?",
       "issueExplain": "Explícame esta incidencia",
-      "first": "¿Qué debería revisar primero?"
+      "first": "¿Qué debería revisar primero?",
+      "nextSteps": "¿Qué sigue en este ciclo?"
     },
     "kind": {
       "decision": "Decisión",
@@ -1859,5 +1860,66 @@
       "instances_one": "{count} ubicación",
       "instances_other": "{count} ubicaciones"
     }
+  },
+  "nextSteps": {
+    "title": "Qué sigue",
+    "subtitle": "La app calcula el siguiente paso del ciclo con su estado (sin IA). El agente hace el trabajo; tú decides.",
+    "empty": "Nada pendiente por ahora.",
+    "loading": "Calculando qué sigue…",
+    "run": "Ejecutar",
+    "open": "Abrir",
+    "agentWork": "Trabajo del agente",
+    "humanStep": "Tu decisión",
+    "running": "En curso: {label}",
+    "viewFlows": "Ver flujos",
+    "unavailable": "Actualiza el agente (aviso superior) para ejecutar flujos.",
+    "busy": "Ya hay un flujo en curso en este proyecto.",
+    "compactTitle": "Qué sigue en este proyecto",
+    "noProject": "Abre un proyecto para ver qué sigue."
+  },
+  "flows": {
+    "title": "Flujos",
+    "navButton": "Flujos",
+    "navRunning": "Flujo en curso",
+    "close": "Cerrar",
+    "runningTitle": "En curso",
+    "history": "Historial",
+    "noRuns": "Aún no hay flujos en este proyecto.",
+    "cancel": "Cancelar",
+    "cancelConfirm": "¿Cancelar el flujo? Lo ya creado se conserva.",
+    "cancelled": "Flujo cancelado.",
+    "state": {
+      "queued": "En cola",
+      "running": "En curso",
+      "finished": "Terminado",
+      "failed": "Falló",
+      "cancelled": "Cancelado"
+    },
+    "startedBy": {
+      "human": "Iniciado por ti",
+      "agent": "Iniciado desde el chat"
+    },
+    "outcome": "Propuestas: {proposals} · Preguntas: {questions} · Incidencias: {drafts} · Informes: {reports}",
+    "cost": "USD {usd} de {cap}",
+    "confirmTitle": "Ejecutar «{label}»",
+    "confirmWhat": "Qué hará",
+    "confirmProduces": "Qué deja",
+    "confirmScope": "Alcance",
+    "confirmScopeProject": "Proyecto {project}",
+    "confirmScopeTest": "versión {testKey}",
+    "confirmWhy": "Por qué ahora",
+    "confirmCap": "Tope de costo USD {cap} · máximo {min} min · un flujo por proyecto",
+    "confirmSafe": "No aplica, no aprueba ni publica nada: todo queda como propuestas, preguntas, borradores o informes para tu decisión.",
+    "confirmRun": "Ejecutar",
+    "started": "Flujo iniciado: {label}",
+    "openResults": "Revisar resultados",
+    "reports": "Informes: {names}",
+    "log": "Avance",
+    "summary": "Resumen del agente",
+    "empty": "Sin avance todavía…",
+    "catalog": "Flujos disponibles",
+    "agentCap": "Iniciados por el chat hoy: {used} de {cap}",
+    "chatCard": "Flujo",
+    "chatSee": "Ver en Flujos"
   }
 }

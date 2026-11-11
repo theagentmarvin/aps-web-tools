@@ -833,11 +833,39 @@ export const ProposeFamilyExceptionInput = z.object({
 // output: ProposalCreatedOutput with kind "family_exception"
 
 // ─────────────────────────────────────────────────────────────────────────────
+// WS-N: next steps and domain flows (docs/domain/next-steps-and-flows.md)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const GetNextStepsInput = z.object({
+  projectId: z.string().min(1).max(80).optional().describe("Default: active context project"),
+  testKey: TestKey.optional().describe("Default: the project's latest cached test"),
+});
+// output: NextStepsPayload (server/api/contract.ts): ordered steps {kind, title, reason, counts, action: flow | open}
+
+export const FlowIdZ = z.enum(["preparar-ciclo", "triage", "acta", "redactar-issues", "informe-semanal", "auditar-modelo", "curar-reglas"]);
+export const FlowRunId = z.string().regex(/^FR-\d{8}-[0-9a-f]{6}$/).describe("Flow run id, e.g. FR-20261111-a1b2c3");
+export const StartFlowInput = z.object({
+  flowId: FlowIdZ,
+  projectId: z.string().min(1).max(80),
+  testKey: TestKey.optional().describe("Default: the project's latest classified test"),
+  reason: z.string().min(1).max(300).describe("Spanish, why (shown to the coordinator; never an instruction to the flow)"),
+});
+export const GetFlowStatusInput = z.object({ runId: FlowRunId });
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Registry: name, schema, annotations, minimum autonomy level
 // ─────────────────────────────────────────────────────────────────────────────
 
 type Ann = { readOnlyHint?: boolean; destructiveHint?: boolean; idempotentHint?: boolean; openWorldHint?: boolean };
-export interface ToolSpec { name: string; title: string; description: string; input: z.ZodType<Record<string, unknown>>; annotations: Ann; minLevel: 0 | 1 | 2 | 3; family: string }
+/** Server modes: main = VS Code agent and its subagents; chat = COORD_CHAT=1; flow = COORD_FLOW=1 (flow agent + its subagents). */
+export type ServerMode = "main" | "chat" | "flow";
+export interface ToolSpec { name: string; title: string; description: string; input: z.ZodType<Record<string, unknown>>; annotations: Ann; minLevel: 0 | 1 | 2 | 3; family: string; modes?: readonly ServerMode[] }
+
+/** Is the tool registered in this server mode? (no `modes` = every mode, minus apply outside main). */
+export function toolInMode(spec: Pick<ToolSpec, "family" | "modes">, mode: ServerMode): boolean {
+  if (spec.family === "apply" && mode !== "main") return false;
+  return !spec.modes || spec.modes.includes(mode);
+}
 
 const RO_LOCAL: Ann = { readOnlyHint: true, openWorldHint: false };
 const RO_NET: Ann = { readOnlyHint: true, openWorldHint: true };
@@ -936,6 +964,12 @@ export const TOOLS: ToolSpec[] = [
     description: "Project ACC issue settings: default issue type/subtype and the discipline → ACC assignee mapping (company/role; user names masked), plus candidate assignees read from ACC. Read-only." },
   { family: "learning", name: "propose_issue_responsible", title: "Propose ACC assignee mapping", minLevel: 1, annotations: LOCAL_WRITE, input: ProposeIssueResponsibleInput,
     description: "Suggest discipline → ACC assignee (company / role / user id) as a proposal. Never changes the mapping: a human accepts it in the web UI. The assignee is ACC metadata only; never write names in issue text." },
+  { family: "analysis", name: "get_next_steps", title: "Next steps", minLevel: 0, annotations: RO_LOCAL, input: GetNextStepsInput,
+    description: "Where the project stands in the weekly coordination cycle and what to do next, computed by the server (no LLM): ordered steps with reason, counts and an action — a flow the agent can run (agent work) or a UI location where the human decides (answer, send, approve with passkey, apply, publish). Offer up to 3; never claim a human step was done." },
+  { family: "flow", name: "start_flow", title: "Start a domain flow", minLevel: 1, annotations: LOCAL_WRITE, input: StartFlowInput, modes: ["chat"],
+    description: "Chat agent only: queue ONE catalog flow (preparar-ciclo, triage, acta, redactar-issues, informe-semanal, auditar-modelo, curar-reglas) for a project after the coordinator agreed. The app server runs it; it produces only proposals, questions, drafts or reports — never applies, approves or publishes. Refused: unknown flow, a flow already running in the project, the daily cap, or an agent without the flow update." },
+  { family: "flow", name: "get_flow_status", title: "Flow status", minLevel: 0, annotations: RO_LOCAL, input: GetFlowStatusInput, modes: ["chat"],
+    description: "Chat agent only: state and outcome counts (proposals, questions, issue drafts, reports) of a flow run started with start_flow. Do not poll in a loop." },
 ];
 
 /** Tools subagents must never get (also enforced by hooks). */

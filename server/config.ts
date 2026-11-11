@@ -83,6 +83,12 @@ export const ConfigSchema = z.object({
       maxResponseTokens: z.number().int().min(500).max(20000).default(6000),
     })
     .prefault({}),
+  /** Domain flows (server/flows): runs the chat agent may start per day (humans are not capped). */
+  flows: z
+    .object({
+      dailyAgentCap: z.number().int().min(0).max(100).default(10),
+    })
+    .prefault({}),
   policies: z
     .object({
       lowRiskRuleAllowlist: z.array(z.string()).default([]),

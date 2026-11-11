@@ -1278,6 +1278,10 @@ export type ChatEvent =
   | { type: "proposal"; id: string; kind: string; summary: string; card?: ChatCard }
   /** A question the agent asked (ask_coordinator). */
   | { type: "question"; id: string; question: string; card?: ChatCard }
+  /** A flow the agent started (start_flow), read back from the flow store. */
+  | { type: "flow"; run: FlowRunView }
+  /** Suggested next steps (get_next_steps), computed by the server, never from the model's text. */
+  | { type: "next_steps"; steps: NextStep[] }
   | { type: "done"; messageId: string; costUsd?: number; durationMs: number; stoppedBy?: "timeout" | "tool_cap" | "proposal_cap" | "budget" }
   | { type: "error"; code: "claude_not_found" | "not_logged_in" | "busy" | "cancelled" | "timeout" | "mcp_unavailable" | "rate_limited" | "failed"; message: string };
 /** GET /chat/status: pre-flight (cached 5 min). Never contains the account email. */
@@ -1302,6 +1306,11 @@ export interface ChatHistoryMessage {
   questionIds?: string[];
   /** Cards of proposalIds / questionIds, resolved from the store when the history is read (G12). */
   cards?: ChatCard[];
+  /** Flow runs the agent started in this turn (start_flow); resolved from the flow store on read. */
+  flowRunIds?: string[];
+  flows?: FlowRunView[];
+  /** Next steps the server computed when the agent asked (get_next_steps). */
+  nextSteps?: NextStep[];
   costUsd?: number;
   durationMs?: number;
   error?: { code: string; message: string };
@@ -1604,6 +1613,169 @@ export interface Endpoints {
   "GET /api/coord/reports/files?projectId": { req: void; res: ReportFile[] };
   "GET /api/coord/reports/files/:name?projectId": { req: void; res: ReportFileContent };
   "GET /api/coord/learning/feedback?projectId&source&limit&cursor": { req: void; res: Page<FeedbackRow> };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WS-N: next steps ("Qué sigue") and domain flows (docs/domain/next-steps-and-flows.md)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Domain flows (server/flows/catalog.ts), each mapped to an existing skill procedure. */
+export type FlowId = "preparar-ciclo" | "triage" | "acta" | "redactar-issues" | "informe-semanal" | "auditar-modelo" | "curar-reglas";
+
+export type NextStepKind =
+  | "harness_update"
+  | "new_version"
+  | "not_classified"
+  | "batch_approved"
+  | "batch_stale"
+  | "batch_ready"
+  | "open_questions"
+  | "decisions_to_send"
+  | "meeting_notes"
+  | "ai_review"
+  | "issue_drafts"
+  | "issue_checks"
+  | "hygiene_unassigned"
+  | "hygiene_duplicates"
+  | "rule_suggestions"
+  | "rule_insights"
+  | "weekly_report";
+
+/** UI locations a human step opens (the client builds the URL). */
+export type NextStepRoute = "triage" | "batch" | "approvals" | "rules" | "disciplines" | "hygiene" | "harness" | "reports";
+
+export type NextStepAction =
+  | { type: "flow"; flow: FlowId; args: { projectId: string; testKey?: string } }
+  | { type: "open"; route: NextStepRoute; params: Record<string, string> };
+
+/** One suggestion, built ONLY from server state (no LLM). */
+export interface NextStep {
+  /** Stable per kind + target (e.g. "batch_ready:L-2026-11-05-01"). */
+  id: string;
+  kind: NextStepKind;
+  /** Lower = more urgent. */
+  priority: number;
+  /** Spanish, short. */
+  title: string;
+  /** Spanish: why the app suggests it now (with the numbers). */
+  reason: string;
+  counts: Record<string, number>;
+  action: NextStepAction;
+}
+
+/** GET /next-steps?projectId&testKey */
+export interface NextStepsPayload {
+  projectId?: string;
+  modelSetId?: string;
+  testKey?: string;
+  version?: number;
+  computedAt: string;
+  steps: NextStep[];
+  /** The installed harness has the flow agent (else flows answer "Actualiza el agente"). */
+  flowsAvailable: boolean;
+  /** A flow already running / queued for this project. */
+  runningFlow?: FlowRunView;
+}
+
+export interface FlowDef {
+  id: FlowId;
+  /** Spanish label and one-line description (what it will do). */
+  label: string;
+  description: string;
+  /** Skill whose procedure the flow agent follows. */
+  skill: string;
+  requires: Array<"projectId" | "testKey">;
+  costCapUsd: number;
+  timeoutMs: number;
+  /** coord MCP tools the flow (and its subagents) may use; never apply/approve/publish. */
+  tools: string[];
+  /** Subagents it may delegate to (Agent tool). */
+  subagents: string[];
+  /** What it produces (Spanish, for the confirm dialog). */
+  produces: string;
+}
+
+export type FlowRunState = "queued" | "running" | "finished" | "failed" | "cancelled";
+export type FlowStarter = "human" | "agent:chat";
+
+export interface FlowLogLine {
+  at: string;
+  kind: "status" | "tool" | "text" | "created" | "error";
+  /** Spanish, sanitized (never raw model preambles; tool names only). */
+  text: string;
+}
+
+export interface FlowOutcome {
+  proposals: number;
+  questions: number;
+  issueDrafts: number;
+  ruleChanges: number;
+  /** Report file names written by generate_report (reports/<projectId>/…). */
+  reports: string[];
+}
+
+/** One run (persisted in <data home>/flows/<runId>.json). No personal data. */
+export interface FlowRunView {
+  runId: string;
+  flowId: FlowId;
+  label: string;
+  projectId: string;
+  modelSetId?: string;
+  testKey?: string;
+  state: FlowRunState;
+  startedBy: FlowStarter;
+  /** Why it was started (chat: the agent's reason; human: the next-step reason). Sanitized. */
+  reason?: string;
+  createdAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+  costUsd?: number;
+  costCapUsd: number;
+  stoppedBy?: "timeout" | "tool_cap" | "proposal_cap" | "budget";
+  error?: { code: string; message: string };
+  outcome: FlowOutcome;
+  proposalIds: string[];
+  questionIds: string[];
+  /** The agent's final summary (Spanish, sanitized). */
+  summary?: string;
+  /** Progress log (last 200 lines). */
+  log: FlowLogLine[];
+}
+
+/** GET /flows/runs?projectId */
+export interface FlowRunsPayload {
+  catalog: FlowDef[];
+  /** Installed harness has the flow agent. */
+  available: boolean;
+  unavailableReason?: string;
+  /** Agent-started runs today / cap per day. */
+  agentRunsToday: number;
+  dailyAgentCap: number;
+  runs: FlowRunView[];
+}
+
+/** POST /flows/:flowId/run */
+export interface FlowRunRequest {
+  projectId: string;
+  testKey?: string;
+  reason?: string;
+}
+
+/** SSE events of GET /flows/runs/:id/events. */
+export type FlowEvent =
+  | { type: "status"; state: FlowRunState; detail?: string }
+  | { type: "log"; line: FlowLogLine }
+  | { type: "created"; id: string; kind: "proposal" | "question" | "report" }
+  | { type: "done"; run: FlowRunView }
+  | { type: "error"; code: string; message: string; run?: FlowRunView };
+
+export interface Endpoints {
+  "GET /api/coord/next-steps?projectId&testKey": { req: void; res: NextStepsPayload };
+  "GET /api/coord/flows/runs?projectId": { req: void; res: FlowRunsPayload };
+  "GET /api/coord/flows/runs/:id": { req: void; res: FlowRunView };
+  "GET /api/coord/flows/runs/:id/events": { req: void; res: FlowEvent };
+  "POST /api/coord/flows/:flowId/run": { req: FlowRunRequest; res: FlowRunView };
+  "POST /api/coord/flows/runs/:id/cancel": { req: void; res: { cancelled: boolean } };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

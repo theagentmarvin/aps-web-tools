@@ -120,6 +120,8 @@ export interface CallerContext {
 export const AGENT_ACTOR: Actor = { type: "agent", id: "claude-code", name: "Agente (Claude Code)" };
 /** The chat panel's agent (MCP server started with COORD_CHAT=1): proposals are tagged createdBy agent-chat. */
 export const CHAT_AGENT_ACTOR: Actor = { type: "agent", id: "agent-chat", name: "Agente chat (Claude Code)" };
+/** The flow agent (MCP server started with COORD_FLOW=1 by server/flows): proposals are tagged agent-flow. */
+export const FLOW_AGENT_ACTOR: Actor = { type: "agent", id: "agent-flow", name: "Agente flujos (Claude Code)" };
 export const ENGINE_ACTOR: Actor = { type: "engine", id: "engine", name: "Motor determinístico" };
 
 export interface Table {

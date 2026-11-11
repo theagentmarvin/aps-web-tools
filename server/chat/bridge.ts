@@ -29,6 +29,7 @@ const CREATING = new Set(["propose_family_decision", "propose_classification", "
 export const CHAT_READ_TOOLS = [
   "get_selection_context", "get_group", "get_family", "list_groups", "list_families", "list_clashes", "get_element_properties", "summarize_clashes", "list_proposals", "list_questions", "list_issue_checks",
   "get_session_status", "list_meeting_notes", "diff_test_versions", "list_disciplines", "get_model_hygiene_stats", "list_batches", "get_batch", "list_decisions", "get_agenda", "list_reminders", "get_issue_settings", "get_rule_insights",
+  "get_next_steps", "get_flow_status",
 ].map((t) => `mcp__coord__${t}`);
 
 export interface ResolvedBin {
@@ -74,21 +75,39 @@ export function childEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessE
   return env;
 }
 
-/** Inline MCP config: only the coord server, the same data source and home as this server, COORD_CHAT=1. */
-export function mcpConfigJson(opts: { root: string; dataSource: "live" | "fixtures"; homeOverride?: string }): string {
-  const env: Record<string, string> = { COORD_CHAT: "1" };
+/**
+ * Inline MCP config: only the coord server, the same data source and home as this server.
+ * mode "chat" → COORD_CHAT=1 (no apply; start_flow available); "flow" → COORD_FLOW=1 (no apply, no flow tools).
+ */
+export function mcpConfigJson(opts: { root: string; dataSource: "live" | "fixtures"; homeOverride?: string; mode?: "chat" | "flow" }): string {
+  const env: Record<string, string> = opts.mode === "flow" ? { COORD_FLOW: "1" } : { COORD_CHAT: "1" };
   if (opts.homeOverride) env.COORDINATOR_HOME = opts.homeOverride;
   if (opts.dataSource === "fixtures") env.COORD_DATA_SOURCE = "fixtures";
   return JSON.stringify({ mcpServers: { coord: { command: process.execPath, args: ["--import", "tsx", join(opts.root, "server", "mcp", "index.ts")], env } } });
 }
 
-/** Spawn args (§1). The installed agent is used by name; the staged one is passed inline with --agents. */
-export function claudeArgs(opts: { agent: ChatAgentDef; mcpConfig: string; sessionId: string; resume: boolean; budgetUsd?: number; model?: string }): string[] {
+/**
+ * Headless spawn args shared by the chat and the flows (§1): stream-json, strict MCP config, an explicit
+ * built-in tool set (`--tools`), pre-approved tools, denied tools, dontAsk, no prompts, a USD cap.
+ * The installed agent is used by name; a staged one is passed inline with --agents.
+ */
+export function headlessArgs(opts: {
+  agentName: string;
+  agent: ChatAgentDef;
+  mcpConfig: string;
+  sessionId: string;
+  resume: boolean;
+  builtinTools: string[];
+  allowedTools: string[];
+  disallowedTools: string[];
+  budgetUsd: number;
+  model?: string;
+}): string[] {
   return [
     "-p",
     ...(opts.agent.source === "staged" ? ["--agents", inlineAgentsJson(opts.agent)] : []),
     "--agent",
-    CHAT_AGENT,
+    opts.agentName,
     "--output-format",
     "stream-json",
     "--verbose",
@@ -98,19 +117,35 @@ export function claudeArgs(opts: { agent: ChatAgentDef; mcpConfig: string; sessi
     "--mcp-config",
     opts.mcpConfig,
     "--tools",
-    "",
+    opts.builtinTools.join(","),
     "--allowedTools",
-    chatAllowedTools(opts.agent).join(","),
+    opts.allowedTools.join(","),
     "--disallowedTools",
-    [...new Set([...CHAT_DISALLOWED, ...opts.agent.disallowedTools])].join(","),
+    [...new Set(opts.disallowedTools)].join(","),
     "--permission-mode",
     "dontAsk",
     "--permission-prompts",
     "none",
     "--max-budget-usd",
-    String(opts.budgetUsd ?? CHAT_BUDGET_USD),
+    String(opts.budgetUsd),
     ...(opts.model ? ["--model", opts.model] : []),
   ];
+}
+
+/** Spawn args of the chat (§1): no built-in tools at all. */
+export function claudeArgs(opts: { agent: ChatAgentDef; mcpConfig: string; sessionId: string; resume: boolean; budgetUsd?: number; model?: string }): string[] {
+  return headlessArgs({
+    agentName: CHAT_AGENT,
+    agent: opts.agent,
+    mcpConfig: opts.mcpConfig,
+    sessionId: opts.sessionId,
+    resume: opts.resume,
+    builtinTools: [],
+    allowedTools: chatAllowedTools(opts.agent),
+    disallowedTools: [...CHAT_DISALLOWED, ...opts.agent.disallowedTools],
+    budgetUsd: opts.budgetUsd ?? CHAT_BUDGET_USD,
+    ...(opts.model ? { model: opts.model } : {}),
+  });
 }
 
 export interface AuthStatus {
@@ -204,7 +239,14 @@ export function runClaude(opts: {
   onChild?: (c: ChildProcess, stop: () => void) => void;
   /** A proposal / question id extracted from a tool result (deterministic, never from model text). */
   onCreated?: (c: { id: string; tool: string }) => void;
+  /** Every successful tool result (tool name without prefix + raw text), e.g. start_flow → runId. */
+  onToolResult?: (tool: string, text: string) => void;
+  /** Caps (defaults: the chat's). */
+  toolCap?: number;
+  proposalCap?: number;
 }): Promise<RunResult> {
+  const toolCap = opts.toolCap ?? CHAT_TOOL_CAP;
+  const proposalCap = opts.proposalCap ?? CHAT_PROPOSAL_CAP;
   return new Promise((done, fail) => {
     let child: ChildProcess;
     try {
@@ -286,7 +328,7 @@ export function runClaude(opts: {
             toolCalls++;
             const target = JSON.stringify(b.input ?? {}).match(/"((?:F|G)-[0-9A-Za-z]{6,16}|P-\d{8}-\d{4})"/)?.[1];
             opts.onEvent({ type: "tool", name: b.name.replace(/^mcp__coord__/, ""), ...(target ? { target } : {}) });
-            if (toolCalls > CHAT_TOOL_CAP) stop("tool_cap");
+            if (toolCalls > toolCap) stop("tool_cap");
           }
           break;
         }
@@ -294,12 +336,20 @@ export function runClaude(opts: {
           for (const b of ev.message?.content ?? []) {
             if (b?.type !== "tool_result" || b.is_error) continue;
             const tool = tools.get(String(b.tool_use_id));
-            const id = tool ? createdId(tool, resultText(b.content)) : undefined;
+            const text = resultText(b.content);
+            if (tool) {
+              try {
+                opts.onToolResult?.(tool.replace(/^mcp__coord__/, ""), text);
+              } catch {
+                // a listener error must not stop the run
+              }
+            }
+            const id = tool ? createdId(tool, text) : undefined;
             if (id && !res.created.some((c) => c.id === id)) {
               const c = { id, tool: tool!.replace(/^mcp__coord__/, "") };
               res.created.push(c);
               opts.onCreated?.(c);
-              if (res.created.length >= CHAT_PROPOSAL_CAP) stop("proposal_cap");
+              if (res.created.length >= proposalCap) stop("proposal_cap");
             }
           }
           break;

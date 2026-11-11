@@ -65,7 +65,7 @@
  *   GET    /api/coord/audit?project=&user=&action=&from=&to=&batch=&limit=&cursor= → Page<AuditEvent>
  */
 import { ApiError, type CoordinatorApi } from "./coordinator-api";
-import { proposalFromCard, SseParser, toChatEvent } from "./sse";
+import { proposalFromCard, SseParser, toChatEvent, toFlowEvent } from "./sse";
 import { CHAT_ERROR_CODES } from "./types";
 import type * as T from "./types";
 
@@ -300,7 +300,7 @@ export class HttpCoordinatorApi implements CoordinatorApi {
   }
   async getChat(testId: string, chatId?: string): Promise<T.ChatHistory> {
     // GET /chat/history?testKey (the only history route; the earlier GET /chat/:chatId draft never shipped).
-    type Wire = { sessionId?: string; chatId?: string; testKey?: string; messages: Array<{ role: string; text: string; at: string; proposalIds?: string[]; questionIds?: string[]; cards?: T.ChatCard[]; costUsd?: number; cost?: number; durationMs?: number }> };
+    type Wire = { sessionId?: string; chatId?: string; testKey?: string; messages: Array<{ role: string; text: string; at: string; proposalIds?: string[]; questionIds?: string[]; cards?: T.ChatCard[]; flows?: T.FlowRunView[]; nextSteps?: T.NextStep[]; costUsd?: number; cost?: number; durationMs?: number }> };
     const s = await this.get<Wire>(`/chat/history?testKey=${enc(testId)}`);
     return {
       chatId: s.sessionId ?? s.chatId ?? chatId ?? "",
@@ -311,6 +311,9 @@ export class HttpCoordinatorApi implements CoordinatorApi {
         at: m.at,
         cost: m.costUsd ?? m.cost,
         durationMs: m.durationMs,
+        // WS-N: flow cards and next steps, resolved by the server from its stores.
+        ...(m.flows?.length ? { flows: m.flows } : {}),
+        ...(m.nextSteps?.length ? { nextSteps: m.nextSteps } : {}),
         // Cards come from server ids only (never from the history text).
         // G12: the server resolves each id to a card (action, validity, target); ids without one stay bare.
         proposals: [
@@ -509,6 +512,38 @@ export class HttpCoordinatorApi implements CoordinatorApi {
   }
   createRuleSuggestion(r: { change: T.RuleChangeRequest; rationale: string; title?: string; testKey?: string }) {
     return this.req<T.RuleSuggestion>("POST", "/rule-suggestions", r);
+  }
+
+  // ── WS-N: "Qué sigue" and domain flows ──
+  getNextSteps(p: { projectId?: string; testKey?: string }) { return this.get<T.NextStepsPayload>("/next-steps", p); }
+  listFlowRuns(projectId?: string) { return this.get<T.FlowRunsPayload>("/flows/runs", projectId ? { projectId } : undefined); }
+  getFlowRun(runId: string) { return this.get<T.FlowRunView>(`/flows/runs/${enc(runId)}`); }
+  runFlow(flowId: T.FlowId, r: T.FlowRunRequest) { return this.req<T.FlowRunView>("POST", `/flows/${enc(flowId)}/run`, r); }
+  cancelFlowRun(runId: string) { return this.req<{ cancelled: boolean }>("POST", `/flows/runs/${enc(runId)}/cancel`); }
+  async watchFlowRun(runId: string, onEvent: (e: T.FlowEvent) => void, signal?: AbortSignal): Promise<void> {
+    let res: Response;
+    try {
+      res = await fetch(`${BASE}/flows/runs/${enc(runId)}/events`, { headers: { Accept: "text/event-stream" }, credentials: "same-origin", signal });
+    } catch (err) {
+      if ((err as Error).name === "AbortError") return;
+      throw new ApiError(String(err), 0, "network");
+    }
+    if (!res.ok || !res.body) throw new ApiError(`${res.status} ${res.statusText}`, res.status, res.status === 404 ? "not_found" : "server");
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    const parser = new SseParser();
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        for (const m of parser.push(decoder.decode(value, { stream: true }))) {
+          const e = toFlowEvent(m);
+          if (e) onEvent(e);
+        }
+      }
+    } catch (err) {
+      if ((err as Error).name !== "AbortError") throw err;
+    }
   }
 
   // ── Datos y respaldos (human-only: CSRF on every call; restore also needs the passkey) ──

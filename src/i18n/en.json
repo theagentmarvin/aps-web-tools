@@ -1595,7 +1595,8 @@
       "explain": "Explain this group to me",
       "solution": "What solution do you recommend?",
       "issueExplain": "Explain this issue to me",
-      "first": "What should I review first?"
+      "first": "What should I review first?",
+      "nextSteps": "What is next in this cycle?"
     },
     "kind": {
       "decision": "Decision",
@@ -1859,5 +1860,66 @@
       "instances_one": "{count} location",
       "instances_other": "{count} locations"
     }
+  },
+  "nextSteps": {
+    "title": "What's next",
+    "subtitle": "The app computes the next step of the cycle from its state (no AI). The agent does the work; you decide.",
+    "empty": "Nothing pending for now.",
+    "loading": "Working out what's next…",
+    "run": "Run",
+    "open": "Open",
+    "agentWork": "Agent work",
+    "humanStep": "Your decision",
+    "running": "Running: {label}",
+    "viewFlows": "View flows",
+    "unavailable": "Update the agent (top banner) to run flows.",
+    "busy": "A flow is already running in this project.",
+    "compactTitle": "What's next in this project",
+    "noProject": "Open a project to see what's next."
+  },
+  "flows": {
+    "title": "Flows",
+    "navButton": "Flows",
+    "navRunning": "Flow running",
+    "close": "Close",
+    "runningTitle": "Running",
+    "history": "History",
+    "noRuns": "No flows in this project yet.",
+    "cancel": "Cancel",
+    "cancelConfirm": "Cancel the flow? What it already created is kept.",
+    "cancelled": "Flow cancelled.",
+    "state": {
+      "queued": "Queued",
+      "running": "Running",
+      "finished": "Finished",
+      "failed": "Failed",
+      "cancelled": "Cancelled"
+    },
+    "startedBy": {
+      "human": "Started by you",
+      "agent": "Started from the chat"
+    },
+    "outcome": "Proposals: {proposals} · Questions: {questions} · Issues: {drafts} · Reports: {reports}",
+    "cost": "USD {usd} of {cap}",
+    "confirmTitle": "Run “{label}”",
+    "confirmWhat": "What it will do",
+    "confirmProduces": "What it leaves",
+    "confirmScope": "Scope",
+    "confirmScopeProject": "Project {project}",
+    "confirmScopeTest": "version {testKey}",
+    "confirmWhy": "Why now",
+    "confirmCap": "Cost cap USD {cap} · at most {min} min · one flow per project",
+    "confirmSafe": "It never applies, approves or publishes anything: everything stays as proposals, questions, drafts or reports for your decision.",
+    "confirmRun": "Run",
+    "started": "Flow started: {label}",
+    "openResults": "Review results",
+    "reports": "Reports: {names}",
+    "log": "Progress",
+    "summary": "Agent summary",
+    "empty": "No progress yet…",
+    "catalog": "Available flows",
+    "agentCap": "Started from the chat today: {used} of {cap}",
+    "chatCard": "Flow",
+    "chatSee": "View in Flows"
   }
 }

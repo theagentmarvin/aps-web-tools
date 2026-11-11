@@ -2707,6 +2707,30 @@ export class CoordinatorUi {
     return { families, issuedFamilies };
   }
 
+  /**
+   * WS-N next steps: what "Enviar a aprobación" would pick up now, without building a batch —
+   * families with inherited instances to send, and accepted / corrected group decisions not yet in a
+   * batch (groups covered by an approved family decision are counted with their family).
+   */
+  async pendingToSend(testKey: string): Promise<{ families: number; groups: number }> {
+    const { test, cls } = await this.testContext(testKey);
+    const decided = await this.core.effectiveDecisions(test.testKey);
+    let families = 0;
+    const covered = new Set<string>();
+    if (cls.families) {
+      const views = (await this.core.familyViewsFor(test.testKey)).views;
+      for (const f of (await this.familyTodo(test, cls, views)).families) {
+        for (const i of f.inherited) covered.add(i.groupId);
+        if (f.todo.length) families++;
+      }
+    }
+    const groups = cls.groups.filter((g) => {
+      const d = decided.get(g.id);
+      return !covered.has(g.id) && !!d && !d.batchId && (d.kind === "accept" || d.kind === "correct");
+    }).length;
+    return { families, groups };
+  }
+
   /** familyId → inherited instances decided but not yet sent to approval (TriageFamily.pendingSend). */
   private async familyPendingSend(test: TestRecord, cls: ClassificationRecord, views: readonly FamilyView[]): Promise<Map<string, number>> {
     const { families } = await this.familyTodo(test, cls, views);

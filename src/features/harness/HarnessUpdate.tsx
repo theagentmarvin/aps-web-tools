@@ -4,7 +4,8 @@
  * passkey". The server binds the passkey challenge to the exact files written; no agent tool
  * reaches these routes.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { OPEN_HARNESS_EVENT } from "~/features/flows/links";
 import { useT } from "~/i18n";
 import { useApi, useAsync } from "~/lib/api";
 import type { HarnessDiff, HarnessStatus } from "~/lib/api/types";
@@ -26,6 +27,12 @@ export function HarnessUpdateBanner() {
   const api = useApi();
   const status = useAsync(() => api.getHarnessStatus().catch(() => undefined), [api]);
   const [open, setOpen] = useState(false);
+  // "Qué sigue" › Actualizar el agente opens this same dialog (WS-N).
+  useEffect(() => {
+    const onOpen = () => setOpen(true);
+    window.addEventListener(OPEN_HARNESS_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_HARNESS_EVENT, onOpen);
+  }, []);
   const s = status.data;
   if (!s || s.upToDate) return null;
   const pending = s.files.filter((f) => f.state !== "same").length;
