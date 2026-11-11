@@ -17,6 +17,8 @@
 //   any .claude/ dir, .claude.json, the keystore (bim-coordinator)      deny
 //   executable/script files (.mjs .js .cjs .ts .ps1 .py .sh .bat .cmd …) ask
 //   anything else                                                        normal permission flow
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { readInput, projectRoot, decide, pass, block, isHarnessDev, resolveToolPath, TAG } from "./_lib.mjs";
 
 let input;
@@ -36,10 +38,21 @@ if (r.unresolvable) decide("deny", `${TAG} Ruta no resoluble para escritura: ${r
 
 // The coordinator state dir may live outside the repo (COORDINATOR_HOME for demos/evals) and the keystore
 // (COORD_SECURE_DIR): same rule as .coordinator/ wherever they are — only projects/<id>/notes.md is writable.
-for (const [envName, allowNotes] of [["COORDINATOR_HOME", true], ["COORD_SECURE_DIR", false]]) {
-  const dir = process.env[envName];
+// Since WS-H the default data home is per user, outside the repo (server/store/home.ts):
+// %LOCALAPPDATA%\bim-coordinator\data (or $XDG_DATA_HOME / ~/.local/share/bim-coordinator/data), backups next to it.
+const dataBase = process.env.LOCALAPPDATA
+  ? join(process.env.LOCALAPPDATA, "bim-coordinator")
+  : join(process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"), "bim-coordinator");
+const STATE_DIRS = [
+  ["COORDINATOR_HOME", process.env.COORDINATOR_HOME, true],
+  ["el directorio de datos del coordinador", join(dataBase, "data"), true],
+  ["el directorio de respaldos del coordinador", join(dataBase, "backups"), false],
+  ["COORD_SECURE_DIR", process.env.COORD_SECURE_DIR, false],
+];
+for (const [envName, dir, allowNotes] of STATE_DIRS) {
   if (!dir) continue;
-  const inner = resolveToolPath(dir, target, input.cwd);
+  // Relative paths resolve against the session cwd or the project, never against the state dir itself.
+  const inner = resolveToolPath(dir, target, input.cwd || root);
   if (typeof inner.rel === "string") {
     if (allowNotes && /^projects\/[^/]+\/notes\.md$/.test(inner.rel)) pass();
     decide("deny", `${TAG} ${envName} lo gestiona el servidor; el agente no escribe ahí${allowNotes ? " (salvo projects/<id>/notes.md)" : ""}.`);

@@ -63,7 +63,8 @@ aprueba en la UI web con su passkey.
   cambió · reapareció), `incidencias` (veredicto por incidencia de ACC), `reunion` (agenda y notas), `todo`.
   Enlaza siempre la lente adecuada al cerrar una entrega.
 - Siempre: `mcp__coord__get_session_status` al empezar (sin sesión APS fuera de modo fixtures → indica iniciar
-  sesión en la UI y detente); lee `.coordinator/projects/<projectId>/notes.md` si existe; a los subagentes
+  sesión en la UI y detente); lee las notas del proyecto en la ruta que entrega `get_session_status` (`projectNotes`; los datos viven fuera
+  del repositorio, en la carpeta de datos del usuario) si existen; a los subagentes
   (**clash-triager**, **issue-writer**) pásales solo IDs, en lotes de ≤ 20.
 - Correcciones del coordinador → `mcp__coord__record_feedback`. Convención del proyecto → propone una línea para
   `notes.md` y escríbela **solo tras su confirmación**: `- AAAA-MM-DD · [convención] … (confirmado por coordinador)`.

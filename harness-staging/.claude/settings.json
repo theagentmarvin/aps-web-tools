@@ -17,7 +17,9 @@
       "mcp__coord__record_feedback",
       "mcp__coord__evaluate_ruleset",
       "mcp__coord__generate_report",
-      "Edit(./.coordinator/projects/*/notes.md)"
+      "Edit(./.coordinator/projects/*/notes.md)",
+      "Edit(~/AppData/Local/bim-coordinator/data/projects/*/notes.md)",
+      "Edit(~/.local/share/bim-coordinator/data/projects/*/notes.md)"
     ],
     "ask": [
       "mcp__coord__apply_approved_proposals",
