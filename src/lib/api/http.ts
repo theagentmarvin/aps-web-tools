@@ -383,7 +383,16 @@ export class HttpCoordinatorApi implements CoordinatorApi {
     return this.req<T.FamilyDecisionPreview>("POST", `/families/${enc(familyId)}/decision-preview`, req);
   }
   decideFamily(familyId: string, req: T.FamilyDecisionRequest) {
-    return this.req<unknown>("POST", `/families/${enc(familyId)}/decision`, req);
+    return this.req<T.FamilyDecisionResponse>("POST", `/families/${enc(familyId)}/decision`, req);
+  }
+  undoFamilyDecision(familyId: string, req: { testId: string; version: number }) {
+    return this.req<T.FamilyDecisionResponse>("POST", `/families/${enc(familyId)}/undo`, req);
+  }
+  rejectAgentProposal(proposalId: string, reason?: string) {
+    return this.req<{ proposalId: string; state: string; feedbackId: string }>("POST", `/proposals/${enc(proposalId)}/reject`, reason ? { reason } : {});
+  }
+  getCycleLoop(projectId: string, testKey?: string) {
+    return this.get<T.CycleLoop>(`/projects/${enc(projectId)}/cycle-loop`, { testKey });
   }
   setFamilyException(familyId: string, req: T.FamilyExceptionRequest) {
     if (req.remove) return this.req<unknown>("DELETE", `/families/${enc(familyId)}/exceptions/${enc(req.groupId)}?testId=${enc(req.testId)}`);
@@ -417,7 +426,7 @@ export class HttpCoordinatorApi implements CoordinatorApi {
   }
   listAssignees(projectId: string) { return this.get<T.Assignee[]>(`/projects/${enc(projectId)}/assignees`); }
 
-  saveDecisions(decisions: T.Decision[]) { return this.req<{ saved: string[] }>("POST", "/triage/decisions", decisions); }
+  saveDecisions(decisions: T.Decision[]) { return this.req<{ saved: string[]; learning?: Array<{ targetId: string; entries: T.LearningEntry[] }> }>("POST", "/triage/decisions", decisions); }
   listDecisions(p: { testId?: string; projectId?: string; limit?: number; cursor?: string }) {
     return this.get<T.Page<T.Decision>>("/decisions", p);
   }

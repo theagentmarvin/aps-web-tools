@@ -20,6 +20,8 @@ import { questionView, type StoredQuestion } from "./questions";
 import { markFrozen } from "./api/frozen";
 import { buildReminders, issueGate } from "./issue-checks";
 import type { ClashDiff } from "../core/types";
+import { cycleLoop, familyProvenance, groupProvenance, learningSummary, loopContext, type LoopCtx } from "./loop";
+import { learningDelta, tallyTest, type AccuracyMap, type TallyFamilyDecision } from "./rule-accuracy";
 
 interface CycleCtx {
   baseReason: "last_reviewed" | "previous";
@@ -697,12 +699,23 @@ export class CoordinatorUi {
     const rs = loadRules();
     const decisions = (await this.store.listDecisions()).filter((d) => d.testId === test.testKey && d.targetType !== "issue").map((d) => this.decisionUi(d));
     let families: C.TriageFamily[] | undefined;
+    // Agent ↔ coordinator loop: who proposed what each ubicación shows, and the batch it is in.
+    const loop = await loopContext(this.core, test, cls);
+    {
+      const decided = await this.core.effectiveDecisions(test.testKey);
+      groups.forEach((gu, i) => {
+        const g = cls.groups[i]!;
+        gu.provenance = groupProvenance(loop, g, proposals[i]!, decided.get(g.id), gu.inherited);
+        const b = loop.groupBatch.get(g.id);
+        if (b) gu.batch = b;
+      });
+    }
     if (cls.families) {
       const views = (await this.core.familyViewsFor(test.testKey)).views;
       const props = await this.familyProposals(test.testKey);
       this.familyClashIds.set(test.testKey, new Map(cls.groups.map((g) => [g.id, g.clashIds])));
       const pendingSend = await this.familyPendingSend(test, cls, views);
-      families = views.map((v) => this.familyUi(v, props, test.testKey, pendingSend));
+      families = views.map((v) => this.familyUi(v, props, test.testKey, pendingSend, loop));
       const inh = new Map(views.flatMap((v) => v.instances.map((i) => [i.groupId, i.inheritance] as const)));
       for (const g of groups) {
         const x = inh.get(g.id);
@@ -819,7 +832,7 @@ export class CoordinatorUi {
 
   // ── decisions ────────────────────────────────────────────────────────────
 
-  async saveDecisions(input: C.Decision[], user: HumanUser, opts: { source?: "question" } = {}): Promise<{ saved: string[] }> {
+  async saveDecisions(input: C.Decision[], user: HumanUser, opts: { source?: "question" } = {}): Promise<{ saved: string[]; learning?: Array<{ targetId: string; entries: C.LearningEntry[] }> }> {
     const byTest = new Map<string, Awaited<ReturnType<CoordinatorUi["testContext"]>>>();
     const records: DecisionRecord[] = [];
     for (const d of input) {
@@ -841,6 +854,22 @@ export class CoordinatorUi {
         receivedAt: nowIso(this.core.now()),
         ...(opts.source ? { source: opts.source } : {}),
       });
+    }
+    // Learning receipt (ubicación panel): tallies before the decisions, per test with group decisions.
+    const learnPre = new Map<string, { targets: string[]; decided: Map<string, DecisionRecord>; families: TallyFamilyDecision[]; global: AccuracyMap }>();
+    if (opts.source !== "question") {
+      let global: AccuracyMap | undefined;
+      for (const d of input) {
+        if (d.targetType !== "group" || !["accept", "correct", "reject", "undo"].includes(d.kind)) continue;
+        let pre = learnPre.get(d.testId);
+        if (!pre) {
+          global ??= await this.core.ruleAuthoring.accuracy();
+          const views = await this.core.familyViewsFor(d.testId).then((x) => x.views).catch(() => []);
+          pre = { targets: [], decided: await this.core.effectiveDecisions(d.testId), families: views.flatMap((v) => (v.decision ? [v.decision] : [])), global };
+          learnPre.set(d.testId, pre);
+        }
+        if (!pre.targets.includes(d.targetId)) pre.targets.push(d.targetId);
+      }
     }
     const { saved, added } = await this.store.appendDecisions(records);
     const actor: Actor = { type: "user", id: user.id, name: user.name };
@@ -889,7 +918,23 @@ export class CoordinatorUi {
         }
       }
     }
-    return { saved };
+    // Receipt of ubicación decisions: what each one taught its rule (shared tally, per ubicación).
+    let learning: Array<{ targetId: string; entries: C.LearningEntry[] }> | undefined;
+    if (learnPre.size) {
+      learning = [];
+      for (const [testId, pre] of learnPre) {
+        const ctx = byTest.get(testId)!;
+        const decidedAfter = await this.core.effectiveDecisions(testId);
+        for (const gid of pre.targets) {
+          const g = ctx.cls.groups.find((x) => x.id === gid);
+          if (!g) continue;
+          const one = { testKey: testId, groups: [g], familyDecisions: pre.families };
+          const entries = learningDelta(tallyTest({ ...one, decided: pre.decided }), tallyTest({ ...one, decided: decidedAfter }), pre.global);
+          if (entries.length) learning.push({ targetId: gid, entries });
+        }
+      }
+    }
+    return { saved, ...(learning?.length ? { learning } : {}) };
   }
 
   async listDecisions(q: { testId?: string; projectId?: string; limit?: number; cursor?: string }): Promise<C.Page<C.Decision>> {
@@ -1115,6 +1160,36 @@ export class CoordinatorUi {
     return this.batchUi(batch);
   }
 
+  /**
+   * Who proposed what each batch item carries (Aprobaciones: «Aceptada · motor / agente IA»):
+   * ubicación items → the agent when an agent proposal backs it, else the engine; «manual» → the
+   * coordinator. Family items → the agent when the decided version equals an agent proposal it
+   * answered, the engine when it equals the engine proposal, else the coordinator. Best effort.
+   */
+  private async batchProposers(b: BatchRecord): Promise<Map<string, NonNullable<C.BatchItem["proposer"]>>> {
+    const out = new Map<string, NonNullable<C.BatchItem["proposer"]>>();
+    const agentIds = new Set<string>();
+    for (const id of new Set(b.items.flatMap((i) => i.proposalIds))) {
+      const p = await this.store.getProposal(id).catch(() => undefined);
+      if (p?.createdBy.type === "agent") agentIds.add(id);
+    }
+    const famItems = b.items.filter((i) => i.familyId);
+    const fstate = famItems.length ? await this.core.families.load(b.projectId, b.modelSetId).catch(() => undefined) : undefined;
+    const cls = famItems.length ? await this.store.getClassification(b.testKey).catch(() => undefined) : undefined;
+    const agentFam = famItems.length ? await this.store.listProposals((p) => p.kind === "family_decision" && (p.state === "applied" || p.state === "approved")) : [];
+    for (const i of b.items) {
+      if (i.familyId) {
+        const ver = fstate?.families[i.familyId]?.versions.find((x) => x.version === i.familyDecisionVersion);
+        const same = (x: { validity?: string; action?: string; responsibleDiscipline?: string } | undefined) => !!ver && !!x && x.validity === ver.validity && x.action === ver.action && (!x.responsibleDiscipline || x.responsibleDiscipline === ver.responsibleDiscipline);
+        const byAgent = agentFam.some((p) => p.payload.kind === "family_decision" && p.payload.familyId === i.familyId && same(p.payload));
+        const proposed = cls?.families?.find((f) => f.id === i.familyId)?.proposed;
+        out.set(i.id, byAgent ? "agente" : same(proposed) ? "motor" : "coordinador");
+      } else if (i.origin === "manual") out.set(i.id, "coordinador");
+      else out.set(i.id, i.proposalIds.some((id) => agentIds.has(id)) ? "agente" : "motor");
+    }
+    return out;
+  }
+
   async batchUi(b: BatchRecord): Promise<C.Batch> {
     const rb = await this.core.batchRebaseInfo(b);
     const latest = rb.latestVersion;
@@ -1139,6 +1214,7 @@ export class CoordinatorUi {
       approval = { approvedBy: appr.approvedBy.name, approvedAt: appr.approvedAt, expiresAt: appr.expiresAt, channel: appr.approvedBy.channel, valid: v.ok, ...(v.ok ? {} : { reason: v.reason }) };
     }
     const low = inc.filter((i) => i.lowConfidence);
+    const proposer = await this.batchProposers(b);
     return {
       id: b.id,
       projectId: bareProjectId(b.projectId),
@@ -1185,6 +1261,7 @@ export class CoordinatorUi {
         ...(i.accCurrent !== undefined ? { accCurrent: i.accCurrent } : {}),
         accNew: i.accNew,
         origin: i.origin,
+        ...(proposer.get(i.id) ? { proposer: proposer.get(i.id)! } : {}),
         ...(i.reasonCode ? { reasonCode: i.reasonCode } : {}),
         reviewer: i.reviewer,
         ...(i.aiConfidence !== undefined ? { aiConfidence: i.aiConfidence } : {}),
@@ -1762,6 +1839,7 @@ export class CoordinatorUi {
         affected: p.payload.evidence?.metrics.changedUnique ?? p.payload.feedbackIds.length,
         evaluation: ev,
         feedbackCount: p.payload.feedbackIds.length,
+        ...(p.payload.feedbackIds.length ? { feedbackIds: [...p.payload.feedbackIds] } : {}),
         ...(p.payload.evidence ? { evidence: p.payload.evidence } : {}),
         state: stage,
         createdAt: p.createdAt,
@@ -2155,7 +2233,7 @@ export class CoordinatorUi {
 
 // ── solution families (docs/domain/solution-families-proposal.md) ───────
 
-  private familyUi(v: FamilyView, proposals: readonly ProposalRecord[], testKey?: string, pendingSend?: ReadonlyMap<string, number>): C.TriageFamily {
+  private familyUi(v: FamilyView, proposals: readonly ProposalRecord[], testKey?: string, pendingSend?: ReadonlyMap<string, number>, loop?: LoopCtx): C.TriageFamily {
     const pending = proposals.filter((p) => p.payload.kind === "family_decision" && p.payload.familyId === v.id && PENDING.has(p.state));
     const pendingExc = proposals.filter((p) => p.payload.kind === "family_exception" && (p.payload.familyId === v.id || v.mergedFrom.includes(p.payload.familyId)) && PENDING.has(p.state));
     const c = testKey ? this.cycles.get(testKey) : undefined;
@@ -2181,6 +2259,8 @@ export class CoordinatorUi {
         ? { pendingExceptions: pendingExc.map((p) => { const pl = p.payload as Extract<ProposalRecord["payload"], { kind: "family_exception" }>; return { id: p.id, createdAt: p.createdAt, groupId: pl.groupId, reason: pl.reason, rationale: p.rationale, fields: pl.fields as Partial<C.FamilyDecisionFields> }; }) }
         : {}),
       ...(pendingSend ? { pendingSend: pendingSend.get(v.id) ?? 0 } : {}),
+      ...(loop ? { provenance: familyProvenance(loop, v, pending[pending.length - 1]) } : {}),
+      ...(loop?.familyBatch.get(v.id) ? { batch: loop.familyBatch.get(v.id)! } : {}),
     };
   }
 
@@ -2201,30 +2281,53 @@ export class CoordinatorUi {
     const { test, cls, views } = await this.familyContext(testKey);
     const props = await this.familyProposals(test.testKey);
     const pendingSend = await this.familyPendingSend(test, cls, views);
-    return { testId: test.testKey, families: views.map((v) => this.familyUi(v, props, test.testKey, pendingSend)), problemTypes: PROBLEM_TYPES.map((p) => ({ ...p, options: [...p.options] })) };
+    const loop = await loopContext(this.core, test, cls);
+    return { testId: test.testKey, families: views.map((v) => this.familyUi(v, props, test.testKey, pendingSend, loop)), problemTypes: PROBLEM_TYPES.map((p) => ({ ...p, options: [...p.options] })) };
   }
 
   async family(testKey: string, familyId: string): Promise<C.TriageFamily> {
     const { test, cls, views } = await this.familyContext(testKey);
-    return this.familyUi(assertFamilyInTest(views, familyId), await this.familyProposals(test.testKey), test.testKey, await this.familyPendingSend(test, cls, views));
+    return this.familyUi(assertFamilyInTest(views, familyId), await this.familyProposals(test.testKey), test.testKey, await this.familyPendingSend(test, cls, views), await loopContext(this.core, test, cls));
   }
 
-  private decisionFields(v: FamilyView, req: Partial<C.FamilyDecisionRequest>): FamilyDecisionFields {
+  /**
+   * Fields of a family decision: the request, else the AGENT proposal it answers (what the panel shows
+   * as the proposal), else the engine proposal — «Aceptar propuesta» accepts exactly what is shown.
+   */
+  private decisionFields(v: FamilyView, req: Partial<C.FamilyDecisionRequest>, agent?: ProposalRecord): FamilyDecisionFields {
     const rs = loadRules();
-    const validity = req.validity ?? v.proposed.validity;
-    const action = req.action ?? v.proposed.action;
+    const a = agent?.payload.kind === "family_decision" ? agent.payload : undefined;
+    const validity = req.validity ?? a?.validity ?? v.proposed.validity;
+    const action = req.action ?? a?.action ?? v.proposed.action;
     if (validity === "real" && (action === "close" || action === "mark_reviewed")) throw new CoordError("validation_error", "Una familia 'real' no se cierra: usa create_issue o escalate.");
-    const responsibleDiscipline = assertCode(rs, req.responsibleDiscipline ?? v.proposed.responsibleDiscipline);
-    const secondary = req.secondaryDiscipline ?? v.proposed.secondaryDiscipline;
+    const responsibleDiscipline = assertCode(rs, req.responsibleDiscipline ?? a?.responsibleDiscipline ?? v.proposed.responsibleDiscipline);
+    const secondary = req.secondaryDiscipline ?? a?.secondaryDiscipline ?? v.proposed.secondaryDiscipline;
+    const solution = req.solutionOption ?? a?.solutionOption ?? v.proposed.solutionOption;
     return {
       validity,
       action,
       responsibleDiscipline,
       ...(secondary ? { secondaryDiscipline: assertCode(rs, secondary) } : {}),
-      ...(req.solutionOption ?? v.proposed.solutionOption ? { solutionOption: sanitizeModelText(req.solutionOption ?? v.proposed.solutionOption!, 300) } : {}),
+      ...(solution ? { solutionOption: sanitizeModelText(solution, 300) } : {}),
       ...(req.typicalDetail ? { typicalDetail: { name: sanitizeModelText(req.typicalDetail.name, 120), ...(req.typicalDetail.note ? { note: sanitizeModelText(req.typicalDetail.note, 400) } : {}) } } : {}),
-      issueMode: req.issueMode ?? "family",
+      issueMode: req.issueMode ?? a?.issueMode ?? "family",
     };
+  }
+
+  /** Agent proposal a request answers (validated: a family_decision of this family or one merged into it). */
+  private async answeredProposal(v: FamilyView, proposalId: string | undefined): Promise<ProposalRecord | undefined> {
+    if (!proposalId) return undefined;
+    const prop = await this.store.getProposal(proposalId);
+    if (!prop || prop.payload.kind !== "family_decision" || (prop.payload.familyId !== v.id && !v.mergedFrom.includes(prop.payload.familyId))) throw new CoordError("not_found", `Propuesta ${proposalId} no es de la familia ${v.id}`);
+    return prop;
+  }
+
+  /** Learning preview of a family decision: the shared tally (Reglas) of this test, before vs with it. */
+  private async familyLearning(testKey: string, familyId: string, decision: { status: string; validity: string; responsibleDiscipline: string; coveredGroupIds: string[] } | null): Promise<C.LearningSummary> {
+    const ra = this.core.ruleAuthoring;
+    const before = await ra.accuracyForTest(testKey);
+    const after = await ra.accuracyForTest(testKey, { familyId, decision: decision ? { ...decision, testKey } : null });
+    return learningSummary(this.core, before, after, await ra.accuracy());
   }
 
   private validityChanges(v: FamilyView, validity: C.Validity) {
@@ -2239,10 +2342,12 @@ export class CoordinatorUi {
   }
 
   async familyDecisionPreview(familyId: string, req: Partial<C.FamilyDecisionRequest> & { testId: string }): Promise<C.FamilyDecisionPreview> {
-    const { views } = await this.core.familyViewsFor(req.testId);
+    const { test, views } = await this.core.familyViewsFor(req.testId);
     const v = assertFamilyInTest(views, familyId);
-    const f = this.decisionFields(v, req);
+    const agent = await this.answeredProposal(v, req.proposalId).catch(() => undefined);
+    const f = this.decisionFields(v, req, agent && PENDING.has(agent.state) ? agent : undefined);
     const live = v.instances.filter((i) => i.inheritance.state !== "exception" && i.inheritance.state !== "detached");
+    const learn = await this.familyLearning(test.testKey, v.id, { status: "approved", validity: f.validity, responsibleDiscipline: f.responsibleDiscipline, coveredGroupIds: live.map((i) => i.groupId) });
     const raw = live.reduce((n, i) => n + i.rawClashCount, 0);
     const issueAction = f.action === "create_issue" || f.action === "hygiene_issue";
     return {
@@ -2255,22 +2360,25 @@ export class CoordinatorUi {
       spotCheckRequired: this.spotCheckRequired(v),
       validityChanges: this.validityChanges(v, f.validity),
       issues: !issueAction ? 0 : f.issueMode === "family" ? Math.ceil(raw / 1000) : live.reduce((n, i) => n + Math.ceil(i.rawClashCount / 1000), 0),
+      ...learn,
     };
   }
 
   /** Approve / edit (new version) / reject a family. Human-only, audited, versioned. */
-  async decideFamily(familyId: string, req: C.FamilyDecisionRequest, user: HumanUser): Promise<C.TriageFamily> {
+  async decideFamily(familyId: string, req: C.FamilyDecisionRequest, user: HumanUser): Promise<C.FamilyDecisionResponse> {
     const { test, views } = await this.core.familyViewsFor(req.testId);
     const v = assertFamilyInTest(views, familyId);
-    const prop = req.proposalId ? await this.store.getProposal(req.proposalId) : undefined;
-    if (req.proposalId && (!prop || prop.payload.kind !== "family_decision" || prop.payload.familyId !== v.id)) throw new CoordError("not_found", `Propuesta ${req.proposalId} no es de la familia ${v.id}`);
+    const prop = await this.answeredProposal(v, req.proposalId);
+    // Receipt: the same tally as Reglas, before and after (never computed by the client).
+    const learnBefore = await this.core.ruleAuthoring.accuracyForTest(test.testKey);
+    const globalBefore = await this.core.ruleAuthoring.accuracy();
     const now = nowIso(this.core.now());
     const note = req.note ? sanitizeModelText(req.note, 1000) : undefined;
     let fields: FamilyDecisionFields;
     let changes: Array<{ groupId: string; title: string; from: C.Validity; to: C.Validity }> = [];
     let spot: string[] = [];
     if (req.decision === "approve") {
-      fields = this.decisionFields(v, req);
+      fields = this.decisionFields(v, req, prop && PENDING.has(prop.state) ? prop : undefined);
       spot = [...new Set(req.spotChecked ?? [])];
       const bad = spot.filter((g) => !v.groupIds.includes(g));
       if (bad.length) throw new CoordError("validation_error", `spotChecked fuera de la familia: ${bad.slice(0, 5).join(", ")}`);
@@ -2335,7 +2443,111 @@ export class CoordinatorUi {
         await this.store.transitionProposal(prop.id, "applied", user.name, "decisión de familia registrada (local)");
       } else await this.store.transitionProposal(prop.id, "rejected", user.name);
     }
-    return this.family(test.testKey, v.id);
+    const fam = await this.family(test.testKey, v.id);
+    const learn = await learningSummary(this.core, learnBefore, await this.core.ruleAuthoring.accuracyForTest(test.testKey), globalBefore);
+    const pl = prop?.payload.kind === "family_decision" ? prop.payload : undefined;
+    const unchanged = !!pl && req.decision === "approve" && pl.validity === fields.validity && pl.action === fields.action && (!pl.responsibleDiscipline || pl.responsibleDiscipline === fields.responsibleDiscipline);
+    return {
+      ...fam,
+      receipt: {
+        kind: req.decision === "approve" ? "approved" : "rejected",
+        ...(fam.decision ? { version: fam.decision.version } : {}),
+        instances: req.decision === "approve" ? covered.length : 0,
+        rawClashCount: req.decision === "approve" ? v.instances.filter((i) => covered.includes(i.groupId)).reduce((n, i) => n + i.rawClashCount, 0) : 0,
+        ...(prop ? { agent: { proposalId: prop.id, unchanged } } : {}),
+        readyToSend: await this.pendingToSend(test.testKey).catch(() => ({ families: 0, groups: 0 })),
+        ...learn,
+      },
+    };
+  }
+
+  /**
+   * «Deshacer» of the decision receipt: a NEW version that restores the previous one (approved or
+   * rejected), or an "undone" marker when there was none (the family is undecided again).
+   * Append-only and audited; the agent proposal it answered keeps its history.
+   */
+  async undoFamilyDecision(familyId: string, body: { testId: string; version: number }, user: HumanUser): Promise<C.FamilyDecisionResponse> {
+    const { test, views } = await this.core.familyViewsFor(body.testId);
+    const v = assertFamilyInTest(views, familyId);
+    const cur = v.decision;
+    if (!cur || cur.version !== body.version) throw new CoordError("conflict", `La decisión v${body.version} ya no es la vigente de ${v.id}: no se deshace.`);
+    if (cur.testKey !== test.testKey) throw new CoordError("validation_error", "Solo se deshace una decisión tomada en esta versión del conjunto.");
+    const learnBefore = await this.core.ruleAuthoring.accuracyForTest(test.testKey);
+    const globalBefore = await this.core.ruleAuthoring.accuracy();
+    const now = nowIso(this.core.now());
+    const live = v.instances.filter((i) => i.inheritance.state !== "exception" && i.inheritance.state !== "detached").map((i) => i.groupId);
+    const { result: restored } = await this.core.families.update(
+      test.projectId,
+      test.modelSetId,
+      user,
+      (st) => {
+        const fs = st.families[v.id]!;
+        const prev = fs.versions.slice(0, -1).reverse().find((x) => x.status !== "undone");
+        const version = fs.versions.length + 1;
+        if (prev) {
+          const r = { ...prev, version, decidedBy: user.name, decidedAt: now, note: `Deshecha v${cur.version}: vuelve a v${prev.version}`, coveredGroupIds: prev.status === "approved" && prev.testKey === test.testKey ? live : prev.coveredGroupIds };
+          fs.versions.push(r);
+          return r;
+        }
+        fs.versions.push({ validity: cur.validity, action: cur.action, responsibleDiscipline: cur.responsibleDiscipline, issueMode: cur.issueMode, familyId: v.id, version, status: "undone", decidedBy: user.name, decidedAt: now, spotChecked: [], coveredGroupIds: [], testKey: test.testKey, note: `Deshecha v${cur.version}` });
+        return undefined;
+      },
+      { action: "family.undone", testKey: test.testKey, targetIds: [v.id], details: { undoneVersion: cur.version } },
+    );
+    {
+      // F1 references follow the restored version (none when the family is undecided again).
+      const { cls } = await this.core.requireClassified(test.testKey);
+      const prevRefs = Array.from({ length: cur.version }, (_, i) => `${v.id}@v${i + 1}`);
+      const r = restored;
+      const effect: "issue" | "close" | "none" = !r ? "none" : r.action === "create_issue" || r.action === "hygiene_issue" ? "issue" : r.action === "close" || r.action === "mark_reviewed" ? "close" : "none";
+      const items = r && r.status === "approved" && r.testKey === test.testKey ? r.coveredGroupIds.map((groupId) => ({ groupId, ref: { source: "family" as const, ref: `${v.id}@v${r.version}`, decision: r.action, validity: r.validity, effect, decidedBy: user.name, decidedAt: now } })) : [];
+      await this.core.recordDecisionRefs(test, cls, items, prevRefs);
+    }
+    const fam = await this.family(test.testKey, v.id);
+    const learn = await learningSummary(this.core, learnBefore, await this.core.ruleAuthoring.accuracyForTest(test.testKey), globalBefore);
+    return {
+      ...fam,
+      receipt: { kind: "undone", ...(restored ? { version: restored.version } : {}), instances: 0, rawClashCount: 0, readyToSend: await this.pendingToSend(test.testKey).catch(() => ({ families: 0, groups: 0 })), ...learn },
+    };
+  }
+
+  /**
+   * «Rechazar» on an agent proposal card in the chat: the proposal moves to rejected (with the reason)
+   * and the rejection is recorded as feedback to the agent (same store as record_feedback). Human only.
+   */
+  async rejectAgentProposal(proposalId: string, body: { reason?: string }, user: HumanUser): Promise<{ proposalId: string; state: string; feedbackId: string }> {
+    const p = await this.store.getProposal(proposalId);
+    if (!p) throw new CoordError("not_found", `Propuesta ${proposalId} no existe`);
+    if (p.createdBy.type !== "agent") throw new CoordError("validation_error", "Aquí solo se rechazan propuestas del agente.");
+    if (p.kind === "rule_change") throw new CoordError("validation_error", "Las sugerencias de reglas se deciden en Reglas.");
+    if (!PENDING.has(p.state)) throw new CoordError("invalid_state", `La propuesta ${proposalId} ya fue decidida (${p.state}).`);
+    const reason = body.reason?.trim() ? sanitizeModelText(body.reason.trim(), 300) : "";
+    await this.store.transitionProposal(p.id, "rejected", user.name, reason ? `rechazada desde el chat: ${reason}` : "rechazada desde el chat");
+    const fb = await this.core.recordFeedback(
+      { target: { proposalId: p.id }, verdict: "incorrect", coordinatorStatement: reason ? `Propuesta del agente rechazada: ${reason}` : "Propuesta del agente rechazada desde el chat.", generalizable: "unsure", scope: "this_group" },
+      { actor: { type: "user", id: user.id, name: user.name } },
+      "ui",
+    );
+    return { proposalId: p.id, state: "rejected", feedbackId: fb.feedbackId };
+  }
+
+  /** «Ciclo vNN · cómo va el circuito» (project page): server numbers only. */
+  async cycleLoop(projectId: string, testKey?: string): Promise<C.CycleLoop> {
+    let key = testKey;
+    if (!key) {
+      const mine = (await this.store.listTests()).filter((t) => bareProjectId(t.projectId) === bareProjectId(projectId)).sort((a, b) => b.modelSetVersion - a.modelSetVersion || (a.ingestedAt < b.ingestedAt ? 1 : -1));
+      for (const t of mine)
+        if (await this.store.hasClassification(t.testKey)) {
+          key = t.testKey;
+          break;
+        }
+    }
+    if (!key) throw new CoordError("not_ingested", "No hay pruebas analizadas en este proyecto.");
+    const test = await this.store.getTest(key);
+    if (!test) throw new CoordError("not_found", `El test ${key} no está en caché.`);
+    if (bareProjectId(test.projectId) !== bareProjectId(projectId)) throw new CoordError("validation_error", "El test no pertenece a ese proyecto.");
+    const tri = await this.triage(projectId, test.modelSetId, key);
+    return cycleLoop(this.core, projectId, test, tri.groups, tri.families ?? []);
   }
 
   async addFamilyException(familyId: string, body: { testId: string; groupId: string; fields: Partial<C.FamilyDecisionFields>; reason: string; proposalId?: string }, user: HumanUser): Promise<C.TriageFamily> {

@@ -701,7 +701,7 @@ export class MockCoordinatorApi implements CoordinatorApi {
     return { ok: true };
   }
 
-  async decideFamily(familyId: string, req: T.FamilyDecisionRequest): Promise<unknown> {
+  async decideFamily(familyId: string, req: T.FamilyDecisionRequest): Promise<T.FamilyDecisionResponse> {
     await delay(300);
     const { fam, byId } = this.familyById(req.testId, familyId);
     const now = new Date().toISOString();
@@ -730,7 +730,48 @@ export class MockCoordinatorApi implements CoordinatorApi {
     }
     refreshFamily(fam, byId);
     this.log({ actor: { type: "user", id: ME.id, name: ME.short }, action: req.decision === "approve" ? "family.decision" : "family.reject", projectId: "", targetIds: [fam.id], details: { testKey: req.testId, instances: fam.instanceCount, version } });
-    return { ok: true, familyId: fam.id, version };
+    // Mock: no accuracy store, so the receipt carries no learning (the real server computes it).
+    const applied = req.decision === "approve" ? fam.groupIds.map((id) => byId.get(id)).filter((g): g is T.FamilyGroup => !!g && g.inheritance?.state === "inherited") : [];
+    return clone({
+      ...fam,
+      receipt: { kind: req.decision === "approve" ? "approved" : "rejected", version, instances: applied.length, rawClashCount: applied.reduce((n, g) => n + g.clashIds.length, 0), readyToSend: { families: 1, groups: 0 }, learning: [], uncuratedCorrections: 0, curationThreshold: 5, ...(req.proposalId ? { agent: { proposalId: req.proposalId, unchanged: true } } : {}) },
+    }) as T.FamilyDecisionResponse;
+  }
+
+  async undoFamilyDecision(familyId: string, req: { testId: string; version: number }): Promise<T.FamilyDecisionResponse> {
+    await delay(150);
+    const { fam, byId } = this.familyById(req.testId, familyId);
+    if (!fam.decision || fam.decision.version !== req.version) throw new ApiError("La decisión ya no es la vigente.", 409, "conflict");
+    fam.decision = undefined;
+    fam.issue = undefined;
+    for (const gid of fam.groupIds) {
+      const g = byId.get(gid);
+      if (g && g.inheritance?.state !== "exception") g.inheritance = { state: "none" };
+    }
+    refreshFamily(fam, byId);
+    return clone({ ...fam, receipt: { kind: "undone", instances: 0, rawClashCount: 0, readyToSend: { families: 0, groups: 0 }, learning: [], uncuratedCorrections: 0, curationThreshold: 5 } }) as T.FamilyDecisionResponse;
+  }
+
+  async rejectAgentProposal(proposalId: string): Promise<{ proposalId: string; state: string; feedbackId: string }> {
+    await delay(80);
+    return { proposalId, state: "rejected", feedbackId: `FB-mock-${proposalId.slice(-6)}` };
+  }
+
+  async getCycleLoop(projectId: string, testKey?: string): Promise<T.CycleLoop> {
+    await delay(120);
+    const fams = [...this.families.entries()].find(([k]) => !testKey || k === testKey);
+    const groups = fams ? fams[1].groups : [];
+    const decided = groups.filter((g) => g.inheritance?.state === "inherited" || g.inheritance?.state === "exception");
+    const exc = groups.filter((g) => g.inheritance?.state === "exception").length;
+    return {
+      projectId, testKey: fams?.[0] ?? testKey ?? "", version: 42,
+      proposals: { engine: groups.length, agent: 0 },
+      decisions: { total: groups.length, accepted: decided.length - exc, corrected: exc, pending: groups.length - decided.length, oneByOne: 0 },
+      acc: { applied: 0, failed: 0 },
+      learning: { corrections: 0, uncurated: 0, suggestions: 0, published: 0 },
+      accuracyByVersion: [],
+      agent: { decided: 0, acceptedUnchanged: 0, rejected: 0, pending: 0 },
+    };
   }
 
   /** X3: the answer is stored; validity/action answers become a human decision on the ubicaciones of the question. */

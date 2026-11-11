@@ -286,6 +286,10 @@ export interface ClashGroup {
   questionIds?: string[];
   /** Closed in ACC (D8: ACC wins) while the engine says `real`: shown once for confirmation, never re-proposed. */
   closedInAccWhileReal?: boolean;
+  /** Who proposed what the panel shows (origin badge). Absent on old servers. */
+  provenance?: Provenance;
+  /** Latest live batch carrying this ubicación's decision (loop rail). Absent when none. */
+  batch?: LoopBatchRef;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -676,6 +680,97 @@ export interface TriageFamily {
   pendingSend?: number;
   /** G16: decisions of older family ids (previous signature) that disagree here — a human reviews them. */
   legacyDecisions?: Array<{ familyId: string; version: number; validity: Validity; action: FamilyAction; responsibleDiscipline: string; decidedAt: string }>;
+  /** Who proposed what the panel shows: rule(s) with accuracy, the agent (with its differences), inherited or the human. */
+  provenance?: Provenance;
+  /** Latest live batch carrying this family's decision (loop rail: Lote → ACC). Absent when none. */
+  batch?: LoopBatchRef;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Agent ↔ coordinator loop (docs/ux/agent-human-loop-proposal.md): provenance, learning, rail, dashboard.
+// Every number comes from the server (rule accuracy: server/rule-accuracy.ts, same as Reglas).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface ProvenanceRule {
+  id: string;
+  nameEs: string;
+  /** Clashes of the family / ubicación whose winning rule is this one. */
+  weight: number;
+  /** Ubicaciones whose dominant rule is this one. */
+  groups: number;
+  /** Over every classified test (same as Reglas); rate null = n < minAccuracyN. */
+  accuracy: { agree: number; n: number; rate: number | null; topCorrection?: string };
+  /** DEF-999: no rule covers the case (human review). */
+  fallback?: boolean;
+}
+export type ProposalDiffField = "validity" | "action" | "responsibleDiscipline" | "solutionOption";
+export interface Provenance {
+  /** rule = engine; agent = a pending agent proposal (its values are the ones shown); inherited = decision of an earlier version; human = decided here. */
+  source: "rule" | "agent" | "inherited" | "human";
+  /** Engine rules, heaviest first (always sent, also for agent / human). */
+  rules: ProvenanceRule[];
+  agent?: { proposalId: string; confidence: number | null; confidenceBand?: "alta" | "media" | "baja"; diffs: Array<{ field: ProposalDiffField; ruleValue: string; agentValue: string }> };
+  inheritedFrom?: { version: number; source: "human" | "family" | "acc"; decidedBy?: string };
+  human?: { version?: number; decidedBy: string; decidedAt: string };
+}
+/** What one decision taught one rule (same tally as RuleRow.accuracy). */
+export interface LearningEntry {
+  ruleId: string;
+  /** Agreements added. */
+  hits: number;
+  /** Corrections added; total = same correction for this rule over every classified test, after the decision. */
+  corrections: Array<{ label: string; count: number; total: number }>;
+  after: { rate: number | null; n: number };
+  /** The rule fell below 70 % (n ≥ minAccuracyN) with this decision: marked "por calibrar" in Reglas. */
+  thresholdCrossed?: { rate: number; n: number };
+}
+export interface LearningSummary {
+  learning: LearningEntry[];
+  /** Uncurated feedback records ("Curar reglas" is suggested from curationThreshold). */
+  uncuratedCorrections: number;
+  curationThreshold: number;
+}
+/** Receipt of a family decision (POST /families/:id/decision and /undo). */
+export interface FamilyDecisionReceipt extends LearningSummary {
+  kind: "approved" | "rejected" | "undone";
+  /** New decision version (undo: the version written by the undo). */
+  version?: number;
+  instances: number;
+  rawClashCount: number;
+  /** The decision answered a pending agent proposal; unchanged = accepted exactly as proposed. */
+  agent?: { proposalId: string; unchanged: boolean };
+  /** What "Enviar a aprobación" would pick up now for this test. */
+  readyToSend: { families: number; groups: number };
+}
+export type FamilyDecisionResponse = TriageFamily & { receipt?: FamilyDecisionReceipt };
+/** A batch as seen from one family / ubicación (loop rail). */
+export interface LoopBatchRef {
+  id: string;
+  state: BatchState;
+  stale: boolean;
+  /** Items of this family / ubicación in the batch, and their ACC results. */
+  items: number;
+  applied: number;
+  failed: number;
+  accIssueIds?: string[];
+  message?: string;
+}
+/** GET /projects/:projectId/cycle-loop?testKey — "Ciclo vNN · cómo va el circuito". */
+export interface CycleLoop {
+  projectId: string;
+  testKey: string;
+  version: number;
+  /** Ubicaciones (groups) by who proposed what is shown. */
+  proposals: { engine: number; agent: number };
+  /** Ubicaciones: accepted (as proposed) · corrected · pending · one by one (family released). */
+  decisions: { total: number; accepted: number; corrected: number; pending: number; oneByOne: number };
+  batch?: { id: string; state: BatchState; items: number; approved: boolean };
+  acc: { applied: number; failed: number };
+  learning: { corrections: number; uncurated: number; suggestions: number; published: number };
+  /** Engine accuracy per analysed version of this model set (decisions on that version). */
+  accuracyByVersion: Array<{ version: number; agree: number; n: number; rate: number | null }>;
+  /** Agent family proposals decided by a human, and how many were accepted unchanged. */
+  agent: { decided: number; acceptedUnchanged: number; rejected: number; pending: number };
 }
 /** GET /tests/:testId/families */
 export interface FamiliesPayload { testId: string; families: TriageFamily[]; problemTypes: ProblemTypeInfo[] }
@@ -710,6 +805,10 @@ export interface FamilyDecisionPreview {
   validityChanges: Array<{ groupId: string; title: string; from: Validity; to: Validity }>;
   /** ACC issues a batch would create (family mode: ceil(clashes / 1000); per_instance: one per instance). */
   issues: number;
+  /** What this decision would teach the rules (same tally as Reglas). Absent on old servers. */
+  learning?: LearningEntry[];
+  uncuratedCorrections?: number;
+  curationThreshold?: number;
 }
 
 
@@ -869,6 +968,8 @@ export interface BatchItem {
   /** Exact element of the ACC request body. */
   accNew: unknown;
   origin: "ai_accepted" | "ai_corrected" | "manual";
+  /** Who proposed what was decided: the engine (rules), the agent, or the coordinator (manual / family decision). */
+  proposer?: "motor" | "agente" | "coordinador";
   reasonCode?: ReasonCode;
   reviewer: string;
   aiConfidence?: number;
@@ -1075,6 +1176,8 @@ export interface RuleSuggestion {
   };
   /** Number of coordinator feedback records backing the proposal (0 when backed by evidence only). */
   feedbackCount?: number;
+  /** The feedback records backing it (links to Feedback). */
+  feedbackIds?: string[];
   /** propuesta → aprobada (pendiente de publicar) → publicada (→ revertida). */
   state: "pending" | "approved" | "rejected" | "published" | "reverted";
   createdAt: string;
@@ -1190,7 +1293,7 @@ export interface Endpoints {
   "POST /api/coord/tests/:testId/elements/properties": { req: { refs: string[] }; res: ElementProperties[] };
   "GET /api/coord/tests/:testId/proposals?ids&limit&cursor": { req: void; res: Page<Proposal> };
   /** Human-only. */
-  "POST /api/coord/triage/decisions": { req: Decision[]; res: { saved: string[] } };
+  "POST /api/coord/triage/decisions": { req: Decision[]; res: { saved: string[]; learning?: Array<{ targetId: string; entries: LearningEntry[] }> } };
   "GET /api/coord/decisions?testId&projectId&limit&cursor": { req: void; res: Page<Decision> };
   /** Human-only ("Enviar a aprobación"). */
   "POST /api/coord/batches": { req: { projectId: string; modelSetId: string; testId: string }; res: Batch };

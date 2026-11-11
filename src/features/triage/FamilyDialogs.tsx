@@ -33,7 +33,14 @@ function decisionRequest(store: TriageStore, f: TriageFamily, draft: FamilyDraft
     issueMode: store.state.familySplit.has(f.id) ? "per_instance" : "family",
     spotChecked,
     acknowledgeValidityChanges: acknowledge,
+    // The agent proposal the panel shows: the server marks it applied and the receipt says so.
+    ...(agentProposalId(f) ? { proposalId: agentProposalId(f) } : {}),
   };
+}
+
+/** Pending agent proposal of an undecided family (what «Aceptar propuesta» answers). */
+function agentProposalId(f: TriageFamily): string | undefined {
+  return f.decision?.status === "approved" ? undefined : f.pendingProposals[f.pendingProposals.length - 1]?.id;
 }
 
 /** Push pending exception changes (added, edited, removed) before the decision. */
@@ -97,10 +104,13 @@ export function FamilyApproveDialog({ familyId }: { familyId: string }) {
     setError(null);
     try {
       await syncExceptions(api, store, f);
-      await api.decideFamily(f.id, decisionRequest(store, f, draft!, impact.spotDone, changeRows.length > 0));
+      const corrected = store.state.familyDrafts.has(f.id) && Object.keys(store.state.familyDrafts.get(f.id) ?? {}).length > 0;
+      const res = await api.decideFamily(f.id, decisionRequest(store, f, draft!, impact.spotDone, changeRows.length > 0));
       store.recordFamilyDecision("accept");
       store.applyFamilies(await api.getFamilies(store.state.payload?.test.id ?? ""), f.id);
-      toast.show(t("families.approved", { instances: impact.applied.length, clashes: impact.affectedClashes }));
+      // The receipt stays in the panel (what changed + what the rules learned); the toast stays short.
+      if (res?.receipt) store.setFamilyReceipt({ familyId: f.id, receipt: res.receipt, corrected });
+      toast.show(t("loop.receipt.toast", { instances: res?.receipt?.instances ?? impact.applied.length }));
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e));
       setBusy(false);
@@ -210,9 +220,10 @@ export function FamilyRejectDialog({ familyId }: { familyId: string }) {
     setBusy(true);
     try {
       const testId = store.state.payload?.test.id ?? "";
-      await api.decideFamily(f.id, { testId, decision: "reject", note: [code, note.trim()].filter(Boolean).join(" · ") });
+      const res = await api.decideFamily(f.id, { testId, decision: "reject", note: [code, note.trim()].filter(Boolean).join(" · ") });
       store.recordFamilyDecision("reject");
       store.applyFamilies(await api.getFamilies(testId), f.id);
+      if (res?.receipt) store.setFamilyReceipt({ familyId: f.id, receipt: res.receipt, corrected: false });
       toast.show(t("families.rejected"));
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e));

@@ -285,7 +285,8 @@ export interface FamilyDecisionFields {
 export interface FamilyDecisionVersion extends FamilyDecisionFields {
   familyId: string;
   version: number;
-  status: "approved" | "rejected";
+  /** undone = «Deshacer» with no earlier version: the family is undecided again (append-only marker). */
+  status: "approved" | "rejected" | "undone";
   decidedBy: string;
   decidedAt: string;
   spotChecked: string[];
@@ -473,7 +474,8 @@ export function familyViews(families: readonly FamilyRecord[], groups: readonly 
     const gs = [...ids].map((g) => gById.get(g)).filter((g): g is GroupRecord => !!g);
     if (!gs.length) continue;
     const fs = st.families[id];
-    const dec = currentDecision(fs);
+    const last = currentDecision(fs);
+    const dec = last?.status === "undone" ? undefined : last;
     const approved = dec?.status === "approved" ? dec : undefined;
     const exByGroup = new Map((fs?.exceptions ?? []).map((e) => [e.groupId, e]));
     // Confirmations count for the version they were made on (legacy entries without testKey: as before).

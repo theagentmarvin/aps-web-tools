@@ -6,12 +6,11 @@
  *   toggle → issue preview (one per family, or split per instance).
  * Approval itself happens in FamilyApproveDialog (mandatory confirmation).
  */
-import { useState } from "react";
-import { Link } from "react-router";
+import { useEffect, useState } from "react";
 import { useI18n, useT, type TKey } from "~/i18n";
 import { useApi } from "~/lib/api";
 import { useToast } from "~/lib/components/Toast";
-import type { FamilyAction, FamilyGroup, TriageFamily, Validity } from "~/lib/api/types";
+import type { FamilyAction, FamilyDecisionPreview, FamilyGroup, ProposalDiffField, TriageFamily, Validity } from "~/lib/api/types";
 import { categoryTitle } from "~/lib/category-names";
 import { PriorityChip, ValidityBadge } from "~/lib/components/badges";
 import { IconChevronLeft, IconChevronRight } from "~/lib/components/icons";
@@ -29,31 +28,10 @@ import { MeetingNoteSection } from "./MeetingViews";
 import { AskAgentLink } from "./DetailPanel";
 import { FamilyMoreMenu } from "./FamilyMoreMenu";
 import { rowKey, useTriage, type FamilyDraft, type TriageStore } from "./store";
-
-/** "Propuesta de la regla EST-009": the engine rule(s) behind the group proposal, linked to Reglas (accuracy, calibrate). */
-function ruleLine(f: TriageFamily, store: TriageStore, t: ReturnType<typeof useT>) {
-  const weight = new Map<string, number>();
-  for (const id of f.groupIds) {
-    const g = store.state.groups.get(id);
-    if (g?.ruleId) weight.set(g.ruleId, (weight.get(g.ruleId) ?? 0) + g.clashIds.length);
-  }
-  const rules = [...weight.entries()].sort((a, b) => b[1] - a[1]).map(([id]) => id);
-  if (!rules.length) return null;
-  return (
-    <p className="mt-0.5 text-[11px] text-gray-600">
-      {t("families.ruleOrigin")}{" "}
-      {rules.slice(0, 3).map((id, i) => (
-        <span key={id}>
-          {i > 0 && ", "}
-          <Link to={`/reglas/${encodeURIComponent(id)}`} className="font-mono text-brand hover:underline">
-            {id}
-          </Link>
-        </span>
-      ))}
-      {rules.length > 3 && ` +${rules.length - 3}`}
-    </p>
-  );
-}
+import { LoopRail, familyRail } from "../loop/LoopRail";
+import { NeqMark, OriginBadge } from "../loop/OriginBadge";
+import { ConsequencePopover, useConsequences, type Consequence } from "../loop/Consequences";
+import { DecisionReceipt, learningParts } from "../loop/DecisionReceipt";
 
 export const FAMILY_ACTION_KEY: Record<FamilyAction, TKey> = {
   create_issue: "families.action.create_issue",
@@ -179,7 +157,7 @@ export function FamilyPanel({ familyId }: { familyId: string }) {
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs">
           {worst && <PriorityChip value={worst} />}
           <FamilyTags family={f} />
-          {f.decision?.status === "approved" && <span className="rounded-full border border-green-200 bg-green-50 px-2 text-[11px] leading-5 text-green-800">{t("families.decidedBy", { user: f.decision.decidedBy, version: f.decision.version })}</span>}
+          {/* The approved decision is shown by the origin badge («● Tu decisión · vN») and the rail. */}
           {f.decision?.status === "rejected" && <span className="rounded-full border border-red-200 bg-red-50 px-2 text-[11px] leading-5 text-red-800">{t("families.rejectedBy", { user: f.decision.decidedBy })}</span>}
           <span className="ml-auto whitespace-nowrap font-mono text-[11px] text-gray-400" title={`${t("families.uniqueTooltip", { raw: f.rawClashCount, unique: f.uniqueClashCount })}
 ${f.signature}`}>
@@ -197,10 +175,12 @@ ${f.signature}`}>
             </ul>
           </div>
         )}
+        <LoopRail model={familyRail(t, f, { done: f.groupIds.filter((id) => store.state.latest.has(id)).length, total: f.groupIds.length })} provenance={f.provenance} />
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden" id="triage-detail" tabIndex={-1}>
         {lens === "reunion" && <MeetingNoteSection key={f.id} rowKey={`f:${f.id}`} />}
+        <FamilyReceipt f={f} />
         <FamilyProposal f={f} draft={draft} options={pt?.options ?? []} impact={impact} />
 
         <FamilyChangeLine f={f} />
@@ -224,36 +204,114 @@ ${f.signature}`}>
   );
 }
 
+/** Receipt of the last decision on this family; it stays until the coordinator moves to another group. */
+function FamilyReceipt({ f }: { f: TriageFamily }) {
+  const api = useApi();
+  const toast = useToast();
+  const { store } = useTriageContext();
+  const r = useTriage(store, (s) => s.familyReceipt);
+  const [busy, setBusy] = useState(false);
+  // Leaving the group clears it (the panel is keyed by the cursor).
+  useEffect(() => () => {
+    if (store.state.familyReceipt?.familyId === f.id) store.setFamilyReceipt(null);
+  }, [store, f.id]);
+  if (!r || r.familyId !== f.id) return null;
+  const testId = store.state.payload?.test.id ?? "";
+  async function undo() {
+    if (!f.decision || busy) return;
+    setBusy(true);
+    try {
+      const res = await api.undoFamilyDecision(f.id, { testId, version: f.decision.version });
+      store.applyFamilies(await api.getFamilies(testId), f.id);
+      if (res.receipt) store.setFamilyReceipt({ familyId: f.id, receipt: res.receipt, corrected: false });
+    } catch (err) {
+      toast.show(err instanceof Error ? err.message : String(err), { tone: "error" });
+    } finally {
+      setBusy(false);
+    }
+  }
+  const canUndo = !!f.decision && f.decision.testKey === testId;
+  return <DecisionReceipt receipt={r.receipt} corrected={r.corrected} onUndo={canUndo ? () => void undo() : undefined} undoBusy={busy} />;
+}
+
+type FamilyButton = "accept" | "correct" | "split";
+
 function FamilyProposal({ f, draft, options, impact }: { f: TriageFamily; draft: FamilyDraft; options: string[]; impact: FamilyImpact }) {
   const t = useT();
   const { lang } = useI18n();
+  const api = useApi();
   const { store, actions } = useTriageContext();
   const editing = useTriage(store, (s) => s.editing);
   const disciplines = useTriage(store, (s) => s.disciplines);
   const hint = useTriage(store, (s) => s.hint);
+  const cons = useConsequences<FamilyButton>();
+  const [preview, setPreview] = useState<FamilyDecisionPreview | null>(null);
   const dl = (code: string) => {
     const d = disciplines.find((x) => x.code === code);
     return d ? `${code} · ${lang === "en" ? d.en : d.es}` : code;
   };
-  const agent = f.pendingProposals[0];
+  const decided = f.decision?.status === "approved";
+  const agentP = !decided ? f.pendingProposals[f.pendingProposals.length - 1] : undefined;
+  const prov = f.provenance;
+  const isAgent = !decided && prov?.source === "agent";
+  const diffs = new Map((isAgent ? prov?.agent?.diffs ?? [] : []).map((d) => [d.field, d]));
   const pen = f.evidence.penetrationMm;
-  const why = agent?.rationale ?? t("families.whyDefault", { count: f.instanceCount, levels: f.levels.length, min: Math.round(pen.min), max: Math.round(pen.max) });
+  const why = agentP?.rationale ?? t("families.whyDefault", { count: f.instanceCount, levels: f.levels.length, min: Math.round(pen.min), max: Math.round(pen.max) });
   const spotOk = impact.spotDone.length >= impact.spotRequired;
-  const row = (label: string, value: React.ReactNode) => (
-    <div className="grid grid-cols-[96px_minmax(0,1fr)] items-baseline gap-2">
-      <dt className="text-xs text-gray-500">{label}</dt>
-      <dd className="min-w-0 break-words">{value}</dd>
-    </div>
-  );
-  const sel = "w-full min-w-0 rounded border border-brand-muted/30 bg-white px-1.5 py-1 text-sm";
-  return (
-    <section aria-labelledby="fp-proposal" className="mx-4 mt-3 rounded-lg border border-brand-muted/30 bg-white p-3">
-      <div className="mb-2 flex flex-wrap items-center gap-1.5">
-        <h3 id="fp-proposal" className="mr-auto text-xs font-semibold uppercase tracking-wide text-gray-500">
-          {f.decision?.status === "approved" ? t("families.decisionTitle") : t("families.proposal")}
-        </h3>
-        {agent && <span title={agent.rationale} className="rounded-full border border-violet-200 bg-violet-50 px-2 text-[11px] leading-5 text-violet-800">{t("families.agentSuggested")}</span>}
+  const testId = store.state.payload?.test.id ?? "";
+  const draftKey = JSON.stringify(draft);
+  // Rules line of the consequences: server preview (same tally as Reglas), fetched on the first hover/focus.
+  const wantPreview = cons.active !== null;
+  useEffect(() => {
+    if (!wantPreview || !testId || editing) return;
+    let live = true;
+    api
+      .previewFamilyDecision(f.id, { testId, decision: "approve", validity: draft.validity, action: draft.action, responsibleDiscipline: draft.responsibleDiscipline, ...(agentP ? { proposalId: agentP.id } : {}) })
+      .then((p) => live && setPreview(p), () => undefined);
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, f.id, testId, draftKey, wantPreview, editing, agentP?.id]);
+  const row = (label: string, value: React.ReactNode, field?: ProposalDiffField, ruleLabel?: (v: string) => string) => {
+    const d = field ? diffs.get(field) : undefined;
+    return (
+      <div className="grid grid-cols-[96px_minmax(0,1fr)] items-baseline gap-2">
+        <dt className="text-xs text-gray-500">{label}</dt>
+        <dd className="min-w-0 break-words">
+          {value}
+          {d && <NeqMark value={ruleLabel ? ruleLabel(d.ruleValue) : d.ruleValue} />}
+        </dd>
       </div>
+    );
+  };
+  const sel = "w-full min-w-0 rounded border border-brand-muted/30 bg-white px-1.5 py-1 text-sm";
+  const values = [t(VALIDITY_KEY[draft.validity]), t(FAMILY_ACTION_KEY[draft.action]), draft.responsibleDiscipline].join(" · ");
+  const issueAction = draft.action === "create_issue" || draft.action === "hygiene_issue";
+  const closing = isClosingAction(draft.action);
+  const learnParts = preview?.learning ? learningParts(t, preview.learning) : null;
+  const agentCorr = isAgent ? preview?.learning?.find((l) => l.corrections.some((c) => c.count > 0)) : undefined;
+  const rulesLine = !preview ? t("loop.cons.rulesLoading") : agentCorr ? t("loop.cons.agentRules", { id: agentCorr.ruleId }) : learnParts?.length ? learnParts.join(" · ") : t("loop.cons.rulesNone");
+  const consequences: Record<FamilyButton, Consequence> = {
+    accept: {
+      title: t("loop.cons.title.accept"),
+      now: t("loop.cons.acceptNow", { count: impact.applied.length, values }),
+      after: issueAction ? t("loop.cons.afterIssue", { count: preview?.issues ?? 1 }) : closing ? t("loop.cons.afterClose", { count: impact.affectedClashes }) : t("loop.cons.afterNone"),
+      rules: rulesLine,
+    },
+    correct: { title: t("loop.cons.title.correct"), now: t("loop.cons.correctNow"), after: t("loop.cons.correctAfter"), rules: t("loop.cons.correctRules") },
+    split: { title: t("loop.cons.title.split"), now: t("loop.cons.splitNow"), after: t("loop.cons.splitAfter"), rules: t("loop.cons.splitRules") },
+  };
+  const ruleValueLabel = (field: ProposalDiffField) => (v: string) =>
+    field === "validity" && (VALIDITY_KEY as Record<string, TKey>)[v] ? t((VALIDITY_KEY as Record<string, TKey>)[v]!) : field === "action" && (FAMILY_ACTION_KEY as Record<string, TKey>)[v] ? t((FAMILY_ACTION_KEY as Record<string, TKey>)[v]!) : v || "—";
+  return (
+    <section aria-labelledby="fp-proposal" className={`mx-4 mt-3 rounded-lg border border-brand-muted/30 bg-white p-3 ${isAgent ? "border-l-4 border-l-violet-400" : ""}`}>
+      <div className="mb-1 flex flex-wrap items-center gap-1.5">
+        <h3 id="fp-proposal" className="mr-auto text-xs font-semibold uppercase tracking-wide text-gray-500">
+          {decided ? t("families.decisionTitle") : t("families.proposal")}
+        </h3>
+      </div>
+      <OriginBadge provenance={prov} className="mb-2" />
       {editing ? (
         <div className="space-y-2 text-sm">
           <label className="grid grid-cols-[96px_minmax(0,1fr)] items-center gap-2">
@@ -315,9 +373,9 @@ function FamilyProposal({ f, draft, options, impact }: { f: TriageFamily; draft:
       ) : (
         <>
           <dl className="space-y-1 text-sm">
-            {row(t("detail.field.validity"), <ValidityBadge value={draft.validity} />)}
-            {row(t("detail.suggestedAction"), t(FAMILY_ACTION_KEY[draft.action]))}
-            {row(t("detail.whoMoves"), <>{dl(draft.responsibleDiscipline)}{f.proposed.secondaryDiscipline && <span className="text-xs text-gray-500"> · {t("families.consulted", { d: f.proposed.secondaryDiscipline })}</span>}</>)}
+            {row(t("detail.field.validity"), <ValidityBadge value={draft.validity} />, "validity", ruleValueLabel("validity"))}
+            {row(t("detail.suggestedAction"), t(FAMILY_ACTION_KEY[draft.action]), "action", ruleValueLabel("action"))}
+            {row(t("detail.whoMoves"), <>{dl(draft.responsibleDiscipline)}{f.proposed.secondaryDiscipline && <span className="text-xs text-gray-500"> · {t("families.consulted", { d: f.proposed.secondaryDiscipline })}</span>}</>, "responsibleDiscipline")}
             {row(
               t("families.solution"),
               draft.solutionOption ? (
@@ -329,28 +387,31 @@ function FamilyProposal({ f, draft, options, impact }: { f: TriageFamily; draft:
                   ))}
                 </ol>
               ),
+              "solutionOption",
             )}
           </dl>
           <p className="mt-2 text-xs text-gray-700" lang="es" title={why}>
+            {isAgent && <span aria-hidden="true" className="text-actor-agent">✦ </span>}
             {oneLine(why)}
           </p>
         </>
       )}
       {!editing && (
         <div className="mt-3">
-          <div className="grid grid-cols-3 gap-1.5">
-            <button type="button" onClick={() => actions.accept()} className="flex min-w-0 items-center justify-center gap-1 rounded bg-brand px-1.5 py-1.5 text-xs font-medium text-white hover:bg-brand-light">
-              {f.decision?.status === "approved" ? t("families.reapprove") : t("families.approve")} <kbd className="rounded border border-white/40 px-1 font-mono text-[10px]">A</kbd>
-            </button>
-            <button type="button" onClick={() => store.setEditing(true)} className="flex min-w-0 items-center justify-center gap-1 rounded border border-brand-muted/30 px-1.5 py-1.5 text-xs text-gray-700 hover:border-brand-light/40">
-              {t("families.correct")} <Kbd>E</Kbd>
-            </button>
-            <button type="button" onClick={() => actions.reject()} className="flex min-w-0 items-center justify-center gap-1 rounded border border-brand-muted/30 px-1.5 py-1.5 text-xs text-gray-700 hover:border-brand-light/40">
-              {t("families.split")} <Kbd>X</Kbd>
-            </button>
+          <div className="relative">
+            <div className="grid grid-cols-3 gap-1.5" role="group" aria-label={t("families.proposal")}>
+              <button type="button" title={t("families.acceptTip")} {...cons.bind("accept")} onClick={() => actions.accept()} className="flex min-w-0 items-center justify-center gap-1 rounded bg-brand px-1.5 py-1.5 text-xs font-medium text-white hover:bg-brand-light">
+                {f.decision?.status === "approved" ? t("families.reapprove") : t("families.approve")} <kbd className="rounded border border-white/40 px-1 font-mono text-[10px]">A</kbd>
+              </button>
+              <button type="button" title={t("families.correctTip")} {...cons.bind("correct")} onClick={() => store.setEditing(true)} className="flex min-w-0 items-center justify-center gap-1 rounded border border-brand-muted/30 px-1.5 py-1.5 text-xs text-gray-700 hover:border-brand-light/40">
+                {t("families.correct")} <Kbd>E</Kbd>
+              </button>
+              <button type="button" title={t("families.splitTip")} aria-label={t("families.splitLong")} {...cons.bind("split")} onClick={() => actions.reject()} className="flex min-w-0 items-center justify-center gap-1 rounded border border-brand-muted/30 px-1.5 py-1.5 text-xs text-gray-700 hover:border-brand-light/40">
+                {t("families.split")} <Kbd>X</Kbd>
+              </button>
+            </div>
+            <ConsequencePopover items={consequences} active={cons.active} idOf={cons.idOf} />
           </div>
-          <p className="mt-1.5 text-[11px] leading-snug text-gray-600">{t("families.actionsHelp")}</p>
-          {ruleLine(f, store, t)}
           <p className="mt-1.5 text-[11px] text-gray-600">
             {t("families.blastRadius", { clashes: impact.affectedClashes, instances: impact.applied.length })}
             {impact.excepted.length > 0 && ` · ${t("families.exceptionsCount", { count: impact.excepted.length })}`}

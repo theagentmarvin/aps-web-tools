@@ -13,7 +13,7 @@ import { parse as parseYaml } from "yaml";
 import type { CompiledRuleSet } from "../core/rules/load";
 import type { Coordinator } from "./coordinator";
 import { CLOSABLE, loadRules, runEngine, type EngineOutput } from "./engine";
-import { affectedCounts, describeRuleChange, ruleLabelEs, VALIDITY_ES } from "./rule-effect";
+import { affectedCounts, describeRuleChange, ruleLabelEs } from "./rule-effect";
 import {
   ACTIVE_FILE,
   ARCHIVE_FILE,
@@ -39,6 +39,7 @@ import {
   type RuleFiles,
 } from "./rule-authoring";
 import { DEFAULT_RULES_DIR } from "./rules-loader";
+import { mergeInto, MIN_ACCURACY_N, tallyTest, type AccuracyMap, type TallyFamilyDecision } from "./rule-accuracy";
 import { checkAgentText } from "./sanitize";
 import type { Actor, TestRecord } from "./store/types";
 import type { RuleChangePreview, RuleInsights, RuleLibraryRow, RuleRow, RulesOverview, RuleShadow } from "./api/contract";
@@ -69,7 +70,6 @@ export type ArchiveRow = RuleLibraryRow;
 export type RulesOverviewData = RulesOverview;
 export type { RuleInsights };
 
-const MIN_ACCURACY_N = 5;
 
 /** Section (id prefix) of a new rule from its outcome and sides: the server picks its precedence. */
 export function sectionPrefixFor(r: Pick<RawRule, "when" | "then">): string {
@@ -430,54 +430,25 @@ export class RuleAuthoring {
 
   // ── Read models ────────────────────────────────────────────────────────────
 
-  /** Agreement of human decisions with each rule's outcome (dominant rule of the decided group). */
-  async accuracy(): Promise<Map<string, { agree: number; n: number; corrections: Map<string, number> }>> {
-    const out = new Map<string, { agree: number; n: number; corrections: Map<string, number> }>();
-    const val = (v: unknown) => VALIDITY_ES[String(v).replace(/"/g, "")] ?? String(v);
-    for (const t of await this.classifiedTests()) {
-      const cls = (await this.coord.store.getClassification(t.testKey))!;
-      const decided = await this.coord.effectiveDecisions(t.testKey);
-      const gById = new Map(cls.groups.map((g) => [g.id, g]));
-      for (const [gid, d] of decided) {
-        const r = gById.get(gid)?.ruleIds[0];
-        if (!r || (d.kind !== "accept" && d.kind !== "correct" && d.kind !== "reject") || d.carriedFrom) continue;
-        const s = out.get(r) ?? { agree: 0, n: 0, corrections: new Map<string, number>() };
-        s.n++;
-        const vc = d.changes.find((c) => c.field === "validity");
-        const oc = d.changes.find((c) => c.field === "owner");
-        if (d.kind === "accept" || (d.kind === "correct" && !vc && !oc)) s.agree++;
-        else {
-          const label = d.kind === "reject" ? "propuesta rechazada" : vc ? `${val(vc.aiValue)} → ${val(vc.humanValue)}` : `responsable ${String(oc!.aiValue)} → ${String(oc!.humanValue)}`;
-          s.corrections.set(label, (s.corrections.get(label) ?? 0) + 1);
-        }
-        out.set(r, s);
-      }
-      // Group ("familia") decisions — the coordinator's usual way to decide — count too, once per covered
-      // ubicación that has no decision of its own: same validity and responsible = agreement with its rule.
-      // "Decidir una por una" (rejected family) is not counted: the individual decisions that follow are.
-      const views = await this.coord.familyViewsFor(t.testKey).then((x) => x.views).catch(() => []);
-      for (const v of views) {
-        const dec = v.decision;
-        if (!dec || dec.status !== "approved" || dec.testKey !== t.testKey) continue;
-        for (const gid of dec.coveredGroupIds) {
-          if (decided.has(gid)) continue;
-          const g = gById.get(gid);
-          const r = g?.ruleIds[0];
-          if (!g || !r) continue;
-          const s = out.get(r) ?? { agree: 0, n: 0, corrections: new Map<string, number>() };
-          s.n++;
-          const sameValidity = dec.validity === g.validity;
-          const sameOwner = dec.responsibleDiscipline === g.responsibleDiscipline;
-          if (sameValidity && sameOwner) s.agree++;
-          else {
-            const label = !sameValidity ? `${val(g.validity)} → ${val(dec.validity)}` : `responsable ${g.responsibleDiscipline} → ${dec.responsibleDiscipline}`;
-            s.corrections.set(label, (s.corrections.get(label) ?? 0) + 1);
-          }
-          out.set(r, s);
-        }
-      }
-    }
+  /** Agreement of human decisions with each rule's outcome (shared tally: server/rule-accuracy.ts). */
+  async accuracy(): Promise<AccuracyMap> {
+    const out: AccuracyMap = new Map();
+    for (const t of await this.classifiedTests()) mergeInto(out, await this.accuracyForTest(t.testKey));
     return out;
+  }
+
+  /**
+   * Tally of one classified test. `family` replaces the current decision of one family (preview of a
+   * decision not taken yet: same function, so receipt numbers equal the Reglas page deltas).
+   */
+  async accuracyForTest(testKey: string, family?: { familyId: string; decision: TallyFamilyDecision | null }): Promise<AccuracyMap> {
+    const cls = await this.coord.store.getClassification(testKey);
+    if (!cls) return new Map();
+    const decided = await this.coord.effectiveDecisions(testKey);
+    // Group ("familia") decisions — the coordinator's usual way to decide — count too (see rule-accuracy.ts).
+    const views = await this.coord.familyViewsFor(testKey).then((x) => x.views).catch(() => []);
+    const familyDecisions: Array<TallyFamilyDecision | undefined> = views.map((v) => (family && v.id === family.familyId ? (family.decision ?? undefined) : v.decision));
+    return tallyTest({ testKey, groups: cls.groups, decided, familyDecisions });
   }
 
   /** Winning-rule counts: per test (clashes + ubicaciones) and over all classified tests. */

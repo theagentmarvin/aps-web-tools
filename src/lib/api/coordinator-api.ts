@@ -129,7 +129,13 @@ export interface CoordinatorApi {
   /** What a family decision would touch (validity changes to acknowledge, issues, spot-check need). */
   previewFamilyDecision(familyId: string, req: FamilyDecisionRequest): Promise<FamilyDecisionPreview>;
   /** Approve or reject one family decision (human-only, CSRF). Nothing reaches ACC until an approved batch. */
-  decideFamily(familyId: string, req: FamilyDecisionRequest): Promise<unknown>;
+  decideFamily(familyId: string, req: FamilyDecisionRequest): Promise<import("./types").FamilyDecisionResponse>;
+  /** «Deshacer» of the decision receipt: a new version restoring the previous one (human-only, CSRF). */
+  undoFamilyDecision(familyId: string, req: { testId: string; version: number }): Promise<import("./types").FamilyDecisionResponse>;
+  /** Chat card «Rechazar»: the agent proposal moves to rejected and the rejection is recorded as feedback. */
+  rejectAgentProposal(proposalId: string, reason?: string): Promise<{ proposalId: string; state: string; feedbackId: string }>;
+  /** «Ciclo vNN · cómo va el circuito» (project page). */
+  getCycleLoop(projectId: string, testKey?: string): Promise<import("./types").CycleLoop>;
   /** M3 (read-only): ACC issues checked against a test, with a verdict each. */
   getIssueChecks(testId: string): Promise<IssueChecksPayload>;
   /** M3: copy-ready follow-up reminder per responsible discipline. */
@@ -171,7 +177,7 @@ export interface CoordinatorApi {
   listAssignees(projectId: string): Promise<Assignee[]>;
 
   // Decisions (idempotent by Decision.id)
-  saveDecisions(decisions: Decision[]): Promise<{ saved: string[] }>;
+  saveDecisions(decisions: Decision[]): Promise<{ saved: string[]; learning?: Array<{ targetId: string; entries: import("./types").LearningEntry[] }> }>;
   listDecisions(params: { testId?: string; projectId?: string; limit?: number; cursor?: string }): Promise<Page<Decision>>;
   /** Moves decided, unbatched items of this test into a `ready` batch. */
   sendToApproval(params: { projectId: string; modelSetId: string; testId: string }): Promise<Batch>;

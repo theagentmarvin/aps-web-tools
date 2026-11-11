@@ -30,6 +30,21 @@
   --color-status-reviewed: #A32428;
   --color-status-resolved: #15803D;
   --color-status-closed: #9CA3AF;
+
+  /* Agent ↔ coordinator loop: one mark per actor (glyph + word + colour, never colour alone).
+     docs/ux/agent-human-loop-proposal.md §3. Amber stays reserved for warnings, not an actor. */
+  --color-actor-engine: #3F4A56;     /* ⚙ Motor (reglas) */
+  --color-actor-engine-bg: #EEF1F4;
+  --color-actor-engine-bd: #CBD3DC;
+  --color-actor-agent: #5B21B6;      /* ✦ Agente IA */
+  --color-actor-agent-bg: #F3EEFF;
+  --color-actor-agent-bd: #D9C9FB;
+  --color-actor-human: #A32428;      /* ● Tú (marca) */
+  --color-actor-human-bg: #F6E9E9;
+  --color-actor-human-bd: #E7C3C4;
+  --color-actor-acc: #0E5A6B;        /* ▲ ACC (teal propio, no la marca de Autodesk) */
+  --color-actor-acc-bg: #E6F3F5;
+  --color-actor-acc-bd: #B5DCE3;
 }
 
 /* Global focus ring (§7.3). */
