@@ -1,20 +1,15 @@
 /**
  * "Qué sigue" / Flujos glue (WS-N): URLs of human steps and the app-wide events that open the Flujos
- * drawer and the agent-update dialog. A step's action comes from the server (server/next-steps.ts).
+ * drawer. A step's action comes from the server (server/next-steps.ts).
  */
 import type { NextStepAction } from "~/lib/api/types";
 
 export const OPEN_FLOWS_EVENT = "coord:open-flows";
-export const OPEN_HARNESS_EVENT = "coord:open-harness";
 /** Fired after a flow starts / ends so cards and the nav badge reload. */
 export const FLOWS_CHANGED_EVENT = "coord:flows-changed";
 
 export function openFlows(runId?: string): void {
   window.dispatchEvent(new CustomEvent(OPEN_FLOWS_EVENT, { detail: { runId } }));
-}
-
-export function openHarnessDialog(): void {
-  window.dispatchEvent(new Event(OPEN_HARNESS_EVENT));
 }
 
 export function flowsChanged(): void {
@@ -47,8 +42,6 @@ export function stepHref(a: NextStepAction): string | null {
       return p.projectId ? `/proyectos/${enc(p.projectId)}?${new URLSearchParams({ ...(p.modelSetId ? { modelSet: p.modelSetId } : {}), tab: a.route === "disciplines" ? "disciplinas" : "higiene" }).toString()}` : null;
     case "reports":
       return p.projectId ? `/proyectos/${enc(p.projectId)}` : null;
-    case "harness":
-      return null;
     default:
       return null;
   }

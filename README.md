@@ -1,6 +1,6 @@
 # Coordinador BIM — agente de coordinación de interferencias (SalfaCorp)
 
-Agente de IA que corre en **Claude Code** dentro de este repositorio, más una **aplicación web local** (`http://localhost:3000`) para revisar y aprobar su trabajo. Lee las pruebas de interferencias de **ACC Model Coordination**, las agrupa, clasifica y prioriza, y redacta incidencias como **propuestas**. Una persona las revisa y las aprueba; recién entonces se escriben en ACC.
+**Aplicación web local** (`http://localhost:3000`) con un **agente de coordinación integrado** (chat y flujos, Claude Code sin interfaz lanzado por la app) para revisar y aprobar su trabajo. El repositorio, abierto en VS Code, es además el **modo desarrollo**: ahí le pides a Claude mejoras de la app o del agente. Lee las pruebas de interferencias de **ACC Model Coordination**, las agrupa, clasifica y prioriza, y redacta incidencias como **propuestas**. Una persona las revisa y las aprueba; recién entonces se escriben en ACC.
 
 > **Uso sujeto al *Procedimiento Acceso Herramientas IA* de SalfaCorp.** Es la base del uso correcto de la IA en la empresa. Léelo antes de usar este repositorio con datos de proyectos reales (ver [Gobernanza y datos](#gobernanza-y-datos)).
 
@@ -22,7 +22,7 @@ Estado: **piloto**. Validado solo con datos sintéticos. Ver [Límites actuales]
 **Cómo llega algo a ACC (única vía):**
 
 ```
-Agente (Claude Code) ──propuestas──▶ .coordinator/ (local)
+Agente de la app (chat / flujos) ──propuestas──▶ carpeta de datos (local)
                                          │
 Tú, en la UI web:  revisar (/coordinacion) ─▶ enviar a aprobación ─▶ aprobar con passkey (Windows Hello)
                                                                        │
@@ -37,27 +37,17 @@ Sin una aprobación firmada con tu passkey (verificación de usuario: PIN o biom
 
 Usa el proyecto sintético `tests/fixtures/` ("Edificio Demo Las Condes", pruebas v41 y v42, ~300 interferencias). No hay red ni ACC; las "escrituras" se registran en un archivo local y nunca se envían.
 
-Requisitos: Node.js 22+ y Claude Code instalados. No necesita `npm run setup` ni credenciales.
+Requisitos: Node.js 22+ y Claude Code instalados (con sesión iniciada para el chat y los flujos). Sin credenciales de Autodesk.
 
 ```bash
 npm install
-npm run demo            # terminal 1: UI web en modo fixtures → http://localhost:3000
+npm run demo            # UI web en modo fixtures → http://localhost:3000
                         # si el puerto 3000 está ocupado: npm run demo -- --port 3005
 ```
 
-`npm run demo` también genera `.mcp.demo.json` (ignorado por git), que conecta al agente con los **mismos** datos de demostración (`.coordinator-demo/`). En una **segunda terminal**, en la carpeta del repo:
-
-```bash
-claude --mcp-config .mcp.demo.json
-```
-
-Dentro de Claude Code:
-
-```
-/triage
-```
-
-El agente ingiere la prueba, clasifica, revisa los grupos dudosos y te deja un resumen con enlaces. Luego en el navegador:
+En la página del proyecto, la tarjeta **Qué sigue** propone «Preparar el ciclo» → **Ejecutar** (o pídeselo al
+**chat**). El agente de la app ingiere la prueba, clasifica, revisa los grupos dudosos y deja propuestas y
+preguntas. Luego en el navegador:
 
 1. Abre `http://localhost:3000` → **Proyectos** → Edificio Demo Las Condes → **Abrir coordinación**.
 2. Revisa con el teclado (`j`/`k`, `a`, `x`, `1`–`4`; ver [Atajos](#atajos-principales)).
@@ -70,19 +60,15 @@ El agente ingiere la prueba, clasifica, revisa los grupos dudosos y te deja un r
 
 Primera instalación: [`docs/setup.md`](docs/setup.md). Después, cada semana:
 
-1. **Levanta la UI**: `npm run dev` y abre `http://localhost:3000` (no `127.0.0.1`: la passkey no funciona con IP). Inicia sesión con Autodesk.
-2. **Coordina la prueba** en Claude Code (`claude` en la carpeta del repo):
-   ```
-   /coordinar-test Torre B "Coordinación general"
-   ```
-   El agente hace ingesta → reglas → higiene de modelos → diferencias con la prueba anterior → revisión IA de grupos dudosos → borradores de incidencias, y entrega ≤ 25 líneas con las **preguntas para ti** (con `groupId`) y el enlace de revisión.
+1. **Abre la app**: doble clic en `Coordinador BIM.cmd` (o `npm run dev`) y abre `http://localhost:3000` (no `127.0.0.1`: la passkey no funciona con IP). Inicia sesión con Autodesk.
+2. **Prepara el ciclo**: en el proyecto, **Qué sigue → Preparar el ciclo → Ejecutar** (o pídelo en el chat). El agente de la app hace ingesta → reglas → higiene → diferencias con la versión anterior → revisión IA de lo que cambió, y deja propuestas y **preguntas para ti**.
 3. **Revisa en `/coordinacion/<proyecto>/<conjunto>`** con el teclado. La vista 3D enfoca cada grupo: lado **A en azul**, lado **B en naranja**, resto en rayos X. Cada corrección pide un **código de motivo** (una tecla); eso alimenta el aprendizaje.
 4. **Envía a aprobación** (`Ctrl+Enter`) → **`/aprobaciones`** → abre el lote:
    - **Comprobar con ACC** (pre-chequeo; obligatorio, < 10 min de antigüedad). Los conflictos quedan excluidos.
    - Revisa las pestañas **Cambios** e **Incidencias** (lo que verá quien recibe la incidencia).
    - **Aprobar** → escribe `APLICAR` si hay incidencias o ≥ 50 cambios → **Windows Hello**.
    - Revisa la **simulación** (las solicitudes exactas a ACC) → **Aplicar**.
-5. **Informe**: `/informe-semanal` para la reunión.
+5. **Informe**: flujo **Informe semanal** para la reunión.
 
 ### Atajos principales
 
@@ -105,27 +91,30 @@ Primera instalación: [`docs/setup.md`](docs/setup.md). Después, cada semana:
 
 ---
 
-## Comandos del agente (skills)
+## Flujos del agente de la app
 
-| Comando | Para qué | Escribe propuestas |
+Se ejecutan desde **Qué sigue** / **Flujos** o pidiéndolos en el chat ([detalle](docs/domain/next-steps-and-flows.md)):
+
+| Flujo | Para qué | Deja |
 |---|---|---|
-| `/coordinar-test [proyecto] [conjunto] [prueba]` | Flujo completo: ingesta, reglas, higiene, diferencias de ciclo, revisión IA, borradores de incidencias, entrega a aprobación | Sí |
-| `/triage [testKey o vista]` | Panorama rápido: cuántas son reales, por disciplina; revisión IA solo de lo dudoso; sin incidencias | Sí (clasificación) |
-| `/redactar-issues [G-… \| P1 \| P1-P2 \| todos]` | Borradores de incidencias en español para grupos reales y de higiene | Sí (incidencias) |
-| `/informe-semanal [proyecto] [html\|md]` | Informe de la semana con narrativa para la reunión (`xlsx` aún no disponible) | No |
-| `/auditar-modelo [testKey]` | Higiene de modelos: duplicados, copias de otras disciplinas, elementos sin nivel o sistema | No |
-| `/curar-reglas [projectId \| desde AAAA-MM-DD]` | Convierte tus correcciones en cambios de reglas propuestos y evaluados | Sí (cambio de reglas) |
+| Preparar el ciclo | Ingesta, reglas, higiene, diferencias de ciclo, revisión IA de lo que cambió, preguntas | Propuestas, preguntas |
+| Triage | Revisión IA de lo que el motor marcó para revisión humana | Propuestas, preguntas |
+| Acta | Notas de reunión → borradores de decisión | Borradores, preguntas |
+| Redactar incidencias | Borradores en español para reales P1–P2 | Borradores de incidencia |
+| Informe semanal | Informe con narrativa para la reunión (`xlsx` aún no disponible) | Un informe |
+| Auditar modelo | Higiene: duplicados, copias, elementos sin nivel o sistema | Hallazgos |
+| Curar reglas | Correcciones → reglas nuevas, calibraciones, retiros | Sugerencias de reglas |
 
-Puedes pedir cosas en lenguaje natural ("¿qué hay de nuevo en el nivel 3?"); el agente usa las mismas herramientas. Toda cifra que da sale de una herramienta, no de la memoria del modelo.
+En el chat puedes preguntar en lenguaje natural ("¿qué hay de nuevo en el nivel 3?"). Toda cifra sale de una herramienta, no de la memoria del modelo. El agente de la app nunca cambia la app.
 
 ---
 
 ## Cómo mejorar el agente
 
 1. **Corrige en la UI con motivo.** Cada corrección (prioridad, validez, responsable, agrupación) guarda el valor de la IA, el tuyo y el código de motivo (R01–R13, R99). Si marcas "Sugerir una regla para casos similares", queda para el curador.
-2. **`/curar-reglas`** revisa las correcciones acumuladas y propone un parche mínimo a `rules/*.yaml`, evaluado contra los escenarios y tu historial (puertas: 0 cierres inseguros, 0 falsos negativos críticos). Aparece en **Reglas › Sugerencias**.
-3. **Una persona hace el merge** del YAML con git (el agente no puede editar `rules/`). Revisa el diff, corre `npm test` y `npm run eval`, y haz commit/PR.
-4. **Notas del proyecto.** Convenciones acordadas (p. ej. "las pasadas en losa de SAN están modeladas como camisas") van a `.coordinator/projects/<projectId>/notes.md`. El agente propone la línea y la escribe solo con tu confirmación; `/coordinar-test` y `/triage` la leen. Son locales a tu equipo (no se comparten).
+2. **Flujo Curar reglas** revisa las correcciones acumuladas y propone cambios a las reglas, evaluados contra los escenarios y tu historial (puertas: 0 cierres inseguros, 0 falsos negativos críticos). Aparecen en **Reglas › Sugerencias**, donde tú los apruebas y **publicas con passkey**.
+3. **Notas del proyecto.** Convenciones acordadas (p. ej. "las pasadas en losa de SAN están modeladas como camisas") van a `projects/<projectId>/notes.md` en tu carpeta de datos; los flujos las leen. Son locales a tu equipo.
+4. **Mejorar la app o el agente en sí** (instrucciones, nuevas pantallas, nuevos flujos): abre el repo en VS Code y pídeselo a Claude (`/mejorar`). Ver [modo desarrollo](docs/setup.md#8-mejorar-la-app-o-el-agente-vs-code-modo-desarrollo).
 
 ---
 
@@ -158,13 +147,10 @@ Ser explícitos aquí es parte del diseño. Resumen de [`docs/domain/engine-revi
 ## Mapa del repositorio
 
 ```
-CLAUDE.md               Constitución del agente (reglas duras, procedimiento)
-.claude/
-  skills/               /coordinar-test, /triage, /redactar-issues, /informe-semanal, /auditar-modelo, /curar-reglas
-  agents/               Subagentes: clash-triager, issue-writer, model-hygiene-auditor, rules-curator
-  hooks/                Guardas: bloquean escrituras directas, secretos, aplicar sin aprobación, edición de config
-  settings.json         Permisos de Claude Code
-.mcp.json               Registra el servidor MCP "coord" (lo genera npm run setup)
+agent-runtime/          Agente de la app (chat y flujos): CLAUDE.md, agents/, skills/, hooks/, settings.json.
+                        Viaja con la app; el servidor lo copia a %LOCALAPPDATA%\bim-coordinator\agent-runtime\ al iniciar
+dev-harness/            Modo desarrollo (VS Code): CLAUDE.md, .claude/ (guardas mínimas, /mejorar), .mcp.json;
+                        se activa una vez con scripts/activate-dev-harness.ps1 → CLAUDE.md, .claude/, .mcp.json
 coordinator.config.json Configuración del equipo (autonomía, umbrales); .local.json para ajustes personales
 core/                   Motor puro: ingesta, clasificación, agrupación, prioridad, diferencias (sin red)
 server/
@@ -174,7 +160,9 @@ server/
   approval/             Único módulo que escribe en ACC (verifica aprobación, dry run, idempotencia)
   store/ secure/        Almacén local .coordinator/ y claves fuera del repo
   source/               Fuente de datos: ACC real o fixtures
-  templates/            Plantillas de .mcp.json y coordinator.config.json
+  templates/            Valores por defecto de coordinator.config.json
+  agent-runtime.ts      Copia verificada del agente de la app a su carpeta privada
+  chat/ flows/          Chat y flujos (lanzan claude -p con el agente de la app)
   cli.ts                npm run coordinator -- login | passkey-enroll | status | …
 src/                    UI web (español): coordinación, aprobaciones, reglas, reportes, auditoría, ajustes
 rules/                  Reglas de clasificación, matriz de disciplinas, prioridad, alias de propiedades (YAML)
@@ -192,24 +180,22 @@ tests/                  Pruebas (vitest) y fixtures sintéticos
 
 Comandos útiles: `npm run dev` (UI + API), `npm test`, `npm run typecheck`, `npm run eval` (reglas), `npm run coordinator -- status`.
 
-### Para quien desarrolla el harness
+### Modo desarrollo (VS Code)
 
-`.claude/`, `.mcp.json` y `coordinator.config*.json` están protegidos por hooks. Para editarlos con Claude Code, inícialo en modo desarrollo **desde tu terminal** (el agente no puede activarlo):
-
-```bash
-COORD_HARNESS_DEV=1 claude                       # Git Bash
-$env:COORD_HARNESS_DEV = "1"; claude             # PowerShell
-```
-
-El modo desarrollo nunca relaja la protección de tokens, secretos ni aprobaciones. Código e identificadores en inglés; UI y respuestas del agente en español.
+Abrir el repo en VS Code (o `claude` en la carpeta) es el **agente de desarrollo**: implementa mejoras de la app
+o del agente de la app, corre typecheck y tests y hace commit cuando estás de acuerdo (`/mejorar`). Se activa una
+vez, en tu terminal: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\activate-dev-harness.ps1`.
+Trabaja con fixtures; no lee datos reales, respaldos ni secretos y nunca aplica en ACC. Las invariantes de
+seguridad de la app las vigilan los tests. Diseño: [`docs/ai/harness-design.md`](docs/ai/harness-design.md).
+Código e identificadores en inglés; UI y respuestas del agente en español.
 
 ---
 
 ## English summary
 
-**BIM Coordinator** is a Claude Code agent harness plus a local web app for SalfaCorp BIM coordinators. The agent ingests ACC Model Coordination clash tests, groups, de-duplicates, classifies (deterministic YAML rules plus LLM review of uncertain groups) and prioritizes clashes, and drafts ACC issues as **proposals**. It never writes to ACC: a human reviews proposals in the web UI (`/coordinacion/...`, keyboard-first), sends them to a batch, approves it with a passkey (Windows Hello, user-verified WebAuthn), checks a dry run and only then does the server apply the batch to ACC. Corrections with reason codes feed `/curar-reglas`, which proposes evaluated rule patches that a human merges.
+**BIM Coordinator** is a local web app with an embedded coordination agent (chat + flows: headless Claude Code launched by the server from `agent-runtime/`) for SalfaCorp BIM coordinators; the repo opened in VS Code is a separate developer agent (`dev-harness/`). The agent ingests ACC Model Coordination clash tests, groups, de-duplicates, classifies (deterministic YAML rules plus LLM review of uncertain groups) and prioritizes clashes, and drafts ACC issues as **proposals**. It never writes to ACC: a human reviews proposals in the web UI (`/coordinacion/...`, keyboard-first), sends them to a batch, approves it with a passkey (Windows Hello, user-verified WebAuthn), checks a dry run and only then does the server apply the batch to ACC. Corrections with reason codes feed the "Curar reglas" flow, which proposes evaluated rule changes that a human publishes with a passkey.
 
-- Demo without credentials: `npm install`, `npm run demo`, then `claude --mcp-config .mcp.demo.json` and `/triage`.
+- Demo without credentials: `npm install`, `npm run demo`, then run the "Preparar el ciclo" flow from "Qué sigue" or the chat.
 - First install: `docs/setup.md`. Pilot checklist: `docs/pilot-checklist.md`.
 - Status: pilot. Validated on synthetic fixtures only. Rules still need calibration with real data, and several ACC API details are unverified on a live tenant. Run a read-only shadow week before applying anything.
 - Usage must follow SalfaCorp's *AI Tools Access Procedure*. Secrets are never committed. ACC data stays local in `.coordinator/`.

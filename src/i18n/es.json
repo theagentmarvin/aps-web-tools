@@ -1080,33 +1080,6 @@
       "unknown": "No se pudo completar la confirmación: {message}"
     }
   },
-  "harness": {
-    "banner_one": "Hay una actualización del agente (1 archivo)",
-    "banner_other": "Hay una actualización del agente ({count} archivos)",
-    "review": "Revisar e instalar",
-    "dialogTitle": "Actualización del agente",
-    "intro": "Estas son las instrucciones, habilidades y guardas del agente revisadas en el repositorio. Al instalar se copian a .claude/ (la versión anterior queda respaldada) y se registra en la auditoría.",
-    "versions": "Instalada {installed} → nueva {staged}",
-    "state": {
-      "added": "Nuevo",
-      "changed": "Modificado",
-      "removed": "Eliminado",
-      "same": "Sin cambios"
-    },
-    "showDiff": "Ver cambios",
-    "hideDiff": "Ocultar cambios",
-    "diffLoading": "Cargando cambios…",
-    "diffTruncated": "Diferencias recortadas (archivo muy grande).",
-    "refused": "No se instalan (fuera de .claude/ y CLAUDE.md): {files}",
-    "blocked": "Este servidor lo inició un agente (Claude Code): por seguridad no instala actualizaciones. Ciérralo y abre la app con «Coordinador BIM.cmd».",
-    "demo": "En modo demostración no hay agente que actualizar.",
-    "passkeyHint": "Windows Hello te pedirá PIN o biometría para firmar exactamente estos archivos.",
-    "install": "Instalar con passkey",
-    "installing": "Probando e instalando…",
-    "installed_one": "Agente actualizado (1 archivo).",
-    "installed_other": "Agente actualizado ({count} archivos).",
-    "restart": "Reinicia las sesiones del agente (VS Code / chat) para usar la versión nueva."
-  },
   "grid": {
     "tabs": {
       "grid": "Matriz de interferencias",
@@ -1872,7 +1845,7 @@
     "humanStep": "Tu decisión",
     "running": "En curso: {label}",
     "viewFlows": "Ver flujos",
-    "unavailable": "Actualiza el agente (aviso superior) para ejecutar flujos.",
+    "unavailable": "Los flujos no están disponibles: reinicia la app con «Coordinador BIM.cmd».",
     "busy": "Ya hay un flujo en curso en este proyecto.",
     "compactTitle": "Qué sigue en este proyecto",
     "noProject": "Abre un proyecto para ver qué sigue."

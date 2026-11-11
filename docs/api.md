@@ -8,7 +8,7 @@ One service layer (`server/coordinator.ts` + `server/coordinator-ui.ts`) backs t
 
 | What | Command |
 |---|---|
-| Install (human, once) | `npm run setup`. Interactive TTY only, refused under Claude Code. Installs `.mcp.json` and `coordinator.config.json` from `server/templates/`, installs `harness-staging/` into `.claude/` after you type INSTALAR (writes an audit event), runs the hook tests, checks the APS variables and prints the manual steps. `npm run setup -- --check` is read-only and fails while the harness dev marker exists. |
+| Agent setup | None. The in-app agent (chat + flows) ships in `agent-runtime/` and is materialised by the server at start. The VS Code developer harness is activated once with `scripts/activate-dev-harness.ps1` (refused under Claude Code). Config defaults: `server/templates/coordinator.config.json`. |
 | Offline demo | `npm run demo`. Runs Vite and the API with `COORD_DATA_SOURCE=fixtures`, `COORDINATOR_HOME=.coordinator-demo` and `VITE_COORD_API=http`, and writes `.mcp.demo.json`. Start the agent with `claude --mcp-config .mcp.demo.json`. No setup needed. |
 | Web UI + API (dev) | `npm run dev` (Vite on port 3000 with `strictPort`, mounts `/api/coord/*`) |
 | API only | `npm run api` (127.0.0.1:3001, `COORD_API_PORT` to change) |
@@ -146,10 +146,6 @@ The approver identity is the APS profile in live mode, else `approver.name` from
 | GET | `/rules/:ruleId` | – | `RuleDetail` |
 | GET | `/rule-suggestions` | – | `RuleSuggestion[]` |
 | POST H | `/rule-suggestions/:id/decision` | `{decision}` | `RuleSuggestion` (does not edit `rules/`; a human merges with git) |
-| GET | `/harness/status` | – | `HarnessStatus` `{upToDate, staging, files[{path, state: added|changed|removed|same}], refused, stagedVersion, installedVersion, installBlocked}` (harness-staging/ vs `.claude/` + `CLAUDE.md`) |
-| GET H | `/harness/diff?path` | – | `HarnessDiff` (unified diff installed → staged of one staged path; capped at 200 000 chars) |
-| GET H | `/harness/install-options` | – | `HarnessInstallOptions` (WebAuthn options; challenge bound to the before/after hash of every file written) |
-| POST H | `/harness/install` | `{webauthn}` (strict; no demo) | `HarnessInstallResult` (also requires `Sec-Fetch-Site: same-origin`; refused when the server was started under Claude Code; staged hook tests, backup in `backups/harness-<stamp>/`, verify, audit `harness.installed`). No MCP or chat tool reaches it |
 | GET | `/learning/corrections?projectId&limit&cursor` | – | `Page<CorrectionRow>` |
 | GET | `/learning/calibration` | – | `Calibration` |
 | GET | `/reports?projectId&modelSetId&from&to` | – | `ReportData` |
@@ -314,7 +310,7 @@ Design: `docs/ai/chat-agent-design.md`. Types: `ChatContext`, `ChatMessageReques
 - **Sessions:** one per (user, project, model set, test), stored in `.coordinator/chat/<p>/<m>/<testKey>/<sha(userId)>.json`. A session keeps at most 200 messages. The session id doubles as the Claude session UUID: the first message uses `--session-id`, later ones use `--resume`. If the Claude transcript is gone, the server starts a new session once. `newSession: true` starts over.
 - **Run:**
   - `claude -p` (prompt on stdin), `--agent coordinador-chat`, stream-json with partial messages, `--strict-mcp-config` with an inline coord server (`COORD_CHAT=1`, the server's home and data source), `--tools ""`, the agent's `mcp__coord__*` allow-list, the disallow list (apply, ingest, classification and built-ins), `--permission-mode dontAsk`, `--permission-prompts none` and `--max-budget-usd 0.50`.
-  - The agent definition comes from the installed agents folder when it is there. Otherwise the staged copy (`harness-staging/`) is passed inline with `--agents` (`ChatStatus.agentSource`).
+  - The agent definition comes from the in-app agent runtime: `agent-runtime/` is materialised (sha256-verified, atomic) into `%LOCALAPPDATA%\bim-coordinator\agent-runtime\<hash>\` (a temp folder in fixtures/tests) and the run's `cwd` is that folder, so Claude Code loads its `CLAUDE.md`, agents, skills, settings and hooks there (`server/agent-runtime.ts`; `ChatStatus.agentSource` is `runtime` or `none`). The coord MCP server still runs from the app folder. The child also gets `COORD_APP_ROOT` and `COORD_AGENT_AUDIT_DIR` (`<data home>/audit`) for the runtime hooks.
   - The child environment drops `CLAUDECODE`, `CLAUDE_CODE_*`, `CLAUDE_PID`, `CLAUDE_PROJECT_DIR`, `BUN_INSPECT`, `NODE_OPTIONS`, `COORD_HARNESS_DEV` and `ANTHROPIC_API_KEY`.
   - Binary resolution: `COORD_CLAUDE_BIN`, then `PATH`, then `~/.local/bin`.
 - **Caps:** 120 s, 25 tool calls and 10 created proposals or questions. Hitting one stops the run (SIGINT, then SIGTERM) and ends it with `done{stoppedBy}`. A budget stop gives `stoppedBy:"budget"`.

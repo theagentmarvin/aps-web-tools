@@ -1,4 +1,4 @@
-﻿/**
+/**
  * WS-N "Qué sigue" (server/next-steps.ts): each step kind from fixture data in a temp store —
  * deterministic, server-only, ordered by priority, with flow actions for agent work and open
  * actions for human steps.
@@ -8,7 +8,7 @@ import { approveBatch } from "../../server/approval";
 import type { NextStep, NextStepKind } from "../../server/api/contract";
 import type { Coordinator } from "../../server/coordinator";
 import { CoordinatorUi } from "../../server/coordinator-ui";
-import { loadFlowAgent } from "../../server/flows/agent";
+import { join } from "node:path";
 import { FlowRunStore } from "../../server/flows/store";
 import { nextSteps } from "../../server/next-steps";
 import { acceptGroups, HUMAN, ingest, makeCoord, MODEL_SET_ID, ROOT, tempHome } from "./helpers";
@@ -146,15 +146,12 @@ describe("next steps (server state only)", () => {
     expect(step(s, "rule_suggestions")).toMatchObject({ priority: 55, counts: { pending: 1 }, action: { type: "open", route: "rules" } });
   });
 
-  it("harness update (HTTP only): first when flows need it; the MCP/chat call never sees it", async () => {
-    const h = () => ({ upToDate: false, staging: true, files: [{ state: "added" }, { state: "same" }] });
-    const p = await nextSteps(coord, { projectId: PROJECT }, { harness: h });
-    const hs = step(p.steps, "harness_update")!;
-    expect(hs).toMatchObject({ counts: { files: 1 }, action: { type: "open", route: "harness" } });
-    expect(hs.priority).toBe(loadFlowAgent(ROOT) ? 85 : 15);
-    expect(p.flowsAvailable).toBe(!!loadFlowAgent(ROOT));
-    expect(kinds(await run())).not.toContain("harness_update");
-    expect(kinds((await nextSteps(coord, { projectId: PROJECT }, { harness: () => ({ upToDate: true, staging: true }) })).steps)).not.toContain("harness_update");
+  it("the in-app agent ships with the app: flows available, no 'update the agent' step", async () => {
+    const p = await run();
+    expect((await nextSteps(coord, { projectId: PROJECT })).flowsAvailable).toBe(true);
+    expect(kinds(p).filter((k) => /harness|agent_update/.test(k))).toEqual([]);
+    // An app folder without agent-runtime/ reports flows unavailable (never a fallback agent).
+    expect((await nextSteps(coord, { projectId: PROJECT }, { agentRoot: join(ROOT, "docs") })).flowsAvailable).toBe(false);
   });
 
   it("no project: no domain steps; an unknown test is a clear error", async () => {

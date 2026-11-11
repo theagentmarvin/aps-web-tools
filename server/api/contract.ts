@@ -1291,8 +1291,8 @@ export interface ChatStatus {
   loggedIn: boolean;
   authMethod?: string;
   subscriptionType?: string;
-  /** Where the agent definition came from: installed in .claude/agents, the staged copy (inline), or none. */
-  agentSource: "installed" | "staged" | "none";
+  /** The in-app agent runtime (agent-runtime/, materialised by the server) has the chat agent, or none. */
+  agentSource: "runtime" | "none";
   /** A message is running for this user. */
   running: boolean;
 }
@@ -1376,42 +1376,6 @@ export interface RulePublishOptions {
 export interface RulePublishRequest {
   webauthn?: { nonce: string; origin: string; response: unknown };
   demo?: boolean;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Agent harness update (human-only; server/harness-install.ts). No MCP tool.
-// ─────────────────────────────────────────────────────────────────────────────
-
-export type HarnessFileState = "added" | "changed" | "removed" | "same";
-/** GET /harness/status: harness-staging/ vs the installed .claude/ + CLAUDE.md. */
-export interface HarnessStatus {
-  upToDate: boolean;
-  staging: boolean;
-  files: Array<{ path: string; state: HarnessFileState }>;
-  refused: string[];
-  stagedVersion: string | null;
-  installedVersion: string | null;
-  /** The server was started by an agent: install is refused. */
-  installBlocked: boolean;
-}
-/** GET /harness/diff?path= (human, CSRF): unified diff installed → staged, size-capped. */
-export interface HarnessDiff {
-  path: string;
-  diff: string;
-  truncated: boolean;
-}
-/** GET /harness/install-options (human, CSRF): WebAuthn options bound to the exact files written. */
-export type HarnessInstallOptions = RulePublishOptions;
-/** POST /harness/install (human, CSRF, same-origin): a fresh passkey assertion is mandatory. */
-export interface HarnessInstallRequest {
-  webauthn: { nonce: string; origin: string; response: unknown };
-}
-export interface HarnessInstallResult {
-  installed: string[];
-  /** Backup folder name under the data home's backups/ (null when only new files were added). */
-  backup: string | null;
-  stagedVersion: string;
-  installedAt: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1623,7 +1587,6 @@ export interface Endpoints {
 export type FlowId = "preparar-ciclo" | "triage" | "acta" | "redactar-issues" | "informe-semanal" | "auditar-modelo" | "curar-reglas";
 
 export type NextStepKind =
-  | "harness_update"
   | "new_version"
   | "not_classified"
   | "batch_approved"
@@ -1642,7 +1605,7 @@ export type NextStepKind =
   | "weekly_report";
 
 /** UI locations a human step opens (the client builds the URL). */
-export type NextStepRoute = "triage" | "batch" | "approvals" | "rules" | "disciplines" | "hygiene" | "harness" | "reports";
+export type NextStepRoute = "triage" | "batch" | "approvals" | "rules" | "disciplines" | "hygiene" | "reports";
 
 export type NextStepAction =
   | { type: "flow"; flow: FlowId; args: { projectId: string; testKey?: string } }
@@ -1671,7 +1634,7 @@ export interface NextStepsPayload {
   version?: number;
   computedAt: string;
   steps: NextStep[];
-  /** The installed harness has the flow agent (else flows answer "Actualiza el agente"). */
+  /** The app ships the flow agent (agent-runtime/; always true in a normal install). */
   flowsAvailable: boolean;
   /** A flow already running / queued for this project. */
   runningFlow?: FlowRunView;
@@ -1745,7 +1708,7 @@ export interface FlowRunView {
 /** GET /flows/runs?projectId */
 export interface FlowRunsPayload {
   catalog: FlowDef[];
-  /** Installed harness has the flow agent. */
+  /** Runtime materialised and the flow agent present. */
   available: boolean;
   unavailableReason?: string;
   /** Agent-started runs today / cap per day. */

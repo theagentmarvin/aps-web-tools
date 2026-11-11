@@ -21,7 +21,7 @@ const fixtureEnv = { COORD_DATA_SOURCE: "fixtures", COORDINATOR_HOME: demoHome }
 const env = { ...process.env, ...fixtureEnv, VITE_COORD_API: "http" };
 
 // MCP config for Claude Code with the SAME fixture environment. It does not touch
-// .mcp.json or the harness, so the demo works without `npm run setup`.
+// .mcp.json or the dev harness (the in-app chat and flows need no MCP file at all).
 writeFileSync(
   join(root, ".mcp.demo.json"),
   JSON.stringify({ mcpServers: { coord: { command: "npx", args: ["tsx", "server/mcp/index.ts"], env: fixtureEnv } } }, null, 2) + "\n",

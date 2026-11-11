@@ -19,7 +19,6 @@
     "coordinator": "tsx server/cli.ts",
     "eval": "tsx scripts/eval.ts",
     "eval:agent": "tsx scripts/eval-agent.ts",
-    "setup": "tsx server/cli.ts setup",
     "demo": "tsx scripts/demo.ts"
   },
   "dependencies": {

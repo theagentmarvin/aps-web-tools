@@ -1,7 +1,8 @@
 # Qué sigue y flujos
 
 Responsable: especialista IA. Fecha: 2026-11-11 (WS-N). Código: `server/next-steps.ts`, `server/flows/`,
-`src/features/flows/`. Agentes: `harness-staging/.claude/agents/coordinador-flujos.md` y `coordinador-chat.md`.
+`src/features/flows/`. Agentes: `agent-runtime/agents/coordinador-flujos.md` y `coordinador-chat.md`
+(viajan con la app; WS-S).
 
 El uso de la app y del agente se rige por el *Procedimiento Acceso Herramientas IA* de SalfaCorp.
 
@@ -10,10 +11,10 @@ El uso de la app y del agente se rige por el *Procedimiento Acceso Herramientas 
 El coordinador no tiene que memorizar comandos. La app sabe en qué punto del ciclo semanal está cada proyecto
 y **sugiere el siguiente paso**. Cada sugerencia es de uno de dos tipos:
 
-- **Trabajo del agente** (botón **Ejecutar**): la app corre un *flujo* —el mismo procedimiento que las skills de
-  VS Code— y deja propuestas, preguntas, borradores de incidencia, sugerencias de reglas o un informe.
+- **Trabajo del agente** (botón **Ejecutar**): la app corre un *flujo* —un procedimiento de
+  `agent-runtime/skills/`— y deja propuestas, preguntas, borradores de incidencia, sugerencias de reglas o un informe.
 - **Tu decisión** (botón **Abrir**): la app te lleva a la pantalla donde decides tú (responder preguntas,
-  «Enviar a aprobación», aprobar el lote con passkey, aplicarlo, publicar reglas, actualizar el agente).
+  «Enviar a aprobación», aprobar el lote con passkey, aplicarlo, publicar reglas).
 
 Las sugerencias las calcula el servidor **solo con su estado** (versiones en caché, clasificación, propuestas,
 preguntas, decisiones, lotes, notas de reunión, verificación de incidencias, higiene, correcciones, informes y
@@ -26,8 +27,7 @@ Dónde se ven:
   (avance en vivo, cancelar) y el historial;
 - en el **chat**: si preguntas «¿qué sigue?» (o al empezar una conversación), el agente consulta los pasos y
   los muestra como tarjetas con su botón; también puede iniciar el flujo si se lo pides o lo aceptas;
-- en **VS Code**: `mcp__coord__get_next_steps` (la skill `preparar-ciclo` lo usa para cerrar con los 3 pasos
-  siguientes y su comando).
+- el flujo `preparar-ciclo` cierra su resumen con los 3 pasos siguientes (`mcp__coord__get_next_steps`).
 
 ## Qué sugiere la app y por qué
 
@@ -39,7 +39,6 @@ Orden por prioridad (menor = más urgente). Umbrales en `server/next-steps.ts` (
 | Clasificar vN | La versión está descargada pero sin clasificar | flujo `preparar-ciclo` |
 | Aplicar el lote / revisar fallas | Lote aprobado con passkey y sin aplicar, o aplicado parcialmente | abrir `/aprobaciones/:id` |
 | Llevar el lote a vN | Lote armado sobre una versión anterior a la última | abrir `/aprobaciones/:id` («Llevar decisiones a vN») |
-| Actualizar el agente | Hay una versión nueva del agente; sube a prioridad alta si falta el agente de flujos | abrir el diálogo de actualización (passkey) |
 | Aprobar el lote | Lote listo para revisión | abrir `/aprobaciones/:id` |
 | Enviar a aprobación | Hay decisiones aceptadas (grupos o ubicaciones) que todavía no están en un lote | abrir la coordinación |
 | Responder preguntas del agente | Hay preguntas abiertas | abrir la coordinación |
@@ -69,7 +68,8 @@ la revisión si el agente decidió no proponer nada).
 | `curar-reglas` | curar-reglas | Reglas nuevas, calibraciones, retiros o restauraciones con evidencia (subagente rules-curator) | Sugerencias de reglas | USD 2 · 20 min |
 
 Cómo corre un flujo: el servidor lanza Claude Code sin interfaz (igual que el chat) con el agente
-`coordinador-flujos` y el procedimiento de la skill. Un solo flujo por proyecto a la vez. El avance se ve en vivo
+`coordinador-flujos` y el procedimiento de la skill, en la carpeta privada donde materializa `agent-runtime/`
+(`%LOCALAPPDATA%\bim-coordinator\agent-runtime\<hash>\`; ver `docs/ai/harness-design.md` §1.1). Un solo flujo por proyecto a la vez. El avance se ve en vivo
 (narración en español, sin preámbulos), se puede cancelar, y queda guardado en `<datos>/flows/<runId>.json`
 con su registro de eventos. La auditoría registra `flow.started`, `flow.finished` y `flow.cancelled` con quién lo
 inició (tú o el chat), sin nombres de personas.
@@ -85,9 +85,9 @@ inició (tú o el chat), sin nombres de personas.
 
 **Nunca puede** (no tiene herramientas para eso; los tests lo verifican):
 
-- cambiar la app: código, el agente (`.claude/`), las reglas directamente, la configuración ni los hooks;
-- hacer lo que firma un humano: aprobar o firmar lotes, publicar o revertir reglas, instalar la actualización
-  del agente, restaurar o importar datos;
+- cambiar la app: código, el agente (`agent-runtime/`), las reglas directamente, la configuración ni los hooks
+  (las mejoras se piden en VS Code, modo desarrollo);
+- hacer lo que firma un humano: aprobar o firmar lotes, publicar o revertir reglas, restaurar o importar datos;
 - escribir en ACC: solo `apply_approved_proposals` sobre un lote **aprobado por un humano**, y nunca desde el chat
   ni desde un flujo;
 - lanzar flujos desde un subagente o desde otro flujo (sin recursión).
@@ -95,8 +95,9 @@ inició (tú o el chat), sin nombres de personas.
 Lo que deja un flujo se decide en la UI como siempre: aceptar propuestas, «Enviar a aprobación», aprobar el lote
 con passkey, publicar reglas en Reglas.
 
-## Requisito: actualizar el agente
+## El agente viaja con la app
 
-Los flujos usan el agente `coordinador-flujos` **instalado** (`.claude/agents/`). Si falta, la app responde
-«Actualiza el agente (banner) para usar flujos» y nunca usa otro agente en su lugar. Se instala desde el aviso
-«Hay una actualización del agente» con passkey.
+Los flujos usan el agente `coordinador-flujos` de `agent-runtime/agents/`, que es parte del código de la app: no
+hay paso de instalación ni de actualización. Al iniciar (y antes de cada flujo) el servidor lo copia, verificado,
+a su carpeta privada. Si faltara, la app responde «Los flujos no están disponibles: … reinicia la app» y nunca usa
+otro agente en su lugar.

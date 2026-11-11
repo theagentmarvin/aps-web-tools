@@ -12,8 +12,8 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { ChatEvent } from "../../server/api/contract";
 import { createCoordApi } from "../../server/api/router";
-import { loadChatAgent, parseAgentFile } from "../../server/chat/agent";
-import { CHAT_READ_TOOLS, chatAllowedTools, childEnv, claudeArgs, createdId, mcpConfigJson, resolveClaudeBin } from "../../server/chat/bridge";
+import { parseAgentFile } from "../../server/chat/agent";
+import { agentEnv, CHAT_READ_TOOLS, chatAllowedTools, childEnv, claudeArgs, createdId, mcpConfigJson, resolveClaudeBin } from "../../server/chat/bridge";
 import { chatPrompt, contextBlock, selectionContext } from "../../server/chat/context";
 import { ChatService } from "../../server/chat/service";
 import type { Coordinator } from "../../server/coordinator";
@@ -76,13 +76,13 @@ describe("chat bridge (pure)", () => {
     expect(env).toEqual({ PATH: "x", HOME: "h" });
   });
 
-  it("spawn args follow the design: staged agent inline, no built-ins, only coord MCP, no apply", () => {
-    const agent = loadChatAgent(ROOT)!;
-    expect(agent.source).toMatch(/^(installed|staged)$/);
-    const args = claudeArgs({ agent: { ...agent, source: "staged" }, mcpConfig: mcpConfigJson({ root: ROOT, dataSource: "fixtures", homeOverride: home }), sessionId: "11111111-1111-4111-8111-111111111111", resume: false });
+  it("spawn args follow the design: agent by name from the runtime, no built-ins, only coord MCP, no apply", () => {
+    const agent = parseAgentFile(readFileSync(join(ROOT, "agent-runtime", "agents", "coordinador-chat.md"), "utf8"));
+    expect(agent.source).toBe("runtime");
+    const args = claudeArgs({ agent, mcpConfig: mcpConfigJson({ root: ROOT, dataSource: "fixtures", homeOverride: home }), sessionId: "11111111-1111-4111-8111-111111111111", resume: false });
     expect(args[0]).toBe("-p");
     expect(argOf(args, "--agent")).toBe("coordinador-chat");
-    expect(JSON.parse(argOf(args, "--agents")!)["coordinador-chat"].prompt.length).toBeGreaterThan(100);
+    expect(args).not.toContain("--agents");
     expect(argOf(args, "--session-id")).toBe("11111111-1111-4111-8111-111111111111");
     expect(argOf(args, "--tools")).toBe("");
     expect(argOf(args, "--permission-mode")).toBe("dontAsk");
@@ -94,14 +94,21 @@ describe("chat bridge (pure)", () => {
     expect(argOf(args, "--allowedTools")).not.toContain("apply_approved_proposals");
     const mcp = JSON.parse(argOf(args, "--mcp-config")!);
     expect(Object.keys(mcp.mcpServers)).toEqual(["coord"]);
+    // The coord server runs from the REAL app folder (not the runtime folder).
+    expect(mcp.mcpServers.coord.args).toContain(join(ROOT, "server", "mcp", "index.ts"));
     expect(mcp.mcpServers.coord.env).toEqual({ COORD_CHAT: "1", COORDINATOR_HOME: home, COORD_DATA_SOURCE: "fixtures" });
     const resumed = claudeArgs({ agent, mcpConfig: "{}", sessionId: "s", resume: true });
     expect(argOf(resumed, "--resume")).toBe("s");
     expect(resumed).not.toContain("--session-id");
   });
 
-  it("chat read tools: server list matches the staged front matter; batch tools never reach subagents", () => {
-    const staged = parseAgentFile(readFileSync(join(ROOT, "harness-staging", ".claude", "agents", "coordinador-chat.md"), "utf8"), "staged");
+  it("agentEnv: clean child env plus the app folder and audit dir for the runtime hooks", () => {
+    const env = agentEnv({ appRoot: ROOT, auditDir: join(home, "audit") }, { PATH: "x", CLAUDECODE: "1", CLAUDE_PROJECT_DIR: "d" });
+    expect(env).toEqual({ PATH: "x", COORD_APP_ROOT: ROOT, COORD_AGENT_AUDIT_DIR: join(home, "audit") });
+  });
+
+  it("chat read tools: server list matches the agent's front matter; batch tools never reach subagents", () => {
+    const staged = parseAgentFile(readFileSync(join(ROOT, "agent-runtime", "agents", "coordinador-chat.md"), "utf8"));
     // Every server-side pre-approved read is in the agent's own tools: line (parity audit §3.3).
     expect(CHAT_READ_TOOLS.filter((t) => !staged.tools.includes(t))).toEqual([]);
     for (const t of ["get_session_status", "list_meeting_notes", "diff_test_versions", "list_disciplines", "get_model_hygiene_stats", "list_batches", "get_batch", "list_decisions", "get_agenda", "list_reminders"]) expect(CHAT_READ_TOOLS).toContain(`mcp__coord__${t}`);
@@ -116,12 +123,11 @@ describe("chat bridge (pure)", () => {
     // …but never evaluates the ruleset, publishes, approves or applies anything (no such tool exists for agents).
     expect(allowed).not.toContain("mcp__coord__evaluate_ruleset");
     expect(allowed.filter((t) => /publish|approve|revert/.test(t))).toEqual([]);
-    // Subagents (installed and staged) never get batch tools.
-    for (const dir of [join(ROOT, ".claude", "agents"), join(ROOT, "harness-staging", ".claude", "agents")]) {
-      for (const f of existsSync(dir) ? readdirSync(dir).filter((x) => x.endsWith(".md") && x !== "coordinador-chat.md") : []) {
-        const def = parseAgentFile(readFileSync(join(dir, f), "utf8"), "staged");
-        expect(def.tools.filter((t) => /list_batches|get_batch|apply_approved_proposals/.test(t)), f).toEqual([]);
-      }
+    // Subagents never get batch tools.
+    const dir = join(ROOT, "agent-runtime", "agents");
+    for (const f of readdirSync(dir).filter((x) => x.endsWith(".md") && x !== "coordinador-chat.md")) {
+      const def = parseAgentFile(readFileSync(join(dir, f), "utf8"));
+      expect(def.tools.filter((t) => /list_batches|get_batch|apply_approved_proposals/.test(t)), f).toEqual([]);
     }
   });
 
@@ -156,6 +162,15 @@ describe("chat service with a fake claude", () => {
     expect(line!.prompt).toMatch(/^<contexto_ui>\{"lente":"cambios","testKey":/);
     expect(line!.prompt).toContain("<mensaje_usuario>¿Qué pasa con esto?</mensaje_usuario>");
     expect(argOf(line!.args, "--session-id")).toBe(sessionId);
+    // Spawned in the materialised runtime folder (a Claude project with the in-app agent), never the repo.
+    const rt = (line as unknown as { cwd: string; env: Record<string, string | null> });
+    expect(existsSync(join(rt.cwd, ".claude", "agents", "coordinador-chat.md"))).toBe(true);
+    expect(existsSync(join(rt.cwd, ".claude", "settings.json"))).toBe(true);
+    expect(existsSync(join(rt.cwd, ".runtime-manifest.json"))).toBe(true);
+    expect(rt.cwd.toLowerCase().startsWith(ROOT.toLowerCase())).toBe(false);
+    expect(rt.cwd.toLowerCase().startsWith(home.toLowerCase())).toBe(false);
+    expect(rt.env).toMatchObject({ COORD_APP_ROOT: ROOT, CLAUDECODE: null, CLAUDE_PROJECT_DIR: null });
+    expect(String(rt.env.COORD_AGENT_AUDIT_DIR).toLowerCase()).toBe(join(home, "audit").toLowerCase());
     // History (per user): user + assistant with the proposal id; another user sees nothing.
     const h = await chat.history(testKey, HUMAN);
     expect(h.messages.map((m) => m.role)).toEqual(["user", "assistant"]);
@@ -273,7 +288,7 @@ describe("chat service with a fake claude", () => {
   it("status never carries the account email or organisation", async () => {
     const chat = new ChatService(coord, { resolveBin: fakeBin });
     const s = await chat.status(HUMAN);
-    expect(s).toMatchObject({ installed: true, version: "2.1.267", loggedIn: true, authMethod: "claude.ai", subscriptionType: "max", agentSource: loadChatAgent(ROOT)!.source });
+    expect(s).toMatchObject({ installed: true, version: "2.1.267", loggedIn: true, authMethod: "claude.ai", subscriptionType: "max", agentSource: "runtime" });
     expect(JSON.stringify(s)).not.toMatch(/persona@example|Org/);
   });
 

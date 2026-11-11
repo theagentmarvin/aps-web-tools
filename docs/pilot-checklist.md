@@ -14,7 +14,7 @@ Responsables sugeridos: **C** = coordinador/a piloto · **G** = gerente BIM · *
 
 - [ ] (G) Proyecto piloto elegido: activo, con prueba de interferencias semanal, de tamaño moderado (500–5 000 interferencias), espacio de coordinación V2 de preferencia. Anotar si es V1 o V2.
 - [ ] (G) Uso aprobado según el *Procedimiento Acceso Herramientas IA* de SalfaCorp (cuenta y plan de Claude Code corporativos, proyecto autorizado).
-- [ ] (C) Instalación completa según [`docs/setup.md`](setup.md): app APS, Custom Integrations, `.env.local` con `VITE_COORD_API=http`, `npm run setup`, login, passkey.
+- [ ] (C) Instalación completa según [`docs/setup.md`](setup.md): app APS, Custom Integrations, `.env.local` con `VITE_COORD_API=http`, login, passkey (el agente de la app no requiere instalación).
 - [ ] (C) `npm run coordinator -- status` muestra sesión APS, fuente `live` y autonomía L1.
 - [ ] (C) **Línea base manual**: horas que toma hoy revisar una prueba completa y preparar la reunión (2 semanas anteriores, si es posible). Sin esto no se puede medir ahorro.
 - [ ] (D) Anotar versión del repo (commit) y de `rules/` usada en el piloto.
@@ -63,7 +63,7 @@ En el proyecto piloto, con un lote real **que no se aplicará**:
 
 Durante al menos **una prueba completa (una semana)**, el agente propone y C revisa en la UI, pero **no se aplica ningún lote**. C sigue su proceso normal en ACC en paralelo.
 
-- [ ] Correr `/coordinar-test` sobre la prueba de la semana.
+- [ ] Ejecutar el flujo **Preparar el ciclo** (Qué sigue) sobre la prueba de la semana.
 - [ ] C revisa **todos** los grupos en `/coordinacion/...`, corrigiendo con código de motivo (no aceptar en bloque para "terminar").
 - [ ] Comparar con el triage manual de C en ACC: anotar cada diferencia de validez (especialmente cualquier interferencia `real` que el agente propuso cerrar o tolerar).
 - [ ] Revisar 10 borradores de incidencia con un modelador receptor: ¿se entienden sin abrir el modelo? ¿un solo responsable? ¿≤ 1000 caracteres, sin markdown visible?

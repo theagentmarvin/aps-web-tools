@@ -11,7 +11,8 @@
 import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import type * as C from "../api/contract";
-import { authStatus, ChatRunError, childEnv, createdId, headlessArgs, mcpConfigJson, resolveClaudeBin, runClaude, type ResolvedBin } from "../chat/bridge";
+import { ensureAgentRuntime } from "../agent-runtime";
+import { agentEnv, authStatus, ChatRunError, childEnv, createdId, headlessArgs, mcpConfigJson, resolveClaudeBin, runClaude, type ResolvedBin } from "../chat/bridge";
 import { CHAT_AGENT_ACTOR, FLOW_AGENT_ACTOR, type Coordinator } from "../coordinator";
 import { sanitizeModelText, sanitizeMultilineText } from "../sanitize";
 import type { Actor } from "../store/types";
@@ -40,8 +41,10 @@ interface LiveRun {
 
 export interface FlowServiceOptions {
   resolveBin?: () => ResolvedBin | undefined;
-  /** Repo root holding .claude/agents + skills (tests). Default coord.root. */
+  /** App folder holding agent-runtime/ (tests). Default coord.root. */
   agentRoot?: string;
+  /** Where the runtime is materialised (tests; default: server/agent-runtime.ts runtimeBaseFor). */
+  runtimeBase?: string;
   /** Override every flow's timeout (tests). */
   timeoutMs?: number;
   model?: string;
@@ -118,8 +121,19 @@ export class FlowService {
     this.poll = undefined;
   }
 
+  /** The materialised in-app agent runtime folder (server/agent-runtime.ts), or undefined. */
+  runtimeDir(): string | undefined {
+    try {
+      return ensureAgentRuntime(this.coord, { appRoot: this.root, ...(this.opts.runtimeBase ? { base: this.opts.runtimeBase } : {}) })?.dir;
+    } catch (err) {
+      log.warn("flows.runtime", { message: (err as Error).message });
+      return undefined;
+    }
+  }
+
+  /** Runtime materialised + flow agent present (always true after start in a normal install). */
   available(): { available: boolean; reason?: string } {
-    return loadFlowAgent(this.root) ? { available: true } : { available: false, reason: FLOW_AGENT_MISSING };
+    return loadFlowAgent(this.runtimeDir()) ? { available: true } : { available: false, reason: FLOW_AGENT_MISSING };
   }
 
   /** GET /flows/runs */
@@ -308,10 +322,11 @@ export class FlowService {
       const auth = await authStatus(bin, childEnv());
       if (!auth.installed) throw new ChatRunError("claude_not_found", "Claude Code no está instalado (https://code.claude.com).");
       if (!auth.loggedIn) throw new ChatRunError("not_logged_in", "Claude Code no tiene sesión iniciada. Abre una terminal y ejecuta `claude`, luego `/login`.");
-      const agent = loadFlowAgent(this.root);
-      if (!agent) throw new FlowError("agent_missing", FLOW_AGENT_MISSING);
-      const skill = skillBody(this.root, def.skill);
-      if (!skill) throw new FlowError("skill_missing", `Falta el procedimiento «${def.skill}» (actualiza el agente).`);
+      const runtimeDir = this.runtimeDir();
+      const agent = loadFlowAgent(runtimeDir);
+      if (!runtimeDir || !agent) throw new FlowError("agent_missing", FLOW_AGENT_MISSING);
+      const skill = skillBody(runtimeDir, def.skill);
+      if (!skill) throw new FlowError("skill_missing", `Falta el procedimiento «${def.skill}» en agent-runtime/skills de la aplicación.`);
       const allowed = flowAllowedTools(agent, def);
       const mcpConfig = mcpConfigJson({ root: this.coord.root, dataSource: this.coord.source.kind === "fixtures" ? "fixtures" : "live", ...(this.coord.homeOverride ? { homeOverride: this.coord.homeOverride } : {}), mode: "flow" });
       const args = headlessArgs({
@@ -375,9 +390,9 @@ export class FlowService {
       const result = await runClaude({
         bin,
         args,
-        cwd: this.coord.root,
+        cwd: runtimeDir,
         prompt,
-        env: childEnv(),
+        env: agentEnv({ appRoot: this.coord.root, auditDir: this.coord.store.path("audit") }),
         timeoutMs: this.opts.timeoutMs ?? def.timeoutMs,
         toolCap: FLOW_TOOL_CAP,
         proposalCap: FLOW_PROPOSAL_CAP,

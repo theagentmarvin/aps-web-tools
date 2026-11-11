@@ -10,7 +10,8 @@ import { proposalSummary, type Coordinator } from "../coordinator";
 import { sanitizeModelText, sanitizeMultilineText } from "../sanitize";
 import { bareProjectId, CoordError, log, nowIso } from "../util";
 import { loadChatAgent, type ChatAgentDef } from "./agent";
-import { authStatus, ChatRunError, childEnv, claudeArgs, mcpConfigJson, resolveClaudeBin, runClaude, type AuthStatus, type ResolvedBin } from "./bridge";
+import { ensureAgentRuntime } from "../agent-runtime";
+import { agentEnv, authStatus, ChatRunError, childEnv, claudeArgs, mcpConfigJson, resolveClaudeBin, runClaude, type AuthStatus, type ResolvedBin } from "./bridge";
 import { chatCard } from "./cards";
 import { chatPrompt, contextBlock } from "./context";
 import { ChatStore, type StoredChatSession } from "./store";
@@ -41,8 +42,10 @@ interface MessageRun {
 export interface ChatServiceOptions {
   resolveBin?: () => ResolvedBin | undefined;
   timeoutMs?: number;
-  /** Repo root holding .claude/agents or harness-staging/.claude/agents (default: coordinator root). */
+  /** App folder holding agent-runtime/ (tests; default: coordinator root). */
   agentRoot?: string;
+  /** Where the runtime is materialised (tests; default: server/agent-runtime.ts runtimeBaseFor). */
+  runtimeBase?: string;
   model?: string;
   /** Flow runner: a start_flow result is picked up at once and shown as a "Flujo" card. */
   flows?: FlowService;
@@ -67,8 +70,16 @@ export class ChatService {
     return (this.opts.resolveBin ?? (() => resolveClaudeBin()))();
   }
 
-  private agent(): ChatAgentDef | undefined {
-    return loadChatAgent(this.opts.agentRoot ?? this.coord.root);
+  /** The materialised in-app agent runtime (server/agent-runtime.ts) and the chat agent in it. */
+  private runtime(): { dir: string; agent: ChatAgentDef } | undefined {
+    try {
+      const rt = ensureAgentRuntime(this.coord, { ...(this.opts.agentRoot ? { appRoot: this.opts.agentRoot } : {}), ...(this.opts.runtimeBase ? { base: this.opts.runtimeBase } : {}) });
+      const agent = loadChatAgent(rt?.dir);
+      return rt && agent ? { dir: rt.dir, agent } : undefined;
+    } catch (err) {
+      log.warn("chat.runtime", { message: (err as Error).message });
+      return undefined;
+    }
   }
 
   private async preflight(force = false): Promise<AuthStatus> {
@@ -89,7 +100,7 @@ export class ChatService {
       loggedIn: s.loggedIn,
       ...(s.authMethod ? { authMethod: s.authMethod } : {}),
       ...(s.subscriptionType ? { subscriptionType: s.subscriptionType } : {}),
-      agentSource: this.agent()?.source ?? "none",
+      agentSource: this.runtime() ? "runtime" : "none",
       running: [...this.messages.values()].some((m) => m.userId === user.id && !m.finished),
     };
   }
@@ -199,8 +210,9 @@ export class ChatService {
         this.auth = undefined;
         throw new ChatRunError("not_logged_in", "Claude Code no tiene sesión iniciada. Abre una terminal y ejecuta `claude`, luego `/login`.");
       }
-      const agent = this.agent();
-      if (!agent) throw new ChatRunError("failed", "Falta la definición del agente coordinador-chat (.claude/agents o harness-staging).");
+      const rt = this.runtime();
+      if (!rt) throw new ChatRunError("failed", "Falta la definición del agente coordinador-chat (agent-runtime/ de la aplicación).");
+      const agent = rt.agent;
       if (run.cancelled) throw new ChatRunError("cancelled", "Cancelado.");
       const prompt = chatPrompt(await contextBlock(this.coord, session.testKey, context), message);
       const mcpConfig = mcpConfigJson({ root: this.coord.root, dataSource: this.coord.source.kind === "fixtures" ? "fixtures" : "live", ...(this.coord.homeOverride ? { homeOverride: this.coord.homeOverride } : {}) });
@@ -260,9 +272,9 @@ export class ChatService {
         runClaude({
           bin,
           args: claudeArgs({ agent, mcpConfig, sessionId: session.sessionId, resume, ...(this.opts.model ? { model: this.opts.model } : {}) }),
-          cwd: this.coord.root,
+          cwd: rt.dir,
           prompt,
-          env: childEnv(),
+          env: agentEnv({ appRoot: this.coord.root, auditDir: this.coord.store.path("audit") }),
           ...(this.opts.timeoutMs ? { timeoutMs: this.opts.timeoutMs } : {}),
           onChild: (_c, stop) => {
             run.stop = stop;

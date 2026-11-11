@@ -1,6 +1,6 @@
 /**
  * Catalog of domain flows (docs/domain/next-steps-and-flows.md). Each flow runs ONE existing skill
- * procedure (harness-staging/.claude/skills or .claude/skills) with the `coordinador-flujos` agent,
+ * procedure (agent-runtime/skills, materialised by server/agent-runtime.ts) with the `coordinador-flujos` agent,
  * headless, like the chat. A flow only produces what the skill produces: proposals, questions,
  * issue drafts, rule suggestions and report files. It never applies, approves, publishes, installs
  * or edits anything (no such tool is in any list below; tests/server/flows.test.ts checks it).
