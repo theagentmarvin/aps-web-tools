@@ -22,6 +22,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, sep } from "node:path";
 import { parseDotenv } from "./aps/config";
+import { legacyDataHome } from "./store/home";
 
 export interface SetupIO {
   out(s: string): void;
@@ -103,7 +104,8 @@ export interface InstallStatus {
 }
 
 /** Read-only status (used by --check and at the end of setup). */
-export function installStatus(root: string, home = join(root, ".coordinator")): InstallStatus {
+/** `home`: where the dev-mode marker is checked (the hooks look in the repo-local `.coordinator`). */
+export function installStatus(root: string, home = legacyDataHome(root)): InstallStatus {
   const templates = TEMPLATE_FILES.map(({ template, target }) => {
     const t = join(root, target);
     if (!existsSync(t)) return { target, state: "missing" as const };

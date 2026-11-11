@@ -26,6 +26,8 @@ import { LiveSource } from "../source/live";
 import { CoordError, httpStatusFor, log } from "../util";
 import { fetchSiteOk, hostAllowed, originMatches } from "./host-guard";
 import { listFeedbackRows, listReportFiles, readReportFile, testHygiene } from "../parity";
+import { DataAdmin, streamFileTo } from "../data-admin";
+import { rm, stat } from "node:fs/promises";
 
 export const API_PREFIX = "/api/coord";
 
@@ -54,6 +56,8 @@ interface Route {
   re: RegExp;
   keys: string[];
   human: boolean;
+  /** The handler reads the request body itself (binary upload). */
+  raw: boolean;
   handler: Handler;
 }
 
@@ -252,12 +256,16 @@ export interface CoordApiOptions extends CoordinatorOptions {
   coordinator?: Coordinator;
   /** Chat agent timeout (tests). */
   chatTimeoutMs?: number;
+  /** Start the daily backup of the data home (server processes only; never in tests). */
+  backupSchedule?: boolean;
 }
 
 export interface CoordApi {
   middleware: (req: IncomingMessage, res: ServerResponse, next?: Next) => void;
   coordinator: Coordinator;
   ui: CoordinatorUi;
+  /** "Datos y respaldos" (human-only; no MCP tool). */
+  data: DataAdmin;
   csrfToken: string;
 }
 
@@ -276,10 +284,10 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
   /** Authorize URL of the login in progress: re-clicking "sign in" reopens it instead of failing. */
   let pendingAuthorizeUrl: string | undefined;
 
-  const add = (method: string, path: string, handler: Handler, human = false) => {
+  const add = (method: string, path: string, handler: Handler, human = false, raw = false) => {
     const keys: string[] = [];
     const re = new RegExp(`^${API_PREFIX}${path.replace(/:([A-Za-z]+)/g, (_m, k: string) => (keys.push(k), "([^/]+)"))}/?$`);
-    routes.push({ method, re, keys, human, handler });
+    routes.push({ method, re, keys, human, raw, handler });
   };
   const userOf = async (): Promise<HumanUser> => {
     const u = await ui.currentUser();
@@ -843,6 +851,78 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
       cursor: query.get("cursor") ?? undefined,
     }),
   );
+  // ── Datos y respaldos (server/data-admin.ts). HUMAN-ONLY, CSRF on every route (GETs included);
+  // restore also needs a passkey bound to the uploaded file. Deliberately no MCP tool.
+  const data = new DataAdmin(coord);
+  const actorOf = async (user: () => Promise<HumanUser>) => {
+    const u = await user();
+    return { type: "user" as const, id: u.id, name: u.name };
+  };
+  add("GET", "/data/status", async () => data.status(), true);
+  add("POST", "/data/backups", async ({ user }) => data.backupNow("manual", await actorOf(user)), true);
+  add(
+    "PUT",
+    "/data/settings",
+    async ({ body, user }) => data.saveSettings(z.strictObject({ targetDir: z.string().max(400).optional(), keep: z.number().int().min(1).max(365).optional() }).parse(body ?? {}), await actorOf(user)),
+    true,
+  );
+  add(
+    "GET",
+    "/data/export",
+    async ({ res, query, user }) => {
+      const projectId = query.get("projectId") || undefined;
+      const actor = await actorOf(user);
+      const out = await data.exportZip(projectId);
+      const size = (await stat(out.path)).size;
+      await coord.store.audit({ actor, action: "data.exported", ...(projectId ? { projectId } : {}), details: { scope: projectId ? "project" : "full", files: out.manifest.fileCount, bytes: out.manifest.bytes } });
+      res.writeHead(200, {
+        "Content-Type": "application/zip",
+        "Content-Disposition": `attachment; filename="${out.fileName}"`,
+        "Content-Length": String(size),
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
+      });
+      streamFileTo(res, out.path, () => void rm(out.path, { force: true }).catch(() => undefined));
+      return undefined;
+    },
+    true,
+  );
+  add(
+    "POST",
+    "/data/import",
+    async ({ req }) => {
+      const type = String(req.headers["content-type"] ?? "").split(";")[0]!.trim().toLowerCase();
+      if (type !== "application/zip" && type !== "application/octet-stream" && type !== "application/x-zip-compressed") {
+        throw new CoordError("validation_error", "Sube el archivo .zip del respaldo (Content-Type application/zip).");
+      }
+      return data.stageImport(req as AsyncIterable<Buffer>);
+    },
+    true,
+    true,
+  );
+  const ImportId = z.string().regex(/^[0-9a-f]{16}$/);
+  add("GET", "/data/import/:id/restore-options", async ({ params }) => data.restoreOptions(ImportId.parse(params.id)), true);
+  add("DELETE", "/data/import/:id", async ({ params }) => (await data.cancelImport(ImportId.parse(params.id)), { ok: true }), true);
+  add(
+    "POST",
+    "/data/import/:id/restore",
+    async ({ req, params, body, user }) => {
+      const b = z
+        .strictObject({
+          webauthn: z.strictObject({ nonce: z.string().regex(/^[0-9a-f]{32}$/), origin: z.string().max(100), response: AssertionSchema }).optional(),
+          demo: z.boolean().optional(),
+        })
+        .parse(body ?? {});
+      // The WebAuthn origin is the request origin, never a client claim.
+      if (b.webauthn) b.webauthn.origin = String(req.headers.origin ?? "");
+      if (b.demo && coord.source.kind !== "fixtures") throw new CoordError("forbidden", "La restauración de demostración solo existe en modo fixtures.");
+      const r = await data.restore(ImportId.parse(params.id), b, await actorOf(user));
+      ui.invalidateCaches();
+      return r;
+    },
+    true,
+  );
+
   // ── human-side parity reads (server/parity.ts; docs/ai/agent-human-parity.md) ──
   add("GET", "/tests/:testId/hygiene", async ({ params }) => testHygiene(coord, params.testId));
   add("GET", "/reports/files", async ({ query }) => listReportFiles(coord, QueryId.parse(query.get("projectId"))));
@@ -879,7 +959,7 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
         }
         const m = route.re.exec(url.pathname)!;
         const params = Object.fromEntries(route.keys.map((k, i) => [k, decodeURIComponent(m[i + 1]!)]));
-        const body = method === "GET" ? undefined : await readBody(req);
+        const body = method === "GET" || route.raw ? undefined : await readBody(req);
         const result = await route.handler({ req, res, params, query: url.searchParams, body, user: userOf });
         // Streaming handlers (SSE) write the response themselves.
         if (!res.headersSent) send(res, 200, result ?? { ok: true }, {}, req);
@@ -893,7 +973,8 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
     })();
   };
 
-  return { middleware, coordinator: coord, ui, csrfToken };
+  if (opts.backupSchedule) data.startSchedule();
+  return { middleware, coordinator: coord, ui, data, csrfToken };
 }
 
 export function errorBody(err: unknown): { status: number; body: { error: { code: string; message: string; hint?: string } } } {

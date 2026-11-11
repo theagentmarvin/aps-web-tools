@@ -632,6 +632,17 @@ describe("guard-files", () => {
     expect(edit(join(home, "projects", "b-demo", "notes.md"), { env }).decision).toBeUndefined();
   });
 
+  it("[v2] default per-user data home (LOCALAPPDATA/bim-coordinator) is protected; notes stay writable; backups never", () => {
+    const local = mkdtempSync(join(tmpdir(), "coord-local-"));
+    roots.push(local);
+    const env = { LOCALAPPDATA: local };
+    const data = join(local, "bim-coordinator", "data");
+    expect(edit(join(data, "decisions", "decisions.jsonl"), { tool: "Write", env }).decision).toBe("deny");
+    expect(edit(join(data, "ledgers", "x.json"), { tool: "Edit", env }).decision).toBe("deny");
+    expect(edit(join(data, "projects", "b-demo", "notes.md"), { env }).decision).toBeUndefined();
+    expect(edit(join(local, "bim-coordinator", "backups", "coordinator-2026-11-11.zip"), { tool: "Write", env }).decision).toBe("deny");
+  });
+
   it("[v2] COORD_SECURE_DIR is never writable", () => {
     const sec = mkdtempSync(join(tmpdir(), "coord-sec-"));
     roots.push(sec);

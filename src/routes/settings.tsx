@@ -1,9 +1,10 @@
 /**
  * /ajustes — language, autonomy level (read-only L1), workspace preferences,
- * developer tools link (spec §2.1).
+ * "Datos y respaldos" (data folder, backups, export, restore), developer tools link (spec §2.1).
  */
 import type { ReactNode } from "react";
 import { Link } from "react-router";
+import { DataBackupsSection } from "~/features/settings/DataBackupsSection";
 import { useT } from "~/i18n";
 import { useApi } from "~/lib/api";
 import { PageHeader } from "~/lib/components/PageHeader";
@@ -81,6 +82,8 @@ export function SettingsPage() {
           <input type="number" step="5" min="0" className={`${inputCls} w-20`} value={settings.baselineSec} onChange={(e) => update({ baselineSec: num(e.target.value, settings.baselineSec) })} />
         </Row>
       </section>
+
+      <DataBackupsSection />
 
       <section className={`${cardCls} mb-4 p-4`} aria-labelledby="h-legend">
         <h2 id="h-legend" className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">

@@ -144,6 +144,42 @@ Cuando el repositorio trae una versión nueva del agente (instrucciones, habilid
 
 Solo una persona puede hacerlo: exige passkey, CSRF y el mismo origen, y ningún agente (MCP ni chat) tiene una herramienta para llegar ahí. Si el servidor lo inició un agente (Claude Code), la instalación se rechaza: ábrelo con `Coordinador BIM.cmd`. `npm run setup` en tu terminal sigue siendo la alternativa.
 
+## 9. Dónde viven tus datos y cómo respaldarlos
+
+Las decisiones, propuestas, lotes, auditoría, ledgers, chat y caché del coordinador **no** viven en el
+repositorio: borrar o volver a clonar el repo no los afecta (git nunca los respaldó).
+
+| Qué | Dónde (Windows) | macOS / Linux |
+|---|---|---|
+| Datos | `%LOCALAPPDATA%\bim-coordinator\data` | `$XDG_DATA_HOME` o `~/.local/share/bim-coordinator/data` |
+| Respaldos locales | `%LOCALAPPDATA%\bim-coordinator\backups` | `…/bim-coordinator/backups` |
+| Secretos (clave de aprobación, passkeys, token APS) | `%APPDATA%\bim-coordinator` (DPAPI, no se mueven ni se respaldan) | `~/.config/bim-coordinator` |
+
+`COORDINATOR_HOME` sigue mandando (demo, evaluaciones). En **modo fixtures** sin `COORDINATOR_HOME` se
+sigue usando `<repo>/.coordinator`. Única fuente de verdad del código: `server/store/home.ts`.
+
+**Migración automática (primer inicio).** Si la carpeta nueva está vacía y `<repo>/.coordinator` tiene datos,
+al iniciar `npm run dev` (o el servidor MCP) se **copia** —nunca se mueve— a la carpeta nueva, se verifica
+(cantidad de archivos y sha256 de cada uno) y se activa. En la carpeta antigua queda `MIGRATED.txt` con la
+ruta nueva y en la nueva `migration.json`. No copia secretos (`secret/`, `auth/`), bloqueos ni temporales.
+Si la verificación falla, se sigue usando la carpeta antigua y **Ajustes → Datos y respaldos** muestra el
+aviso; se reintenta al reiniciar. Si ambas carpetas tienen datos, se usa la nueva y se avisa (sin fusionar).
+Puedes borrar la carpeta antigua cuando confirmes que la UI muestra tus decisiones.
+
+**Respaldo diario.** Mientras la aplicación corre, una vez al día (al iniciar y luego se revisa cada hora) se
+crea `backups\coordinator-AAAA-MM-DD.zip` (copia consistente bajo el bloqueo del store, verificada), y se
+conservan los últimos 14 (configurable). **Respaldar ahora** crea uno adicional. En **Ajustes → Datos y
+respaldos** puedes indicar una **carpeta externa** (p. ej. una carpeta de OneDrive/SharePoint corporativa
+sincronizada, aprobada según el *Procedimiento Acceso Herramientas IA*) donde se copia cada respaldo.
+Cada respaldo queda en la auditoría (sin rutas ni datos personales).
+
+**Exportar / restaurar** (solo humanos, desde la UI; el agente no tiene herramientas para esto):
+- **Exportar** descarga un `.zip` con todos los datos (sin secretos). Trátalo como dato confidencial del proyecto.
+- **Restaurar…**: eliges un `.zip` de respaldo; se valida sin cambiar nada (rutas seguras, solo tipos de
+  datos, sha256 contra el manifiesto, JSON válido). Luego confirmas con tu **passkey**; antes de reemplazar se
+  crea `coordinator-…-pre-restore.zip` con el estado actual. Reinicia `npm run dev` después de restaurar.
+  Una exportación de un solo proyecto no se puede restaurar como respaldo completo.
+
 ## Solución de problemas
 
 | Síntoma | Causa probable | Qué hacer |

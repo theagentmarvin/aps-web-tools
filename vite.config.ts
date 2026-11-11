@@ -37,11 +37,23 @@ function coordinatorApiPlugin(): Plugin {
     apply: "serve",
     async configureServer(server) {
       const { createCoordApi } = await import("./server/api/router");
+      // Data home outside the repo (server/store/home.ts): one-time verified copy of the old
+      // <repo>/.coordinator before anything opens the store. Never throws.
+      const { prepareDataHome } = await import("./server/store/migrate");
+      await prepareDataHome({ root: __dirname });
       let api: ReturnType<typeof createCoordApi> | undefined;
+      const get = () => (api ??= createCoordApi({ root: __dirname, backupSchedule: true }));
+      // Create it shortly after start (not only on the first request) so the daily backup runs.
+      setTimeout(() => {
+        try {
+          get();
+        } catch (e) {
+          server.config.logger.warn(`[coord] API no iniciada: ${(e as Error).message}`);
+        }
+      }, 2_000).unref();
       server.middlewares.use((req, res, next) => {
         if (!req.url?.startsWith("/api/coord")) return next();
-        api ??= createCoordApi({ root: __dirname });
-        api.middleware(req, res, next);
+        get().middleware(req, res, next);
       });
     },
   };

@@ -47,6 +47,7 @@ import { LiveSource } from "./source/live";
 import type { DataSource } from "./source/types";
 import { readJsonFile, writeJsonAtomic } from "./store/fs";
 import { Store } from "./store";
+import { resolveDataHome, type DataHomeResolution } from "./store/home";
 import type {
   AccStatus,
   Actor,
@@ -102,7 +103,7 @@ export type DataSourceKind = "live" | "fixtures";
 export interface CoordinatorOptions {
   /** Repository root (config, rules/). Default: cwd. */
   root?: string;
-  /** `.coordinator` directory. Default: <root>/.coordinator or COORDINATOR_HOME. */
+  /** Data directory. Default: COORDINATOR_HOME, else server/store/home.ts resolveDataHome (per-user folder). */
   home?: string;
   /** Default: COORD_DATA_SOURCE env, else "live". */
   dataSource?: DataSourceKind;
@@ -184,10 +185,12 @@ export class Coordinator {
     // Secrets (approval key, audit key, passkeys, APS token) live OUTSIDE the repo.
     this.secureDir = secureDir({ homeOverride });
     const sd = this.secureDir;
-    this.store = new Store({ home: homeOverride ?? join(this.root, ".coordinator"), now: this.now, auditKey: () => loadOrCreateSecret(sd, "audit-key"), auditKeyRead: () => readSecret(sd, "audit-key") });
+    const kind: DataSourceKind = opts.dataSource ?? (process.env.COORD_DATA_SOURCE === "fixtures" ? "fixtures" : "live");
+    // Data home (server/store/home.ts): per-user folder outside the repo unless overridden / fixtures.
+    this.dataHome = resolveDataHome({ root: this.root, home: homeOverride, dataSource: opts.source?.kind ?? kind });
+    this.store = new Store({ home: this.dataHome.home, now: this.now, auditKey: () => loadOrCreateSecret(sd, "audit-key"), auditKeyRead: () => readSecret(sd, "audit-key") });
     this.cache = new ClashCache(this.store.cacheRoot);
     this.loaded = opts.config ?? loadConfig(this.root);
-    const kind: DataSourceKind = opts.dataSource ?? (process.env.COORD_DATA_SOURCE === "fixtures" ? "fixtures" : "live");
     this.source =
       opts.source ??
       (kind === "fixtures"
@@ -198,6 +201,8 @@ export class Coordinator {
   }
 
   readonly secureDir: string;
+  /** Where the data lives and why (server/store/home.ts). */
+  readonly dataHome: DataHomeResolution;
   readonly webauthn: WebAuthnService;
   /** Project discipline mappings (assignments + ordered rules), see server/disciplines.ts. */
   get disciplines(): DisciplineStore {
