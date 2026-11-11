@@ -6,7 +6,11 @@
  *      when missing; when present and different, shows a diff and asks y/N;
  *   b) if `harness-staging/` exists (mirrors the `.claude/` layout), shows a
  *      per-file unified diff against `.claude/`, asks the user to type INSTALAR,
- *      copies the files and writes a `harness.installed` audit event with hashes;
+ *      copies the files (previous versions backed up in the data home's `backups/`)
+ *      and writes a `harness.installed` audit event with hashes. The copy/verify core
+ *      (`harnessPlan`, `installHarnessFiles`) is shared with the human-only web route
+ *      `POST /api/coord/harness/install` (server/harness-install.ts, passkey required);
+ *      there is no MCP tool for it;
  *   c) runs the hook test suite (`npx vitest run tests/hooks.test.ts`);
  *   d) checks `.env.local` has the APS variables (never prints values) and
  *      prints the remaining manual steps.
@@ -15,8 +19,8 @@
  */
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, sep } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, relative, sep } from "node:path";
 import { parseDotenv } from "./aps/config";
 
 export interface SetupIO {
@@ -122,6 +126,133 @@ export function installStatus(root: string, home = join(root, ".coordinator")): 
   return { templates, staging, env: { file: existsSync(envFile), missing }, harnessDev, ok };
 }
 
+// ── shared harness install core (CLI setup + human-only web route) ─────────
+
+export type HarnessFileState = "added" | "changed" | "removed" | "same";
+
+export interface HarnessFile {
+  /** Path relative to harness-staging/ (= relative to the repo root once installed). */
+  path: string;
+  state: HarnessFileState;
+  stagedHash: string;
+  installedHash: string | null;
+}
+
+export interface HarnessPlan {
+  stagingDir: string;
+  files: HarnessFile[];
+  /** Staged files outside `.claude/` and `CLAUDE.md`: never installed. */
+  refused: string[];
+  /** Short hash of every staged file (path + content). */
+  stagedVersion: string;
+  /** Short hash of the installed counterparts of the staged files. */
+  installedVersion: string;
+}
+
+/**
+ * Read-only comparison of `harness-staging/` against the installed `.claude/` + `CLAUDE.md`.
+ * `harness-staging/` is an overlay (only the files it holds are managed), so install never
+ * deletes: the `removed` state is reserved and not produced today. Null when there is no staging.
+ */
+export function harnessPlan(root: string): HarnessPlan | null {
+  const stagingDir = join(root, "harness-staging");
+  if (!existsSync(stagingDir)) return null;
+  const files: HarnessFile[] = [];
+  const refused: string[] = [];
+  for (const f of listFiles(stagingDir)) {
+    const dst = stagedTarget(root, f);
+    if (!dst) {
+      refused.push(f);
+      continue;
+    }
+    const stagedHash = sha(readFileSync(join(stagingDir, f)));
+    const installedHash = existsSync(dst) ? sha(readFileSync(dst)) : null;
+    files.push({ path: f, state: installedHash === null ? "added" : installedHash === stagedHash ? "same" : "changed", stagedHash, installedHash });
+  }
+  const version = (pick: (x: HarnessFile) => string) => sha(files.map((x) => `${x.path}:${pick(x)}`).join("\n")).slice(0, 12);
+  return { stagingDir, files, refused, stagedVersion: version((x) => x.stagedHash), installedVersion: version((x) => x.installedHash ?? "none") };
+}
+
+/** Files an install would write (added or changed). */
+export function harnessChanges(plan: HarnessPlan): HarnessFile[] {
+  return plan.files.filter((f) => f.state === "added" || f.state === "changed");
+}
+
+/** Hash bound into the passkey challenge: exactly which bytes replace which bytes. */
+export function harnessPayloadHash(plan: HarnessPlan): string {
+  return sha(JSON.stringify({ op: "harness-install", files: harnessChanges(plan).map((f) => ({ path: f.path, before: f.installedHash, after: f.stagedHash })) }));
+}
+
+export const HARNESS_DIFF_MAX_CHARS = 200_000;
+
+/** Unified diff installed → staged of ONE staged file (only paths of the plan; size-capped). */
+export function harnessDiff(root: string, path: string, maxChars = HARNESS_DIFF_MAX_CHARS): { path: string; diff: string; truncated: boolean } {
+  const plan = harnessPlan(root);
+  const file = plan?.files.find((f) => f.path === path);
+  if (!plan || !file) throw new Error(`not_staged:${path}`);
+  const dst = stagedTarget(root, file.path)!;
+  const diff = unifiedDiff(existsSync(dst) ? readFileSync(dst, "utf8") : "", readFileSync(join(plan.stagingDir, file.path), "utf8"), file.path, `harness-staging/${file.path}`);
+  return diff.length > maxChars ? { path, diff: diff.slice(0, maxChars) + "\n…\n", truncated: true } : { path, diff, truncated: false };
+}
+
+/** True when the staged hooks must be tested before installing (same condition as setup). */
+export function stagedHooksNeedTest(root: string, plan: HarnessPlan): boolean {
+  return harnessChanges(plan).length > 0 && existsSync(join(plan.stagingDir, ".claude", "hooks")) && existsSync(join(root, "tests", "hooks.test.ts"));
+}
+
+export interface HarnessInstallResult {
+  installed: string[];
+  hashes: Record<string, string>;
+  /** Directory with the previous version of every replaced file (absent when nothing was replaced). */
+  backupDir?: string;
+  backedUp: string[];
+}
+
+/**
+ * Copy the planned changes into `.claude/` / `CLAUDE.md` and verify each written file hashes to
+ * the staged content. With `backupDir`, previous versions are copied there first; on a verify
+ * failure the backups are restored and the call throws. Throws when the staging changed since
+ * the plan was computed (what was reviewed is what is written).
+ */
+export function installHarnessFiles(root: string, plan: HarnessPlan, opts: { backupDir?: string } = {}): HarnessInstallResult {
+  const changes = harnessChanges(plan);
+  const backedUp: string[] = [];
+  for (const f of changes) {
+    const dst = stagedTarget(root, f.path)!;
+    if (sha(readFileSync(join(plan.stagingDir, f.path))) !== f.stagedHash) throw new Error(`harness-staging/${f.path} cambió desde la revisión; vuelve a revisar.`);
+    if ((existsSync(dst) ? sha(readFileSync(dst)) : null) !== f.installedHash) throw new Error(`${f.path} cambió desde la revisión; vuelve a revisar.`);
+    if (opts.backupDir && existsSync(dst)) {
+      const b = join(opts.backupDir, ...f.path.split("/"));
+      mkdirSync(dirname(b), { recursive: true });
+      writeFileSync(b, readFileSync(dst));
+      backedUp.push(f.path);
+    }
+  }
+  const hashes: Record<string, string> = {};
+  const written: string[] = [];
+  try {
+    for (const f of changes) {
+      const data = readFileSync(join(plan.stagingDir, f.path));
+      const dst = stagedTarget(root, f.path)!;
+      mkdirSync(dirname(dst), { recursive: true });
+      writeFileSync(dst, data);
+      written.push(f.path);
+      if (sha(readFileSync(dst)) !== f.stagedHash) throw new Error(`Verificación fallida al escribir ${f.path}.`);
+      hashes[f.path] = f.stagedHash;
+    }
+  } catch (err) {
+    // Roll back what was written: previous content from the backup, new files removed.
+    for (const p of written) {
+      const dst = stagedTarget(root, p)!;
+      const b = opts.backupDir ? join(opts.backupDir, ...p.split("/")) : undefined;
+      if (b && backedUp.includes(p)) writeFileSync(dst, readFileSync(b));
+      else if (!changes.find((c) => c.path === p)?.installedHash) rmSync(dst, { force: true });
+    }
+    throw err;
+  }
+  return { installed: changes.map((f) => f.path), hashes, ...(backedUp.length ? { backupDir: opts.backupDir } : {}), backedUp };
+}
+
 export function printStatus(s: InstallStatus, io: Pick<SetupIO, "out">): void {
   io.out("Estado de instalación:");
   for (const t of s.templates) io.out(`  ${t.target.padEnd(26)} ${t.state === "identical" ? "OK" : t.state === "differs" ? "difiere de la plantilla (personalizado)" : "FALTA"}`);
@@ -157,6 +288,16 @@ export interface SetupDeps {
   audit: (details: Record<string, string | number | boolean | null>) => Promise<void>;
   /** Runs the hook tests; returns the exit code. */
   runHookTests?: () => number;
+  /** Where the previous `.claude` files are copied before an install (data home backups). */
+  backupDir?: string;
+}
+
+/** HOOKS_DIR value that makes tests/hooks.test.ts exercise the staged hooks. */
+export const STAGED_HOOKS_DIR = "harness-staging/.claude/hooks";
+
+/** Backup folder name for one install: `harness-<UTC stamp>`. */
+export function harnessBackupName(now: number): string {
+  return `harness-${new Date(now).toISOString().replace(/[-:]/g, "").replace(/\..*$/, "")}`;
 }
 
 export async function runSetup(deps: SetupDeps): Promise<number> {
@@ -186,44 +327,28 @@ export async function runSetup(deps: SetupDeps): Promise<number> {
   }
 
   // b) harness-staging → .claude
-  const stagingDir = join(root, "harness-staging");
-  if (existsSync(stagingDir)) {
-    const files = listFiles(stagingDir);
-    const refused = files.filter((f) => !stagedTarget(root, f));
-    for (const f of refused) io.err(`harness-staging/${f}: fuera de .claude/ o CLAUDE.md; no se instala.`);
-    if (refused.length) failures++;
-    const changes = files.filter((f) => {
-      const dst = stagedTarget(root, f);
-      return dst !== null && (!existsSync(dst) || sha(readFileSync(join(stagingDir, f))) !== sha(readFileSync(dst)));
-    });
+  const plan = harnessPlan(root);
+  if (plan) {
+    for (const f of plan.refused) io.err(`harness-staging/${f}: fuera de .claude/ o CLAUDE.md; no se instala.`);
+    if (plan.refused.length) failures++;
+    const changes = harnessChanges(plan);
     // Test the STAGED hooks before installing them.
-    const stagedHooks = join(stagingDir, ".claude", "hooks");
     let stagedOk = true;
-    if (changes.length && existsSync(stagedHooks) && existsSync(join(root, "tests", "hooks.test.ts"))) {
+    if (stagedHooksNeedTest(root, plan)) {
       io.out("Probando los hooks en harness-staging/ antes de instalar…");
-      const pre = deps.runHookTests ?? (() => spawnSync(process.platform === "win32" ? "npx.cmd" : "npx", ["vitest", "run", "tests/hooks.test.ts"], { cwd: root, stdio: "inherit", shell: process.platform === "win32", env: { ...process.env, HOOKS_DIR: "harness-staging/.claude/hooks" } }).status ?? 1);
+      const pre = deps.runHookTests ?? (() => spawnSync(process.platform === "win32" ? "npx.cmd" : "npx", ["vitest", "run", "tests/hooks.test.ts"], { cwd: root, stdio: "inherit", shell: process.platform === "win32", env: { ...process.env, HOOKS_DIR: STAGED_HOOKS_DIR } }).status ?? 1);
       stagedOk = pre() === 0;
       if (!stagedOk) { io.out("Las pruebas de los hooks en staging FALLARON: no se instala el harness."); failures++; }
     }
     if (!changes.length) io.out("harness-staging/: .claude/ y CLAUDE.md ya están al día.");
     else if (stagedOk) {
-      for (const f of changes) {
-        const dst = stagedTarget(root, f)!;
-        io.out(unifiedDiff(existsSync(dst) ? readFileSync(dst, "utf8") : "", readFileSync(join(stagingDir, f), "utf8"), f, `harness-staging/${f}`));
-      }
+      for (const f of changes) io.out(harnessDiff(root, f.path, Number.MAX_SAFE_INTEGER).diff);
       const typed = (await io.ask(`Se ${changes.length === 1 ? "instalará 1 archivo" : `instalarán ${changes.length} archivos`} en .claude/ y CLAUDE.md. Escribe INSTALAR para confirmar: `)).trim();
       if (typed !== "INSTALAR") io.out("Instalación del harness cancelada.");
       else {
-        const hashes: Record<string, string> = {};
-        for (const f of changes) {
-          const data = readFileSync(join(stagingDir, f));
-          const dst = stagedTarget(root, f)!;
-          mkdirSync(dirname(dst), { recursive: true });
-          writeFileSync(dst, data);
-          hashes[f] = sha(data);
-        }
-        await deps.audit({ files: changes.length, hashes: JSON.stringify(hashes) });
-        io.out(`Harness instalado (${changes.length} archivos; evento harness.installed registrado).`);
+        const r = installHarnessFiles(root, plan, deps.backupDir ? { backupDir: deps.backupDir } : {});
+        await deps.audit({ files: r.installed.length, hashes: JSON.stringify(r.hashes), channel: "cli", backup: r.backupDir ? basename(r.backupDir) : null });
+        io.out(`Harness instalado (${r.installed.length} archivos; evento harness.installed registrado${r.backupDir ? `; copia anterior en ${r.backupDir}` : ""}).`);
       }
     }
   }

@@ -181,6 +181,27 @@ export async function enrollPasskey(api: CoordinatorApi, input: EnrollInput, dep
 }
 
 /**
+ * Agent harness update: install-options → startAuthentication → install.
+ * The challenge is bound to the exact .claude/ files the server will write.
+ */
+export async function installHarnessWithPasskey(api: CoordinatorApi, deps: WebAuthnDeps = defaultDeps) {
+  precheck(deps);
+  let opts;
+  try {
+    opts = await api.getHarnessInstallOptions();
+  } catch (err) {
+    throw classifyServerError(err);
+  }
+  const optionsJSON = opts.options as unknown as PublicKeyCredentialRequestOptionsJSON;
+  const assertion = await ceremony(optionsJSON.timeout, deps, () => deps.startAuthentication({ optionsJSON }));
+  try {
+    return await api.installHarness({ webauthn: { nonce: opts.nonce, origin: deps.origin(), response: assertion } });
+  } catch (err) {
+    throw classifyServerError(err);
+  }
+}
+
+/**
  * G15 Publicar / Revertir a rule suggestion: publish-options → startAuthentication → publish|revert.
  * The challenge is bound to the exact rule files the server will write.
  */

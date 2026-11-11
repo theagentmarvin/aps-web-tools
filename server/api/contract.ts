@@ -1370,6 +1370,42 @@ export interface RulePublishRequest {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Agent harness update (human-only; server/harness-install.ts). No MCP tool.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type HarnessFileState = "added" | "changed" | "removed" | "same";
+/** GET /harness/status: harness-staging/ vs the installed .claude/ + CLAUDE.md. */
+export interface HarnessStatus {
+  upToDate: boolean;
+  staging: boolean;
+  files: Array<{ path: string; state: HarnessFileState }>;
+  refused: string[];
+  stagedVersion: string | null;
+  installedVersion: string | null;
+  /** The server was started by an agent: install is refused. */
+  installBlocked: boolean;
+}
+/** GET /harness/diff?path= (human, CSRF): unified diff installed → staged, size-capped. */
+export interface HarnessDiff {
+  path: string;
+  diff: string;
+  truncated: boolean;
+}
+/** GET /harness/install-options (human, CSRF): WebAuthn options bound to the exact files written. */
+export type HarnessInstallOptions = RulePublishOptions;
+/** POST /harness/install (human, CSRF, same-origin): a fresh passkey assertion is mandatory. */
+export interface HarnessInstallRequest {
+  webauthn: { nonce: string; origin: string; response: unknown };
+}
+export interface HarnessInstallResult {
+  installed: string[];
+  /** Backup folder name under the data home's backups/ (null when only new files were added). */
+  backup: string | null;
+  stagedVersion: string;
+  installedAt: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Reglas (simplified page): active rules by pair + use + acierto, Biblioteca, alerts,
 // and human rule changes (calibrate · edit · retire · restore) as suggestions.
 // ─────────────────────────────────────────────────────────────────────────────

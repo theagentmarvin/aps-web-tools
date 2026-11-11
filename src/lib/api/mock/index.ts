@@ -1415,6 +1415,20 @@ export class MockCoordinatorApi implements CoordinatorApi {
     throw new ApiError("Modo demostración: se publica sin passkey.", 400, "validation");
   }
 
+  // Agent harness update: the demo has no .claude/ to update (no banner).
+  async getHarnessStatus(): Promise<T.HarnessStatus> {
+    return { upToDate: true, staging: false, files: [], refused: [], stagedVersion: null, installedVersion: null, installBlocked: false };
+  }
+  async getHarnessDiff(path: string): Promise<T.HarnessDiff> {
+    throw new ApiError(`Modo demostración: no hay harness-staging/${path}.`, 404, "not_found");
+  }
+  async getHarnessInstallOptions(): Promise<T.HarnessInstallOptions> {
+    throw new ApiError("Modo demostración: la actualización del agente solo existe con el servidor real.", 400, "validation");
+  }
+  async installHarness(): Promise<T.HarnessInstallResult> {
+    throw new ApiError("Modo demostración: la actualización del agente solo existe con el servidor real.", 400, "validation");
+  }
+
   async publishRuleSuggestion(id: string, op: "publish" | "revert") {
     await delay(300);
     const s = this.suggestions.find((x) => x.id === id);
