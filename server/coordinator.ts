@@ -24,6 +24,7 @@ import { CLOSABLE, ENGINE_NAME, ENGINE_VERSION, loadRules, runEngine } from "./e
 import { fixtureLedgerSeed, LedgerService, recordAccInLedger } from "./ledger";
 import { QuestionStore, type StoredQuestion } from "./questions";
 import { RulePublisher } from "./rules-publish";
+import { HarnessInstaller } from "./harness-install";
 import { RuleAuthoring, type RuleOp } from "./rule-suggest";
 import type { RuleChangeKind } from "./rule-authoring";
 import { accIssueGroups, computeIssueChecks, IssueCheckStore } from "./issue-checks";
@@ -247,6 +248,15 @@ export class Coordinator {
   }
   set rulePublisher(p: RulePublisher) {
     this.rulePub = p;
+  }
+
+  private harnessInst?: HarnessInstaller;
+  /** Agent harness update (human-only HTTP routes + passkey; no MCP tool). Tests may replace it. */
+  get harnessInstaller(): HarnessInstaller {
+    return (this.harnessInst ??= new HarnessInstaller(this));
+  }
+  set harnessInstaller(h: HarnessInstaller) {
+    this.harnessInst = h;
   }
 
   private ruleAuth?: RuleAuthoring;

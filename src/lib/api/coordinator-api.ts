@@ -210,6 +210,16 @@ export interface CoordinatorApi {
   listCorrections(params?: { projectId?: string; limit?: number; cursor?: string }): Promise<Page<CorrectionRow>>;
   getCalibration(): Promise<Calibration>;
 
+  // Agent harness update (human-only; passkey). No agent tool reaches these.
+  /** harness-staging/ vs the installed .claude/ + CLAUDE.md. */
+  getHarnessStatus(): Promise<import("./types").HarnessStatus>;
+  /** Unified diff installed → staged of one staged file. */
+  getHarnessDiff(path: string): Promise<import("./types").HarnessDiff>;
+  /** WebAuthn options bound to the exact files the install writes. */
+  getHarnessInstallOptions(): Promise<import("./types").HarnessInstallOptions>;
+  /** Installs harness-staging/ into .claude/ (backup + audit). Requires a fresh passkey assertion. */
+  installHarness(req: import("./types").HarnessInstallRequest): Promise<import("./types").HarnessInstallResult>;
+
   // G4/G5: project ACC issue settings (GET-only toward ACC; local writes, human-only)
   listIssueTypes(projectId: string): Promise<AccIssueType[]>;
   getIssueSettings(projectId: string): Promise<IssueSettings>;

@@ -1032,6 +1032,33 @@
       "unknown": "The confirmation could not be completed: {message}"
     }
   },
+  "harness": {
+    "banner_one": "An agent update is available (1 file)",
+    "banner_other": "An agent update is available ({count} files)",
+    "review": "Review and install",
+    "dialogTitle": "Agent update",
+    "intro": "These are the agent's instructions, skills and guards reviewed in the repository. Installing copies them into .claude/ (the previous version is backed up) and records it in the audit log.",
+    "versions": "Installed {installed} → new {staged}",
+    "state": {
+      "added": "New",
+      "changed": "Changed",
+      "removed": "Removed",
+      "same": "Unchanged"
+    },
+    "showDiff": "Show changes",
+    "hideDiff": "Hide changes",
+    "diffLoading": "Loading changes…",
+    "diffTruncated": "Diff truncated (very large file).",
+    "refused": "Not installed (outside .claude/ and CLAUDE.md): {files}",
+    "blocked": "This server was started by an agent (Claude Code): for safety it does not install updates. Close it and open the app with “Coordinador BIM.cmd”.",
+    "demo": "In demo mode there is no agent to update.",
+    "passkeyHint": "Windows Hello will ask for your PIN or biometrics to sign exactly these files.",
+    "install": "Install with passkey",
+    "installing": "Testing and installing…",
+    "installed_one": "Agent updated (1 file).",
+    "installed_other": "Agent updated ({count} files).",
+    "restart": "Restart the agent sessions (VS Code / chat) to use the new version."
+  },
   "grid": {
     "tabs": {
       "grid": "Clash grid",

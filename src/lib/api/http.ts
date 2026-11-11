@@ -463,6 +463,11 @@ export class HttpCoordinatorApi implements CoordinatorApi {
   }
   getCalibration() { return this.get<T.Calibration>("/learning/calibration"); }
 
+  getHarnessStatus() { return this.get<T.HarnessStatus>("/harness/status"); }
+  getHarnessDiff(path: string) { return this.get<T.HarnessDiff>("/harness/diff", { path }); }
+  getHarnessInstallOptions() { return this.get<T.HarnessInstallOptions>("/harness/install-options"); }
+  installHarness(req: T.HarnessInstallRequest) { return this.req<T.HarnessInstallResult>("POST", "/harness/install", req); }
+
   listIssueTypes(projectId: string) { return this.get<T.AccIssueType[]>(`/projects/${enc(projectId)}/issue-types`); }
   getIssueSettings(projectId: string) { return this.get<T.IssueSettings>(`/projects/${enc(projectId)}/issue-settings`); }
   setIssueType(projectId: string, req: { typeId: string; subtypeId: string; label: string } | { clear: true }) {

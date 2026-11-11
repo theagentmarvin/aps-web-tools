@@ -807,6 +807,27 @@ export function createCoordApi(opts: CoordApiOptions = {}): CoordApi {
       true,
     );
   }
+  // ── agent harness update (human-only; server/harness-install.ts; NO MCP / chat tool) ──
+  add("GET", "/harness/status", async () => coord.harnessInstaller.status());
+  const HarnessPathZ = z.string().min(1).max(300).regex(/^(CLAUDE\.md|\.claude\/[A-Za-z0-9._\-/]+)$/);
+  add("GET", "/harness/diff", async ({ query }) => coord.harnessInstaller.diff(HarnessPathZ.parse(query.get("path") ?? "")), true);
+  add("GET", "/harness/install-options", async () => coord.harnessInstaller.options(), true);
+  const HarnessInstallSchema = z.strictObject({
+    webauthn: z.strictObject({ nonce: z.string().regex(/^[0-9a-f]{32}$/), origin: z.string().max(100), response: AssertionSchema }).optional(),
+  });
+  add(
+    "POST",
+    "/harness/install",
+    async ({ req, body, user }) => {
+      // Browser-only: fetch metadata must be present and same-origin (curl/agents do not send it by default).
+      if (req.headers["sec-fetch-site"] !== "same-origin") throw new CoordError("forbidden", "La actualización del agente solo se instala desde la UI web (navegador).");
+      const b = HarnessInstallSchema.parse(body ?? {});
+      // The WebAuthn origin is the request origin, never a client claim.
+      if (b.webauthn) b.webauthn.origin = String(req.headers.origin ?? "");
+      return coord.harnessInstaller.install(b, await user());
+    },
+    true,
+  );
   add("GET", "/learning/corrections", async ({ query }) => ui.corrections({ projectId: query.get("projectId") ?? undefined, limit: num(query.get("limit")), cursor: query.get("cursor") ?? undefined }));
   add("GET", "/learning/calibration", async () => ui.calibration());
   add("GET", "/reports", async ({ query }) => ui.report({ projectId: query.get("projectId") ?? undefined, modelSetId: query.get("modelSetId") ?? undefined, from: query.get("from") ?? undefined, to: query.get("to") ?? undefined }));

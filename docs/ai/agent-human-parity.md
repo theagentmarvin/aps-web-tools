@@ -157,19 +157,20 @@ Estados posibles: **parity** · **agent-missing** · **human-missing** · **inte
 | 73 | Conversar con el agente | `POST /chat/messages`, SSE, `history`, `status` · `ChatPanel` | — | intentional: canal del humano al agente |
 | 74 | Cancelar el turno del chat | `POST /chat/:id/cancel` (bug de `http.ts` corregido en WS-E) | — | intentional: canal del humano |
 | 75 | Tarjetas de propuesta en el chat | Tarjeta con acción, validez y destino seleccionable; preguntas respondibles en la tarjeta | Las tarjetas salen de datos del servidor, nunca del texto del modelo | parity (WS-D) |
+| 76 | Actualizar el agente (instalar `harness-staging/` en `.claude/` + `CLAUDE.md`) | `GET /harness/status` (aviso «Hay una actualización del agente (N archivos)» en el shell); `GET /harness/diff?path=` y `GET /harness/install-options` (CSRF); `POST /harness/install` con CSRF + mismo origen + `Sec-Fetch-Site: same-origin` + passkey fresca sobre los hashes exactos de los archivos; prueba los hooks nuevos, respalda en `backups/harness-<fecha>/`, verifica y audita `harness.installed`. Se rechaza si el servidor lo inició un agente (`CLAUDECODE`). Alternativa: `npm run setup` (TTY, fuera de Claude Code). Lanzador `Coordinador BIM.cmd` | No tiene: ninguna herramienta MCP ni del chat llega a estas rutas (test `tests/server/harness-install.test.ts`) | intentional (WS-L; regla 8 y harness-design: el agente nunca modifica su propio harness; solo humano) |
 
 ### Conteo
 
 | Estado | Filas |
 |---|---|
 | parity | 47 |
-| intentional | 21 |
+| intentional | 22 |
 | human-missing | 3 (#23, #44, #66) |
 | agent-missing | 4 (#29, #40, #50, #63) |
 | en curso | 0 |
-| **Total** | **75** |
+| **Total** | **76** |
 
-Recuento tras integrar WS-A…F (2026-11-10).
+Recuento tras integrar WS-A…F (2026-11-10); #76 agregado en WS-L (2026-11-11).
 
 ## 3. Hallazgos que no son de herramientas
 

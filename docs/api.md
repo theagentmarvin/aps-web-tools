@@ -146,6 +146,10 @@ The approver identity is the APS profile in live mode, else `approver.name` from
 | GET | `/rules/:ruleId` | – | `RuleDetail` |
 | GET | `/rule-suggestions` | – | `RuleSuggestion[]` |
 | POST H | `/rule-suggestions/:id/decision` | `{decision}` | `RuleSuggestion` (does not edit `rules/`; a human merges with git) |
+| GET | `/harness/status` | – | `HarnessStatus` `{upToDate, staging, files[{path, state: added|changed|removed|same}], refused, stagedVersion, installedVersion, installBlocked}` (harness-staging/ vs `.claude/` + `CLAUDE.md`) |
+| GET H | `/harness/diff?path` | – | `HarnessDiff` (unified diff installed → staged of one staged path; capped at 200 000 chars) |
+| GET H | `/harness/install-options` | – | `HarnessInstallOptions` (WebAuthn options; challenge bound to the before/after hash of every file written) |
+| POST H | `/harness/install` | `{webauthn}` (strict; no demo) | `HarnessInstallResult` (also requires `Sec-Fetch-Site: same-origin`; refused when the server was started under Claude Code; staged hook tests, backup in `backups/harness-<stamp>/`, verify, audit `harness.installed`). No MCP or chat tool reaches it |
 | GET | `/learning/corrections?projectId&limit&cursor` | – | `Page<CorrectionRow>` |
 | GET | `/learning/calibration` | – | `Calibration` |
 | GET | `/reports?projectId&modelSetId&from&to` | – | `ReportData` |

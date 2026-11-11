@@ -2,6 +2,7 @@ import { Outlet, useMatch } from "react-router";
 import { useT } from "~/i18n";
 import { Nav } from "~/lib/components/nav";
 import { isIpHost } from "~/lib/webauthn";
+import { HarnessUpdateBanner } from "~/features/harness/HarnessUpdate";
 
 export function Layout() {
   const t = useT();
@@ -13,6 +14,7 @@ export function Layout() {
       </a>
       <Nav />
       <WrongHostBanner />
+      <HarnessUpdateBanner />
       <main id="main" className="min-h-0 flex-1">
         {workspace ? (
           <Outlet />

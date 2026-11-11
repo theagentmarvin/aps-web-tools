@@ -27,7 +27,7 @@ import { ApsAuth } from "./aps/auth";
 import { coordinatorAuthConfig } from "./secure/aps-paths";
 import { Coordinator } from "./coordinator";
 import { CoordinatorUi } from "./coordinator-ui";
-import { runSetup, setupCheck } from "./setup";
+import { harnessBackupName, runSetup, setupCheck } from "./setup";
 import { CoordError } from "./util";
 import { FIXTURE_PROJECT_ID } from "./source/fixtures";
 
@@ -98,14 +98,16 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return 2;
     }
     const rl = createInterface({ input: process.stdin, output: process.stderr });
+    let coordForSetup: Coordinator | undefined;
+    const setupCoord = () => (coordForSetup ??= new Coordinator({ root }));
     try {
       return await runSetup({
         root,
         ...(home ? { home } : {}),
         io: { out, err, ask: (q) => rl.question(q) },
+        backupDir: setupCoord().store.path("backups", harnessBackupName(Date.now())),
         audit: async (details) => {
-          const c = new Coordinator({ root });
-          await c.store.audit({ actor: { type: "user", id: `os:${userInfo().username}`, name: userInfo().username }, action: "harness.installed", details });
+          await setupCoord().store.audit({ actor: { type: "user", id: `os:${userInfo().username}`, name: userInfo().username }, action: "harness.installed", details });
         },
       });
     } finally {

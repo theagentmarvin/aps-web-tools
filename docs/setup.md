@@ -110,9 +110,21 @@ Para agregar otra passkey (otro equipo o llave física) entra a la misma página
 
 ## 7. Abrir la aplicación
 
-```bash
-npm run dev
+**Doble clic en `Coordinador BIM.cmd`** (en la carpeta del repo). El lanzador:
+
+1. comprueba que Node.js 22+ esté instalado (si no, te dice dónde descargarlo);
+2. ejecuta `npm install` solo si falta `node_modules` o cambió `package-lock.json`;
+3. si la app ya está corriendo, solo abre el navegador; si no, inicia el servidor (lo mismo que `npm run dev`, puerto 3000), espera a que responda y abre `http://localhost:3000`.
+
+La ventana muestra un estado corto y el registro queda en `%LOCALAPPDATA%\CoordinadorBIM\server.log`. **Cierra esa ventana para detener el servidor.** No requiere permisos de administrador.
+
+Para tener un acceso directo en el Escritorio (una vez):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\create-shortcut.ps1
 ```
+
+Alternativa en terminal: `npm run dev`.
 
 Abre **`http://localhost:3000`** — exactamente `localhost`, **no** `127.0.0.1`: los navegadores no aceptan passkeys sobre una dirección IP, y el servidor rechaza orígenes distintos.
 
@@ -121,6 +133,16 @@ Abre **`http://localhost:3000`** — exactamente `localhost`, **no** `127.0.0.1`
 3. En otra terminal, en la carpeta del repo: `claude`, y luego `/coordinar-test`. Al iniciar, el agente te recuerda el Procedimiento, el nivel de autonomía (L1) y si hay sesión APS.
 
 Listo. El flujo semanal está en el [README](../README.md#flujo-diario-proyecto-real).
+
+## 8. Actualizar el agente desde la app
+
+Cuando el repositorio trae una versión nueva del agente (instrucciones, habilidades u hooks en `harness-staging/`) distinta de la instalada en `.claude/`, la app muestra el aviso **"Hay una actualización del agente (N archivos)"**:
+
+1. **Revisar e instalar** → lista de archivos (nuevo / modificado) con **Ver cambios** para cada uno.
+2. **Instalar con passkey** → Windows Hello firma exactamente esos archivos. El servidor prueba los hooks nuevos, respalda la versión anterior en la carpeta de datos (`backups/harness-<fecha>/`), copia los archivos, verifica cada uno y lo registra en la auditoría (`harness.installed`).
+3. **Reinicia las sesiones del agente** (VS Code / `claude` / chat) para que usen la versión nueva.
+
+Solo una persona puede hacerlo: exige passkey, CSRF y el mismo origen, y ningún agente (MCP ni chat) tiene una herramienta para llegar ahí. Si el servidor lo inició un agente (Claude Code), la instalación se rechaza: ábrelo con `Coordinador BIM.cmd`. `npm run setup` en tu terminal sigue siendo la alternativa.
 
 ## Solución de problemas
 
@@ -139,6 +161,9 @@ Listo. El flujo semanal está en el [README](../README.md#flujo-diario-proyecto-
 | **Puerto 3000 en uso**: Vite arranca en 3001 u otro | Otro proceso usa el 3000 | Cierra ese proceso (`netstat -ano \| findstr :3000` y luego `taskkill /PID <pid> /F`). No uses otro puerto: la callback del navegador y la passkey están ligadas a `localhost:3000`. |
 | **Puerto 8765 en uso** al iniciar sesión | Otro proceso usa el puerto de la callback | Libéralo, o define `APS_CALLBACK_PORT` en `.env.local` y registra la nueva callback en la app APS. |
 | Claude Code no muestra las herramientas `mcp__coord__*` | Falta `.mcp.json` o no aprobaste el servidor MCP | Corre `npm run setup`; al abrir `claude`, acepta el servidor `coord` del proyecto. |
+| **Actualización del agente**: "Este servidor fue iniciado por un agente" | `npm run dev` se lanzó desde Claude Code | Cierra ese servidor y abre la app con `Coordinador BIM.cmd`. |
+| **Actualización del agente**: "Las pruebas de los hooks… fallaron" | La versión nueva en `harness-staging/` no pasa `tests/hooks.test.ts` | No se instaló nada. Avisa a quien mantiene el agente. |
+| `Coordinador BIM.cmd` dice que el servidor no respondió | Otro programa usa el puerto 3000, o falló `npm install` | Revisa `%LOCALAPPDATA%\CoordinadorBIM\server.log`; libera el puerto 3000 y vuelve a abrirlo. |
 | Un hook bloquea algo ("guardia coordinador") | Es intencional: secretos, escritura directa en ACC o configuración protegida | Haz tú la acción fuera del agente si corresponde. Para desarrollar el harness: `COORD_HARNESS_DEV=1 claude` (ver README). |
 
 Si algo no calza, `npm run coordinator -- status` y la página **Ajustes** de la UI muestran el estado de sesión, el modo de datos y el nivel de autonomía.
