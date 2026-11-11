@@ -339,17 +339,16 @@ function FamilyProposal({ f, draft, options, impact }: { f: TriageFamily; draft:
       {!editing && (
         <div className="mt-3">
           <div className="grid grid-cols-3 gap-1.5">
-            <button type="button" onClick={() => actions.accept()} className="flex min-w-0 items-center justify-center gap-1 rounded bg-brand px-1.5 py-1.5 text-xs font-medium text-white hover:bg-brand-light">
+            <button type="button" title={t("families.acceptTip")} onClick={() => actions.accept()} className="flex min-w-0 items-center justify-center gap-1 rounded bg-brand px-1.5 py-1.5 text-xs font-medium text-white hover:bg-brand-light">
               {f.decision?.status === "approved" ? t("families.reapprove") : t("families.approve")} <kbd className="rounded border border-white/40 px-1 font-mono text-[10px]">A</kbd>
             </button>
-            <button type="button" onClick={() => store.setEditing(true)} className="flex min-w-0 items-center justify-center gap-1 rounded border border-brand-muted/30 px-1.5 py-1.5 text-xs text-gray-700 hover:border-brand-light/40">
+            <button type="button" title={t("families.correctTip")} onClick={() => store.setEditing(true)} className="flex min-w-0 items-center justify-center gap-1 rounded border border-brand-muted/30 px-1.5 py-1.5 text-xs text-gray-700 hover:border-brand-light/40">
               {t("families.correct")} <Kbd>E</Kbd>
             </button>
-            <button type="button" onClick={() => actions.reject()} className="flex min-w-0 items-center justify-center gap-1 rounded border border-brand-muted/30 px-1.5 py-1.5 text-xs text-gray-700 hover:border-brand-light/40">
+            <button type="button" title={t("families.splitTip")} onClick={() => actions.reject()} className="flex min-w-0 items-center justify-center gap-1 rounded border border-brand-muted/30 px-1.5 py-1.5 text-xs text-gray-700 hover:border-brand-light/40">
               {t("families.split")} <Kbd>X</Kbd>
             </button>
           </div>
-          <p className="mt-1.5 text-[11px] leading-snug text-gray-600">{t("families.actionsHelp")}</p>
           {ruleLine(f, store, t)}
           <p className="mt-1.5 text-[11px] text-gray-600">
             {t("families.blastRadius", { clashes: impact.affectedClashes, instances: impact.applied.length })}
