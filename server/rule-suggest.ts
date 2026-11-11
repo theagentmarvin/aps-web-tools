@@ -452,6 +452,30 @@ export class RuleAuthoring {
         }
         out.set(r, s);
       }
+      // Group ("familia") decisions — the coordinator's usual way to decide — count too, once per covered
+      // ubicación that has no decision of its own: same validity and responsible = agreement with its rule.
+      // "Decidir una por una" (rejected family) is not counted: the individual decisions that follow are.
+      const views = await this.coord.familyViewsFor(t.testKey).then((x) => x.views).catch(() => []);
+      for (const v of views) {
+        const dec = v.decision;
+        if (!dec || dec.status !== "approved" || dec.testKey !== t.testKey) continue;
+        for (const gid of dec.coveredGroupIds) {
+          if (decided.has(gid)) continue;
+          const g = gById.get(gid);
+          const r = g?.ruleIds[0];
+          if (!g || !r) continue;
+          const s = out.get(r) ?? { agree: 0, n: 0, corrections: new Map<string, number>() };
+          s.n++;
+          const sameValidity = dec.validity === g.validity;
+          const sameOwner = dec.responsibleDiscipline === g.responsibleDiscipline;
+          if (sameValidity && sameOwner) s.agree++;
+          else {
+            const label = !sameValidity ? `${val(g.validity)} → ${val(dec.validity)}` : `responsable ${g.responsibleDiscipline} → ${dec.responsibleDiscipline}`;
+            s.corrections.set(label, (s.corrections.get(label) ?? 0) + 1);
+          }
+          out.set(r, s);
+        }
+      }
     }
     return out;
   }

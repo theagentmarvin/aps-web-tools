@@ -226,8 +226,8 @@ export function FamilyRejectDialog({ familyId }: { familyId: string }) {
       footer={
         <>
           <Button onClick={close}>{t("common.cancel")}</Button>
-          <Button variant="danger" disabled={busy || (code === "R99" && !note.trim())} onClick={() => void confirm()}>
-            {t("actions.reject")}
+          <Button variant="primary" disabled={busy || (code === "R99" && !note.trim())} onClick={() => void confirm()}>
+            {t("families.splitConfirm")}
           </Button>
         </>
       }

@@ -2233,8 +2233,9 @@ export class CoordinatorUi {
       .map((i) => ({ groupId: i.groupId, title: i.title, from: i.validity, to: validity }));
   }
 
-  private spotCheckRequired(v: FamilyView): number {
-    return Math.min(v.instanceCount, v.uniqueClashCount > 50 ? 3 : 1);
+  /** No mandatory spot-check (product decision 2026-11-11): the coordinator decides when to look at ubicaciones. */
+  private spotCheckRequired(_v: FamilyView): number {
+    return 0;
   }
 
   async familyDecisionPreview(familyId: string, req: Partial<C.FamilyDecisionRequest> & { testId: string }): Promise<C.FamilyDecisionPreview> {

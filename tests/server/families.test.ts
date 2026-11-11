@@ -128,10 +128,19 @@ describe("family decisions, inheritance and batches (fixtures)", () => {
 
   it("approve on v41 → inherited; on v42 the new instance is inherited_pending until a human confirms; exceptions survive", async () => {
     const { old, f, fresh, kept } = await familyWithNewInstance();
-    // spot-check is mandatory
-    await expect(ui.decideFamily(old.id, { testId: k41, decision: "approve", spotChecked: [] }, HUMAN)).rejects.toThrow(/al menos 1/);
+    // No mandatory spot-check (product decision 2026-11-11): approving without opening ubicaciones is allowed;
+    // spotChecked stays optional and is still recorded when sent.
+    expect((await ui.familyDecisionPreview(old.id, { testId: k41 })).spotCheckRequired).toBe(0);
     const d1 = await ui.decideFamily(old.id, { testId: k41, decision: "approve", spotChecked: [old.groupIds[0]!], solutionOption: "Desviar" }, HUMAN);
     expect(d1.state).toBe("decidida");
+    // Continuous improvement: a group acceptance counts toward its rule's accuracy (once per covered ubicación).
+    {
+      const cls = (await coord.store.getClassification(k41))!;
+      const rule = cls.groups.find((g) => g.id === old.groupIds[0])!.ruleIds[0]!;
+      const acc = (await coord.ruleAuthoring.accuracy()).get(rule);
+      expect(acc?.n ?? 0).toBeGreaterThan(0);
+      expect(acc!.agree).toBe(acc!.n);
+    }
     expect(d1.decision).toMatchObject({ version: 1, status: "approved", validity: "real", action: "create_issue", issueMode: "family", decidedBy: HUMAN.name });
     expect(d1.instances.every((i) => i.inheritance.state === "inherited")).toBe(true);
 

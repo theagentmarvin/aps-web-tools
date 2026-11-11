@@ -7,6 +7,7 @@
  * Approval itself happens in FamilyApproveDialog (mandatory confirmation).
  */
 import { useState } from "react";
+import { Link } from "react-router";
 import { useI18n, useT, type TKey } from "~/i18n";
 import { useApi } from "~/lib/api";
 import { useToast } from "~/lib/components/Toast";
@@ -28,6 +29,31 @@ import { MeetingNoteSection } from "./MeetingViews";
 import { AskAgentLink } from "./DetailPanel";
 import { FamilyMoreMenu } from "./FamilyMoreMenu";
 import { rowKey, useTriage, type FamilyDraft, type TriageStore } from "./store";
+
+/** "Propuesta de la regla EST-009": the engine rule(s) behind the group proposal, linked to Reglas (accuracy, calibrate). */
+function ruleLine(f: TriageFamily, store: TriageStore, t: ReturnType<typeof useT>) {
+  const weight = new Map<string, number>();
+  for (const id of f.groupIds) {
+    const g = store.state.groups.get(id);
+    if (g?.ruleId) weight.set(g.ruleId, (weight.get(g.ruleId) ?? 0) + g.clashIds.length);
+  }
+  const rules = [...weight.entries()].sort((a, b) => b[1] - a[1]).map(([id]) => id);
+  if (!rules.length) return null;
+  return (
+    <p className="mt-0.5 text-[11px] text-gray-600">
+      {t("families.ruleOrigin")}{" "}
+      {rules.slice(0, 3).map((id, i) => (
+        <span key={id}>
+          {i > 0 && ", "}
+          <Link to={`/reglas/${encodeURIComponent(id)}`} className="font-mono text-brand hover:underline">
+            {id}
+          </Link>
+        </span>
+      ))}
+      {rules.length > 3 && ` +${rules.length - 3}`}
+    </p>
+  );
+}
 
 export const FAMILY_ACTION_KEY: Record<FamilyAction, TKey> = {
   create_issue: "families.action.create_issue",
@@ -73,7 +99,7 @@ export function familyImpact(store: TriageStore, f: TriageFamily, draft: FamilyD
       if (g.validity !== draft.validity) out.validityChanges.push(g);
     }
   }
-  out.spotRequired = f.uniqueClashCount > 50 ? Math.min(3, instances.length) : 1;
+  out.spotRequired = 0; // no mandatory spot-check (product decision 2026-11-11)
   const visited = s.familyVisits.get(f.id) ?? new Set<string>();
   out.spotDone = f.groupIds.filter((id) => visited.has(id));
   return out;
@@ -281,7 +307,7 @@ function FamilyProposal({ f, draft, options, impact }: { f: TriageFamily; draft:
             <button type="button" onClick={() => { store.setFamilyDraft(f.id, null); store.setEditing(false); }} className="rounded px-2 py-1 text-xs text-gray-600 hover:bg-gray-100">
               {t("common.cancel")}
             </button>
-            <button type="button" onClick={() => store.setEditing(false)} className="rounded bg-brand px-2 py-1 text-xs font-medium text-white hover:bg-brand-light">
+            <button type="button" onClick={() => { store.setEditing(false); actions.accept(); }} className="rounded bg-brand px-2 py-1 text-xs font-medium text-white hover:bg-brand-light">
               {t("families.useChanges")}
             </button>
           </div>
@@ -317,12 +343,14 @@ function FamilyProposal({ f, draft, options, impact }: { f: TriageFamily; draft:
               {f.decision?.status === "approved" ? t("families.reapprove") : t("families.approve")} <kbd className="rounded border border-white/40 px-1 font-mono text-[10px]">A</kbd>
             </button>
             <button type="button" onClick={() => store.setEditing(true)} className="flex min-w-0 items-center justify-center gap-1 rounded border border-brand-muted/30 px-1.5 py-1.5 text-xs text-gray-700 hover:border-brand-light/40">
-              {t("actions.change")} <Kbd>E</Kbd>
+              {t("families.correct")} <Kbd>E</Kbd>
             </button>
             <button type="button" onClick={() => actions.reject()} className="flex min-w-0 items-center justify-center gap-1 rounded border border-brand-muted/30 px-1.5 py-1.5 text-xs text-gray-700 hover:border-brand-light/40">
-              {t("actions.reject")} <Kbd>X</Kbd>
+              {t("families.split")} <Kbd>X</Kbd>
             </button>
           </div>
+          <p className="mt-1.5 text-[11px] leading-snug text-gray-600">{t("families.actionsHelp")}</p>
+          {ruleLine(f, store, t)}
           <p className="mt-1.5 text-[11px] text-gray-600">
             {t("families.blastRadius", { clashes: impact.affectedClashes, instances: impact.applied.length })}
             {impact.excepted.length > 0 && ` · ${t("families.exceptionsCount", { count: impact.excepted.length })}`}
