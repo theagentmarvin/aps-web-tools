@@ -79,7 +79,7 @@ Style rules:
     CLI:  { type: company, name: "Clima Ingeniería Ltda." }
     EST:  { type: company, name: "Oficina de Cálculo X" }
     ARQ:  { type: role,    name: "Arquitectura" }
-    COORD:{ type: user,    email: coordinador.bim@salfacorp.com }
+    COORD:{ type: user,    email: coordinador.bim@example.com }
   ```
 - `COORD` issues (escalations) are assigned to the coordinator and appear on the meeting agenda.
 - Put `secondaryDiscipline` in the description and in watchers. It is never the assignee.

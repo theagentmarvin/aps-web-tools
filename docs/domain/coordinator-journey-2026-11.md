@@ -121,4 +121,4 @@ Actors: COORD = coordinador · AG-CC = agent in Claude Code · AG-CHAT = agent i
 
 These are role-play estimates (fixtures: 303 clashes, 153 grupos), not measurements. Re-time them in the first two real cycles (pilot review, "Watch" list).
 
-Screenshots (directory `C:\Users\rzepedal\AppData\Local\Temp\claude\b04b852c784a9319\3432c899-f6e6-4729-9e7b-bcf81e632ffc\scratchpad\journey\shots\`): 01–07 project, matrix, disciplinas · 08–12c v41 workspace and grupo approval · 13–18 v41 batch (stale) · 19–27 v42 Qué cambió, spot-check, exception · 28–31 Incidencias · 32–33 Reunión and note · 34–35 Agente · 36–43 reglas, inherited, v42 batch and dry run · L1–L5 live project (read only).
+Screenshots (taken in the review session's scratchpad `journey/shots/`, not committed): 01–07 project, matrix, disciplinas · 08–12c v41 workspace and grupo approval · 13–18 v41 batch (stale) · 19–27 v42 Qué cambió, spot-check, exception · 28–31 Incidencias · 32–33 Reunión and note · 34–35 Agente · 36–43 reglas, inherited, v42 batch and dry run · L1–L5 live project (read only).

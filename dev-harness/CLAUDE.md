@@ -58,8 +58,21 @@ herramientas del agente de la app, rutas solo humanas), **dilo explícitamente e
 Editar la guardia activa (`.claude/hooks/**`, `.claude/settings.json`) pide confirmación; para cambiar el harness
 de desarrollo edita `dev-harness/` y pide al coordinador que corra `scripts/activate-dev-harness.ps1`.
 
+## Git: rama, PR y merge del dueño (obligatorio, repositorio compartido)
+**Lee `CONTRIBUTING.md` antes de hacer commit** y síguelo siempre:
+- Antes de empezar: `git remote -v` (origin = este repo en GitHub), luego `git checkout main`,
+  `git pull --ff-only origin main` y `git checkout -b <tipo>/<tema-corto>` (`mejora/`, `fix/`, `feature/`, `docs/`,
+  `refactor/`, `chore/`). Si hay cambios sin commit, pregunta qué hacer con ellos antes de cambiar de rama.
+- **Nunca** commit ni push directo a `main`; **nunca** `push --force` en ramas compartidas.
+- Antes del commit: `npm run typecheck`, `npm test`, `npm run check`; revisa `git status`/`git diff` y agrega solo
+  los archivos del cambio. Nada de secretos, `.env`, datos de proyecto, datos personales ni rutas `C:\Users\<nombre>`.
+- Push y PR: `git push -u origin <rama>` y `gh pr create --base main --fill` (completa la plantilla y marca si toca
+  seguridad). **No hagas merge tú**: el dueño del repo revisa y hace el merge.
+- Después del merge: `git checkout main`, `git pull --ff-only origin main`, `git branch -d <rama>`.
+
 ## Cómo trabajas
 - Cambio pequeño y verificable; tests junto al cambio; typecheck + `npx vitest run` antes de dar algo por listo.
-- Resumen en español para el coordinador: qué cambió, cómo probarlo, riesgos. Commit cuando esté de acuerdo.
+- Resumen en español para el coordinador: qué cambió, cómo probarlo, riesgos. Commit en su rama y PR cuando esté
+  de acuerdo (ver «Git» arriba).
 - Al terminar un cambio de la app o del agente: «Reinicia la app con **Coordinador BIM.cmd**».
 - Si una guarda bloquea algo, no busques rodeos: explica el bloqueo.

@@ -115,6 +115,8 @@ En el chat puedes preguntar en lenguaje natural ("¿qué hay de nuevo en el nive
 2. **Flujo Curar reglas** revisa las correcciones acumuladas y propone cambios a las reglas, evaluados contra los escenarios y tu historial (puertas: 0 cierres inseguros, 0 falsos negativos críticos). Aparecen en **Reglas › Sugerencias**, donde tú los apruebas y **publicas con passkey**.
 3. **Notas del proyecto.** Convenciones acordadas (p. ej. "las pasadas en losa de SAN están modeladas como camisas") van a `projects/<projectId>/notes.md` en tu carpeta de datos; los flujos las leen. Son locales a tu equipo.
 4. **Mejorar la app o el agente en sí** (instrucciones, nuevas pantallas, nuevos flujos): abre el repo en VS Code y pídeselo a Claude (`/mejorar`). Ver [modo desarrollo](docs/setup.md#8-mejorar-la-app-o-el-agente-vs-code-modo-desarrollo).
+5. **Subir el cambio:** cada mejora va en su propia rama y se sube como **Pull Request** a `main`; el dueño del repo
+   revisa y hace el merge. Reglas completas (para personas y para Claude): [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 

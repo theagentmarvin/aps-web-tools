@@ -230,7 +230,9 @@ describe("dev harness wiring", () => {
     for (const s of ["agent-runtime/", "npx vitest run", "tsconfig.server.json", "/mejorar", "CSRF", "start_flow", "rules/"]) expect(md).toContain(s);
     const skill = readFileSync(join(ROOT, "dev-harness", ".claude", "skills", "mejorar", "SKILL.md"), "utf8");
     expect(skill).toMatch(/^---\nname: mejorar\n/);
-    for (const s of ["máximo 3 preguntas", "npx vitest run", "Coordinador BIM.cmd", "mejora/<slug>"]) expect(skill).toContain(s);
+    for (const s of ["máximo 3 preguntas", "npm test", "Coordinador BIM.cmd", "mejora/<tema-corto>", "CONTRIBUTING.md", "gh pr create --base main", "No hagas merge"]) expect(skill).toContain(s);
+    // Shared repo: branch + PR, never push to main, never force (same rules as the modeling agent).
+    for (const s of ["CONTRIBUTING.md", "Nunca** commit ni push directo a `main`", "push --force", "No hagas merge tú"]) expect(md).toContain(s);
   });
 
   it.skipIf(process.platform !== "win32")("activation script refuses to run under Claude Code", () => {
