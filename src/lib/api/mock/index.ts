@@ -1,0 +1,1720 @@
+/**
+ * MockCoordinatorApi — in-memory implementation with realistic Spanish data.
+ * State lives for the page session (decisions, batches, audit events). Only
+ * used when VITE_COORD_API=mock (the dev default until the server lands).
+ */
+import { ApiError, type CoordinatorApi } from "../coordinator-api";
+import { latestDecisions, minConfidence, newId } from "../decision-utils";
+import type * as T from "../types";
+import { buildItems, recount } from "./batches";
+import { DISCIPLINES, RULES, USERS } from "./catalog";
+import { HUBS, PROJECTS, SANDBOX_RULES, SANDBOX_SUGGESTIONS, SANDBOX_VIEWS, type MockModelSet, type MockProject } from "./fixtures";
+import { generateTest, rng, type GenerateOptions, type GeneratedTest, type MockDocDef } from "./generate";
+import { fakeHash, seedCorrections, seedSuggestions } from "./reports";
+import { mockRulesOverview } from "./rules-overview";
+import { deriveFamilies, refreshFamily } from "./families";
+import { applyM1, type M1Data } from "./m1";
+import { applyM2, type M2Data } from "./m2";
+import { buildIssueChecks } from "./m3";
+import { AGENDA_CAP, buildAgenda } from "./m4";
+import { MockChat } from "./chat";
+import { MockFlows } from "./flows";
+import { PROBLEM_TYPES } from "~/lib/problem-types";
+import { MOCK_REPORT_FILES, mockFeedback, mockHygiene, mockReport, resizeFamily } from "./parity";
+
+const ME = USERS[0];
+const delay = (ms = 160) => new Promise<void>((r) => setTimeout(r, ms + Math.random() * 120));
+const clone = <V,>(v: V): V => structuredClone(v);
+
+interface ApplyJob {
+  startedAt: number;
+  issueTotal: number;
+  statusTotal: number;
+  failures: T.ApplyStatus["failures"];
+}
+
+/** Read once at load: the workspace rewrites the URL query after it opens. */
+const MOCK_CHAT_FLAG = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("chat") : null;
+
+export class MockCoordinatorApi implements CoordinatorApi {
+  readonly mode = "mock" as const;
+
+  private tests = new Map<string, GeneratedTest>();
+  /** Solution families per test (mock F1 step), derived once from the generated groups. */
+  private families = new Map<string, { families: T.TriageFamily[]; groups: T.FamilyGroup[]; m1: M1Data; m2: M2Data }>();
+  private decisions = new Map<string, T.Decision[]>();
+  private batches = new Map<string, T.Batch>();
+  private applyJobs = new Map<string, ApplyJob>();
+  private suggestions: T.RuleSuggestion[] = seedSuggestions();
+  private corrections: T.CorrectionRow[] = seedCorrections();
+  private firstLoad = new Map<string, number>();
+  private changesSent = new Set<string>();
+  private seeded = false;
+  private batchSeq = 2;
+
+  // ── internals ────────────────────────────────────────────────────
+
+  private findProject(projectId: string): MockProject {
+    const p = PROJECTS.find((x) => x.id === projectId);
+    if (!p) throw new ApiError("Proyecto no encontrado", 404, "not_found");
+    return p;
+  }
+
+  private findModelSet(projectId: string, modelSetId: string): MockModelSet {
+    const ms = this.findProject(projectId).modelSets.find((m) => m.id === modelSetId);
+    if (!ms) throw new ApiError("Conjunto no encontrado", 404, "not_found");
+    return ms;
+  }
+
+  private locateTest(testId: string): { project: MockProject; modelSet: MockModelSet; opts: GenerateOptions } {
+    for (const project of PROJECTS)
+      for (const modelSet of project.modelSets)
+        for (const opts of modelSet.tests) if (opts.testId === testId) return { project, modelSet, opts };
+    throw new ApiError("Prueba no encontrada", 404, "not_found");
+  }
+
+  /** Tests ingested during this session (fixtures with analyzed:false start uncached). */
+  private ingested = new Set<string>();
+
+  private isCached(o: GenerateOptions): boolean {
+    return o.analyzed || this.ingested.has(o.testId);
+  }
+
+  private data(testId: string): GeneratedTest {
+    let d = this.tests.get(testId);
+    if (!d) {
+      const opts = this.locateTest(testId).opts;
+      d = generateTest({ ...opts, analyzed: this.isCached(opts) });
+      this.tests.set(testId, d);
+    }
+    return d;
+  }
+
+  private sources(testId: string) {
+    const d = this.data(testId);
+    return {
+      groups: new Map(d.groups.map((g) => [g.id, g])),
+      clashes: new Map(d.clashes.map((c) => [c.id, c])),
+      proposals: new Map(d.proposals.map((p) => [p.id, p])),
+    };
+  }
+
+  private decisionsOf(testId: string): T.Decision[] {
+    let list = this.decisions.get(testId);
+    if (!list) {
+      list = [];
+      this.decisions.set(testId, list);
+    }
+    return list;
+  }
+
+  private projectSummary(p: MockProject): T.ProjectSummary {
+    const pending = p.modelSets.reduce((s, ms) => s + this.modelSetSummary(p, ms).groupsTotal - this.modelSetSummary(p, ms).groupsReviewed, 0);
+    return {
+      id: p.id,
+      name: p.name,
+      hubId: p.hubId,
+      hubName: HUBS.find((h) => h.id === p.hubId)?.name ?? "",
+      modelSetCount: p.modelSets.length,
+      pendingDecisions: pending,
+    };
+  }
+
+  private modelSetSummary(p: MockProject, ms: MockModelSet): T.ModelSetSummary {
+    const latest = ms.tests[0];
+    const analyzedTest = ms.tests.find((t) => this.isCached(t));
+    let reviewed = 0;
+    let ready = 0;
+    const total = this.isCached(latest) ? latest.groups : 0;
+    if (this.isCached(latest) && this.tests.has(latest.testId)) {
+      const latestMap = latestDecisions(this.decisionsOf(latest.testId));
+      for (const d of latestMap.values()) {
+        if (d.targetType !== "group") continue;
+        if (d.kind !== "postpone") reviewed++;
+        if (!d.batchId && d.kind !== "postpone") ready++;
+      }
+    }
+    return {
+      id: ms.id,
+      projectId: p.id,
+      name: ms.name,
+      latestVersion: ms.latestVersion,
+      analyzedVersion: analyzedTest?.version,
+      lastTest: { id: latest.testId, completedOn: latest.completedOn, clashCount: latest.clashes, modelSetVersion: latest.version },
+      groupsReviewed: reviewed,
+      groupsTotal: total,
+      readyToApprove: ready,
+      agentCommand: `Analiza el conjunto "${p.name.split(" — ")[0]} — ${ms.name}" (v${ms.latestVersion})`,
+    };
+  }
+
+  /** The audit trail is the server job (it protects approvals); the mock keeps none since the Auditoría page was removed. */
+  private log(_event: Omit<T.AuditEvent, "id" | "at" | "hash"> & { at?: string }) {
+    void _event;
+  }
+
+  /** Seed history: earlier decisions, three batches, audit trail. */
+  private ensureSeed() {
+    if (this.seeded) return;
+    this.seeded = true;
+
+    // Torre B v14: 26 groups decided yesterday, 18 of them already in a ready batch.
+    const tb = this.data("T-3f9a21c0");
+    const r = rng(77);
+    const yesterday = Date.now() - 22 * 3600000;
+    const decided: T.Decision[] = [];
+    tb.proposals.slice(0, 26).forEach((p, i) => {
+      const correct = r.chance(0.18);
+      const reject = !correct && r.chance(0.06);
+      const pr = p.fields.priority.value;
+      const d: T.Decision = {
+        id: newId(),
+        proposalId: p.id,
+        targetType: "group",
+        targetId: p.targetId,
+        testId: p.testId,
+        modelSetId: "a1b2c3d4-0001-4000-8000-000000000001",
+        projectId: PROJECTS[0].id,
+        kind: correct ? "correct" : reject ? "reject" : "accept",
+        changes: correct
+          ? [{ field: "priority", aiValue: pr, humanValue: pr === 1 ? 2 : pr - 1, aiConfidence: p.fields.priority.confidence, aiSource: p.fields.priority.source, ruleIds: p.fields.priority.ruleIds }]
+          : [],
+        reasonCode: correct ? (pr === 1 ? "R08" : "R09") : reject ? "R02" : undefined,
+        viewedInViewerMs: 2000 + r.int(0, 9000),
+        decidedAt: new Date(yesterday + i * 41000).toISOString(),
+        userId: ME.id,
+        userName: ME.short,
+      };
+      decided.push(d);
+    });
+    this.decisionsOf("T-3f9a21c0").push(...decided);
+    this.makeBatch("T-3f9a21c0", decided.slice(0, 18), "ready", new Date(yesterday + 30 * 60000).toISOString(), "L-2026-11-05-01");
+
+    // MEP Subterráneos v6 (stale: model set already at v7): ready batch.
+    const sub = this.data("T-5a6b7c8d");
+    const subDecisions = sub.proposals.slice(0, 9).map((p, i) => this.seedAccept(p, "a1b2c3d4-0002-4000-8000-000000000002", PROJECTS[0].id, Date.now() - 4 * 86400000 + i * 60000));
+    this.decisionsOf("T-5a6b7c8d").push(...subDecisions);
+    this.makeBatch("T-5a6b7c8d", subDecisions, "ready", new Date(Date.now() - 4 * 86400000 + 3600000).toISOString(), "L-2026-11-02-01");
+
+    // Hospital v9: applied batch.
+    const hrt = this.data("T-9e0f1a2b");
+    const hrtDecisions = hrt.proposals.slice(0, 14).map((p, i) => this.seedAccept(p, "c3d4e5f6-0004-4000-8000-000000000004", PROJECTS[2].id, Date.now() - 6 * 86400000 + i * 60000));
+    this.decisionsOf("T-9e0f1a2b").push(...hrtDecisions);
+    const applied = this.makeBatch("T-9e0f1a2b", hrtDecisions, "applied", new Date(Date.now() - 6 * 86400000 + 7200000).toISOString(), "L-2026-10-31-01");
+    applied.approvedBy = USERS[1].short;
+    applied.approvedAt = new Date(Date.now() - 6 * 86400000 + 9000000).toISOString();
+    applied.appliedAt = new Date(Date.now() - 6 * 86400000 + 9100000).toISOString();
+  }
+
+  private seedAccept(p: T.Proposal, modelSetId: string, projectId: string, at: number): T.Decision {
+    return {
+      id: newId(),
+      proposalId: p.id,
+      targetType: "group",
+      targetId: p.targetId,
+      testId: p.testId,
+      modelSetId,
+      projectId,
+      kind: "accept",
+      changes: [],
+      viewedInViewerMs: 3500,
+      decidedAt: new Date(at).toISOString(),
+      userId: ME.id,
+      userName: ME.short,
+    };
+  }
+
+  private makeBatch(testId: string, decisions: T.Decision[], state: T.BatchState, createdAt: string, id?: string): T.Batch {
+    const { project, modelSet, opts } = this.locateTest(testId);
+    const batchId = id ?? `L-${new Date().toISOString().slice(0, 10)}-${String(++this.batchSeq).padStart(2, "0")}`;
+    const items = buildItems(decisions, this.sources(testId), ME.short);
+    const batch: T.Batch = recount({
+      id: batchId,
+      projectId: project.id,
+      projectName: project.name,
+      modelSetId: modelSet.id,
+      modelSetName: modelSet.name,
+      testId,
+      testDate: opts.completedOn,
+      modelSetVersion: opts.version,
+      latestVersion: modelSet.latestVersion,
+      state,
+      createdBy: ME.short,
+      createdAt,
+      stale: modelSet.latestVersion > opts.version,
+      counts: { issuesCreate: 0, statusChanges: 0, assignments: 0, comments: 0 },
+      origin: { accepted: 0, corrected: 0, manual: 0 },
+      review: { humanReviewedPct: 100, lowConfidence: 0, lowConfidenceViewed: 0 },
+      statusTransitions: [],
+      issueEffects: { issues: 0, clashesLinked: 0 },
+      issuesByDiscipline: {},
+      items,
+    });
+    for (const d of decisions) d.batchId = batchId;
+    this.batches.set(batchId, batch);
+    return batch;
+  }
+
+  private getBatchOrThrow(id: string): T.Batch {
+    this.ensureSeed();
+    const b = this.batches.get(id);
+    if (!b) throw new ApiError("Lote no encontrado", 404, "not_found");
+    return b;
+  }
+
+  private summarize(b: T.Batch): T.BatchSummary {
+    const { items: _items, ...rest } = b;
+    void _items;
+    return clone(rest);
+  }
+
+  // ── Session / agent ─────────────────────────────────────────────
+
+  async getAuthStatus(): Promise<T.AuthStatus> {
+    await delay(30);
+    return { loggedIn: true, dataSource: "fixtures", user: { id: ME.id, name: ME.name, initials: ME.initials }, loginInProgress: false };
+  }
+
+  async login(): Promise<T.LoginStartResponse> {
+    return { alreadyLoggedIn: true };
+  }
+
+  async logout(): Promise<{ ok: true }> {
+    return { ok: true };
+  }
+
+  async getSession(): Promise<T.SessionInfo> {
+    await delay(30);
+    return {
+      autonomy: { level: 1, effectiveLevel: 1, source: "mock" },
+      dataSource: "fixtures",
+      pending: { proposals: 0, approvedNotApplied: 0, feedbackSinceLastCuration: 0 },
+      versions: { server: "mock", ruleset: "mock", engine: "mock" },
+      confidenceBands: { high: 0.85, medium: 0.6 },
+    };
+  }
+
+  async getCurrentUser(): Promise<T.UserInfo> {
+    await delay(40);
+    return { id: ME.id, name: ME.name, initials: ME.initials };
+  }
+
+  async getAgentStatus(): Promise<T.AgentStatus> {
+    await delay(40);
+    return {
+      lastActivityAt: new Date(Date.now() - 2 * 60000).toISOString(),
+      lastRunId: "run-1a2b14",
+      running: false,
+      currentTask: "Redactó 23 borradores de incidencia para Torre B (v14)",
+    };
+  }
+
+  // ── Projects ────────────────────────────────────────────────────
+
+  async listHubs() {
+    await delay(60);
+    return clone(HUBS);
+  }
+
+  async listProjects(params?: { hubId?: string; q?: string }) {
+    this.ensureSeed();
+    await delay();
+    const q = params?.q?.toLowerCase();
+    return PROJECTS.filter((p) => (!params?.hubId || p.hubId === params.hubId) && (!q || p.name.toLowerCase().includes(q))).map((p) =>
+      this.projectSummary(p),
+    );
+  }
+
+  async getProject(projectId: string) {
+    this.ensureSeed();
+    await delay(60);
+    return this.projectSummary(this.findProject(projectId));
+  }
+
+  async listModelSets(projectId: string) {
+    this.ensureSeed();
+    await delay();
+    const p = this.findProject(projectId);
+    return p.modelSets.map((ms) => this.modelSetSummary(p, ms));
+  }
+
+  async listTests(projectId: string, modelSetId: string) {
+    await delay(60);
+    return this.findModelSet(projectId, modelSetId).tests.map((o): T.TestRun => {
+      const cached = this.isCached(o);
+      // Uncached ACC tests: no counts yet (the server reports 0 too).
+      return { id: o.testId, state: cached ? "classified" : o.stage === "counts" || this.countsReady.has(o.testId) ? "counts" : "none", accTestId: o.accTestId ?? o.testId, cached, modelSetId: o.modelSetId, modelSetVersion: o.version, completedOn: o.completedOn, clashCount: cached ? o.clashes : 0, analyzed: cached, documents: [] };
+    });
+  }
+
+  // ── Ingest jobs (simulated phases over ~7 s) ──────────────────
+
+  private jobs = new Map<string, { projectId: string; modelSetId: string; testId: string; startedAt: number; finished: boolean }>();
+
+  private jobOf(jobId: string, j: { testId: string; startedAt: number }, phase: T.IngestPhase, progress: number, message: string, testKey?: string): T.IngestJob {
+    const o = this.locateTest(j.testId).opts;
+    return { jobId, phase, progress, message, accTestId: o.accTestId ?? o.testId, startedAt: new Date(j.startedAt).toISOString(), updatedAt: new Date().toISOString(), timings: {}, ...(testKey ? { testKey } : {}) };
+  }
+  /** Tests whose clash grid (counts only) is downloaded. */
+  private countsReady = new Set<string>();
+  /** lineageUrn → discipline override. */
+  private disciplineOverrides = new Map<string, string>();
+
+  async ingestTest(projectId: string, modelSetId: string, accTestId: string): Promise<T.IngestStart> {
+    const ms = this.findModelSet(projectId, modelSetId);
+    const o = ms.tests.find((t) => (t.accTestId ?? t.testId) === accTestId || t.testId === accTestId);
+    if (!o) throw new ApiError("Prueba no encontrada", 404, "not_found");
+    await delay(150);
+    const jobId = `J-${newId().slice(0, 8)}`;
+    this.jobs.set(jobId, { projectId, modelSetId, testId: o.testId, startedAt: Date.now(), finished: false });
+    return { jobId };
+  }
+
+  async getIngestJob(jobId: string): Promise<T.IngestJob> {
+    await delay(40);
+    const j = this.jobs.get(jobId);
+    if (!j) throw new ApiError("Trabajo no encontrado", 404, "not_found");
+    const t = (Date.now() - j.startedAt) / 1000;
+    const o = this.locateTest(j.testId).opts;
+    if (t < 2) return this.jobOf(jobId, j, "downloading", (t / 2) * 0.35, `Descargando resultados de interferencias de ACC (v${o.version})…`);
+    this.countsReady.add(j.testId);
+    if (t < 3) return this.jobOf(jobId, j, "clash_grid_ready", 0.4, "Matriz de interferencias lista. Descargando propiedades de elementos…");
+    if (t < 5) return this.jobOf(jobId, j, "properties", 0.4 + ((t - 3) / 2) * 0.25, `Leyendo propiedades de ${o.documents?.length ?? 6} modelos…`);
+    if (t < 7) return this.jobOf(jobId, j, "classifying", 0.65 + ((t - 5) / 2) * 0.3, "Clasificando y agrupando interferencias con las reglas del proyecto…");
+    if (!j.finished) {
+      j.finished = true;
+      this.ingested.add(j.testId);
+      this.tests.delete(j.testId);
+      this.log({ actor: { type: "engine", id: "engine", name: "Motor" }, action: "classification.run", projectId: j.projectId, modelSetId: j.modelSetId, testId: j.testId, targetIds: [], details: { testKey: j.testId, groups: o.groups } });
+    }
+    return this.jobOf(jobId, j, "done", 1, `Prueba v${o.version} analizada: ${o.groups} grupos.`, j.testId);
+  }
+
+  // ── Clash grid ──────────────────────────────────────────────────
+
+  private gridState(o: GenerateOptions): T.GridState {
+    if (this.isCached(o)) return "classified";
+    if (o.stage === "counts" || this.countsReady.has(o.testId)) return "counts";
+    return "none";
+  }
+
+  private docDefs(o: GenerateOptions): MockDocDef[] {
+    if (o.documents) return o.documents;
+    return this.data(o.testId).test.documents.map((d) => ({
+      documentId: d.documentId,
+      fileName: d.name.split(" · ")[0] ?? d.name,
+      viewName: d.name.split(" · ")[1] ?? "{3D}",
+      folderPath: "Project Files",
+      lineageUrn: `urn:adsk.wipprod:dm.lineage:${o.projectCode}-${d.documentId}`,
+      detected: d.discipline ?? "UNK",
+    }));
+  }
+
+  private buildGrid(o: GenerateOptions): T.ClashGrid {
+    const state = this.gridState(o);
+    const defs = this.docDefs(o);
+    const cells = new Map<string, T.GridCell>();
+    const docGroups = new Map<number, Set<string>>();
+    const docClashes = new Map<number, number>();
+    if (state !== "none") {
+      const d = this.data(o.testId);
+      const proposals = new Map(d.proposals.map((p) => [p.targetId, p]));
+      const groupsByCell = new Map<string, Set<string>>();
+      for (const c of d.clashes) {
+        const a = Math.min(c.a.documentId, c.b.documentId);
+        const b = Math.max(c.a.documentId, c.b.documentId);
+        const k = `${a}:${b}`;
+        const cell = cells.get(k) ?? { a, b, clashes: 0, groups: 0, real: 0, p1: 0, needsReview: 0, newSinceLast: 0 };
+        cell.clashes++;
+        if (c.delta === "new") cell.newSinceLast++;
+        cells.set(k, cell);
+        for (const id of new Set([c.a.documentId, c.b.documentId])) {
+          docGroups.set(id, (docGroups.get(id) ?? new Set<string>()).add(c.groupId));
+          docClashes.set(id, (docClashes.get(id) ?? 0) + 1);
+        }
+        const gs = groupsByCell.get(k) ?? new Set<string>();
+        gs.add(c.groupId);
+        groupsByCell.set(k, gs);
+      }
+      if (state === "classified") {
+        const groups = new Map(d.groups.map((g) => [g.id, g]));
+        for (const [k, gs] of groupsByCell) {
+          const cell = cells.get(k)!;
+          cell.groups = gs.size;
+          for (const gid of gs) {
+            const g = groups.get(gid);
+            const p = proposals.get(gid);
+            if ((p?.fields.validity.value ?? g?.validity) === "real") cell.real++;
+            if ((p?.fields.priority.value ?? g?.priority) === 1) cell.p1++;
+            if (g?.reviewState === "needs_review") cell.needsReview++;
+          }
+        }
+      }
+    }
+    const list = [...cells.values()].sort((x, y) => x.a - y.a || x.b - y.b);
+    const projectId = this.locateTest(o.testId).project.id;
+    const documents: T.GridDocument[] = defs.map((def) => {
+      const r = this.resolveDiscipline(projectId, def);
+      return {
+        documentId: def.documentId,
+        lineageUrn: def.lineageUrn,
+        fileName: def.fileName,
+        viewName: def.viewName,
+        folderPath: def.folderPath,
+        discipline: r.discipline,
+        disciplineSource: r.source,
+        ...(r.ruleId ? { ruleId: r.ruleId } : {}),
+        ...(r.confidence !== undefined ? { disciplineShare: r.confidence } : {}),
+        suggestedToken: def.suggestedToken ?? def.fileName.replace(/\.[a-z0-9]+$/i, "").split(/[ _-]/)[0],
+        clashes: docClashes.get(def.documentId) ?? 0,
+        groups: state === "classified" ? (docGroups.get(def.documentId)?.size ?? 0) : 0,
+      };
+    });
+    return { testKey: state === "classified" ? o.testId : undefined, accTestId: o.accTestId ?? o.testId, modelSetVersion: o.version, state, documents, cells: list };
+  }
+
+  private pickTest(ms: MockModelSet, test?: string): GenerateOptions {
+    if (test) {
+      const o = ms.tests.find((t) => t.testId === test || (t.accTestId ?? t.testId) === test);
+      if (!o) throw new ApiError("Prueba no encontrada", 404, "not_found");
+      return o;
+    }
+    return ms.tests.find((t) => this.gridState(t) === "classified") ?? ms.tests.find((t) => this.gridState(t) === "counts") ?? ms.tests[0];
+  }
+
+  async getClashGrid(projectId: string, modelSetId: string, test?: string): Promise<T.ClashGrid> {
+    this.ensureSeed();
+    await delay(200);
+    return clone(this.buildGrid(this.pickTest(this.findModelSet(projectId, modelSetId), test)));
+  }
+
+  // ── Disciplines: precedence assignment > project rules > Revit categories ──
+
+  private projectRules = new Map<string, T.DisciplineRuleInput[]>();
+  private disciplineSuggestions = new Map<string, T.DisciplineConfig["pendingProposals"]>();
+  private disciplineVersion = 1;
+  private ruleSeq = 1;
+
+  private rulesOf(projectId: string): T.DisciplineRuleInput[] {
+    let r = this.projectRules.get(projectId);
+    if (!r) {
+      r = projectId === PROJECTS[0].id ? clone(SANDBOX_RULES) : [];
+      this.projectRules.set(projectId, r);
+    }
+    return r;
+  }
+
+  private suggestionsOf(projectId: string): T.DisciplineConfig["pendingProposals"] {
+    let r = this.disciplineSuggestions.get(projectId);
+    if (!r) {
+      r = projectId === PROJECTS[0].id ? clone(SANDBOX_SUGGESTIONS) : [];
+      this.disciplineSuggestions.set(projectId, r);
+    }
+    return r;
+  }
+
+  private ruleMatches(rule: T.DisciplineRuleInput, def: MockDocDef): boolean {
+    const raw = rule.field === "folder" ? def.folderPath : rule.field === "viewName" ? def.viewName : def.fileName;
+    const hay = raw.toLowerCase();
+    const tok = rule.value.trim().toLowerCase();
+    if (!tok) return false;
+    if (rule.match === "regex") {
+      try {
+        return new RegExp(rule.value, "i").test(raw);
+      } catch {
+        return false;
+      }
+    }
+    return rule.match === "startsWith" ? hay.split("/").some((part) => part.startsWith(tok)) || hay.startsWith(tok) : hay.includes(tok);
+  }
+
+  private resolveDiscipline(projectId: string, def: MockDocDef, rules = this.rulesOf(projectId)) {
+    const assigned = this.disciplineOverrides.get(def.lineageUrn);
+    if (assigned) return { discipline: assigned, source: "assignment" as const };
+    const rule = rules.find((r) => this.ruleMatches(r, def));
+    if (rule) return { discipline: rule.discipline, source: "rule" as const, ruleId: rule.id };
+    if (def.detected && def.detected !== "SIN") return { discipline: def.detected, source: (def.detectedSource ?? "elements") as "elements" | "matrix", confidence: def.confidence };
+    return { discipline: "SIN", source: "unassigned" as const };
+  }
+
+  private allDocDefs(projectId: string, modelSetId?: string): MockDocDef[] {
+    const p = this.findProject(projectId);
+    const sets = modelSetId ? p.modelSets.filter((m) => m.id === modelSetId) : p.modelSets;
+    const seen = new Map<string, MockDocDef>();
+    for (const ms of sets) for (const d of this.docDefs(ms.tests[0])) seen.set(d.lineageUrn, d);
+    return [...seen.values()];
+  }
+
+  async setDocumentDiscipline(projectId: string, modelSetId: string, lineageUrn: string, req: T.SetDisciplineRequest, test?: string): Promise<T.SetDisciplineResult> {
+    await delay(900); // simulated regrouping / reclassification
+    if (!/^[A-Z]{2,6}$/.test(req.discipline)) throw new ApiError("Disciplina inválida", 400, "validation", "validation_error");
+    this.disciplineOverrides.set(lineageUrn, req.discipline);
+    if (req.createRule) this.rulesOf(projectId).push({ ...req.createRule, id: `DR-${++this.ruleSeq}` });
+    this.log({ actor: { type: "user", id: ME.id, name: ME.short }, action: "document.discipline.set", projectId, modelSetId, targetIds: [lineageUrn], details: { discipline: req.discipline, rule: req.createRule ? `${req.createRule.field} ${req.createRule.match} "${req.createRule.value}"` : null } });
+    return clone(this.buildGrid(this.pickTest(this.findModelSet(projectId, modelSetId), test)));
+  }
+
+  async getProjectDisciplines(projectId: string): Promise<T.DisciplineConfig> {
+    this.findProject(projectId);
+    await delay(80);
+    const codes = [...DISCIPLINES, { code: "CIV", es: "Urbanización / obras civiles", en: "Civil / site" }, { code: "ALC", es: "Alcantarillado", en: "Sanitary drainage" }].map((d) => ({ code: d.code, label: d.es }));
+    return clone({
+      version: this.disciplineVersion,
+      assignments: Object.fromEntries(this.disciplineOverrides),
+      rules: this.rulesOf(projectId).map((r) => ({ ...r, id: r.id ?? "", createdBy: ME.short, createdAt: "2026-11-01T10:00:00.000Z" })),
+      codes: [...codes, { code: "SIN", label: "Sin asignar" }],
+      fileNameDetection: "off",
+      pendingProposals: this.suggestionsOf(projectId),
+    });
+  }
+
+  async previewDisciplineRules(projectId: string, req: { modelSetId?: string; rules: T.DisciplineRuleInput[] }): Promise<T.DisciplinePreview> {
+    await delay(120);
+    const defs = this.allDocDefs(projectId, req.modelSetId);
+    const taken = new Set<string>();
+    const modelSetId = req.modelSetId ?? this.findProject(projectId).modelSets[0].id;
+    return {
+      rules: req.rules.map((rule, index) => {
+        const matches = defs.filter((d) => this.ruleMatches(rule, d));
+        const effective = matches.filter((d) => !taken.has(d.lineageUrn) && !this.disciplineOverrides.has(d.lineageUrn));
+        for (const d of effective) taken.add(d.lineageUrn);
+        return { index, ...(rule.id ? { id: rule.id } : {}), matches: matches.map((d) => ({ lineageUrn: d.lineageUrn, fileName: d.fileName, viewName: d.viewName, modelSetId })), effective: effective.length };
+      }),
+    };
+  }
+
+  async saveDisciplineRules(projectId: string, rules: T.DisciplineRuleInput[]): Promise<unknown> {
+    await delay(300);
+    const saved = rules.map((r) => ({ ...r, id: r.id ?? `DR-${++this.ruleSeq}` }));
+    this.projectRules.set(projectId, saved);
+    this.disciplineVersion++;
+    this.log({ actor: { type: "user", id: ME.id, name: ME.short }, action: "discipline.rules.saved", projectId, targetIds: [], details: { rules: saved.length } });
+    return clone({ rules: saved });
+  }
+
+  async decideDisciplineSuggestion(projectId: string, id: string, decision: "approve" | "reject"): Promise<unknown> {
+    await delay(400);
+    const list = this.suggestionsOf(projectId);
+    const s = list.find((x) => x.id === id);
+    if (!s) throw new ApiError("Sugerencia no encontrada", 404, "not_found");
+    list.splice(list.indexOf(s), 1);
+    // Recording only: accepting applies through the same PUT …/discipline the UI already sent.
+    this.log({ actor: { type: "user", id: ME.id, name: ME.short }, action: `discipline.proposal.${decision === "approve" ? "approved" : "rejected"}`, projectId, targetIds: [id], details: { summary: s.summary } });
+    return clone(s);
+  }
+
+  async getTestsOverview(projectId: string, modelSetId: string): Promise<T.TestsOverview> {
+    const ms = this.findModelSet(projectId, modelSetId);
+    const base = await this.listTests(projectId, modelSetId);
+    const tests: T.TestRunInfo[] = base.map((run, i) => {
+      const o = ms.tests[i];
+      const state = this.gridState(o);
+      const info: T.TestRunInfo = { ...run, state, documentCount: this.docDefs(o).length };
+      if (state !== "none") {
+        const d = this.data(o.testId);
+        info.clashCount = d.clashes.length;
+        if (!o.firstTest) {
+          const added = d.clashes.filter((c) => c.delta === "new" || c.delta === "reappeared").length;
+          info.delta = { new: added, persisting: d.clashes.length - added, resolved: Math.round(d.clashes.length * 0.08) };
+        }
+      }
+      return info;
+    });
+    const views = ms.id === "71941e30-2f1a-4149-a9b7-35c6d2d162bf" ? SANDBOX_VIEWS : [{ name: ms.name, documents: [...new Set(this.docDefs(ms.tests[0]).map((d) => d.fileName))] }];
+    return clone({ tests, views });
+  }
+
+  // ── Triage ──────────────────────────────────────────────────────
+
+  private familiesOf(testId: string) {
+    let f = this.families.get(testId);
+    if (!f) {
+      const d = this.data(testId);
+      const derived = deriveFamilies(d.groups, d.clashes, d.proposals);
+      const firstTest = !!this.locateTest(testId).opts.firstTest;
+      const m1 = applyM1(d.test, derived.groups, d.clashes, firstTest);
+      const m2 = applyM2(d.test, derived.groups, firstTest);
+      if (m1.changeSummary) m1.changeSummary.baseVersion = m2.baseVersion;
+      const byId = new Map(derived.groups.map((g) => [g.id, g]));
+      for (const fam of derived.families) refreshFamily(fam, byId);
+      f = { ...derived, m1, m2 };
+      this.families.set(testId, f);
+    }
+    return f;
+  }
+
+  private familyById(testId: string, familyId: string) {
+    const f = this.familiesOf(testId);
+    const fam = f.families.find((x) => x.id === familyId || x.mergedFrom.includes(familyId));
+    if (!fam) throw new ApiError("Familia no encontrada.", 404, "not_found");
+    return { fam, byId: new Map(f.groups.map((g) => [g.id, g])) };
+  }
+
+  async getFamilies(testId: string): Promise<T.FamiliesPayload> {
+    await delay(120);
+    const f = this.familiesOf(testId);
+    const byId = new Map(f.groups.map((g) => [g.id, g]));
+    for (const fam of f.families) refreshFamily(fam, byId);
+    return clone({ testId, families: f.families, problemTypes: PROBLEM_TYPES });
+  }
+
+  /** Same rules as the server: real instances are never closed by a family; validity changes must be acknowledged. */
+  private familyPlan(fam: T.TriageFamily, byId: Map<string, T.FamilyGroup>, req: T.FamilyDecisionRequest) {
+    const validity = req.validity ?? fam.proposed.validity;
+    const action = req.action ?? fam.proposed.action;
+    const closing = action === "close" || action === "mark_reviewed";
+    const exc = new Set(fam.exceptions.map((e) => e.groupId));
+    const applied = fam.groupIds.map((id) => byId.get(id)).filter((g): g is T.FamilyGroup => !!g && !exc.has(g.id) && !(closing && g.validity === "real"));
+    const validityChanges = applied.filter((g) => g.validity !== validity).map((g) => ({ groupId: g.id, title: g.title, from: g.validity, to: validity }));
+    return { validity, action, applied, validityChanges };
+  }
+
+  async previewFamilyDecision(familyId: string, req: T.FamilyDecisionRequest): Promise<T.FamilyDecisionPreview> {
+    await delay(120);
+    const { fam, byId } = this.familyById(req.testId, familyId);
+    const plan = this.familyPlan(fam, byId, req);
+    const clashes = plan.applied.reduce((n, g) => n + (g.uniqueClashCount ?? g.clashIds.length), 0);
+    return {
+      familyId: fam.id,
+      instances: plan.applied.length,
+      uniqueClashCount: clashes,
+      rawClashCount: plan.applied.reduce((n, g) => n + g.clashIds.length, 0),
+      exceptions: fam.exceptions.length,
+      pendingInherited: fam.counts.pendingInherited,
+      spotCheckRequired: fam.uniqueClashCount > 50 ? Math.min(3, fam.instanceCount) : 1,
+      validityChanges: plan.validityChanges,
+      issues: (req.issueMode ?? "family") === "per_instance" ? plan.applied.length : Math.max(1, Math.ceil(clashes / 1000)),
+    };
+  }
+
+  async setFamilyException(familyId: string, req: T.FamilyExceptionRequest): Promise<unknown> {
+    await delay(80);
+    const { fam, byId } = this.familyById(req.testId, familyId);
+    fam.exceptions = fam.exceptions.filter((e) => e.groupId !== req.groupId);
+    const g = byId.get(req.groupId);
+    if (!req.remove) {
+      if (!req.reason.trim()) throw new ApiError("La excepción requiere un motivo.", 400, "validation");
+      fam.exceptions.push({ groupId: req.groupId, fields: req.fields ?? {}, reason: req.reason.trim(), by: ME.name, at: new Date().toISOString(), decisionVersion: fam.decision?.version });
+      if (g) g.inheritance = { state: "exception", decisionVersion: fam.decision?.version, exceptionReason: req.reason.trim() };
+    } else if (g) g.inheritance = { state: fam.decision?.status === "approved" ? "inherited" : "none", decisionVersion: fam.decision?.version };
+    refreshFamily(fam, byId);
+    return { ok: true };
+  }
+
+  async decideFamily(familyId: string, req: T.FamilyDecisionRequest): Promise<T.FamilyDecisionResponse> {
+    await delay(300);
+    const { fam, byId } = this.familyById(req.testId, familyId);
+    const now = new Date().toISOString();
+    const version = (fam.decision?.version ?? 0) + 1;
+    if (req.decision === "approve") {
+      if (!req.spotChecked?.length) throw new ApiError("Abre al menos una instancia antes de aprobar.", 400, "validation", "spot_check_required");
+      const plan = this.familyPlan(fam, byId, req);
+      if (plan.validityChanges.length && !req.acknowledgeValidityChanges)
+        throw new ApiError(`${plan.validityChanges.length} instancias cambian de validez: confírmalas.`, 409, "conflict", "validity_change_unacknowledged");
+      fam.decision = {
+        familyId: fam.id, version, status: "approved", decidedBy: ME.name, decidedAt: now, testKey: req.testId,
+        validity: plan.validity, action: plan.action, responsibleDiscipline: req.responsibleDiscipline ?? fam.proposed.responsibleDiscipline,
+        secondaryDiscipline: req.secondaryDiscipline, solutionOption: req.solutionOption, typicalDetail: req.typicalDetail, issueMode: req.issueMode ?? "family",
+        spotChecked: req.spotChecked, coveredGroupIds: [...fam.groupIds], note: req.note, acknowledgedValidityChanges: plan.validityChanges.map((v) => v.groupId),
+      };
+      fam.issue = { mode: fam.decision.issueMode };
+      const applied = new Set(plan.applied.map((g) => g.id));
+      for (const gid of fam.groupIds) {
+        const g = byId.get(gid);
+        if (!g || g.inheritance?.state === "exception") continue;
+        // Real clashes are never closed through a family decision: they stay for an individual decision.
+        g.inheritance = applied.has(gid) ? { state: "inherited", decisionVersion: version } : { state: "none" };
+      }
+    } else {
+      fam.decision = { familyId: fam.id, version, status: "rejected", decidedBy: ME.name, decidedAt: now, testKey: req.testId, validity: fam.proposed.validity, action: fam.proposed.action, responsibleDiscipline: fam.proposed.responsibleDiscipline, issueMode: "family", spotChecked: req.spotChecked ?? [], coveredGroupIds: [...fam.groupIds], note: req.note };
+    }
+    refreshFamily(fam, byId);
+    this.log({ actor: { type: "user", id: ME.id, name: ME.short }, action: req.decision === "approve" ? "family.decision" : "family.reject", projectId: "", targetIds: [fam.id], details: { testKey: req.testId, instances: fam.instanceCount, version } });
+    // Mock: no accuracy store, so the receipt carries no learning (the real server computes it).
+    const applied = req.decision === "approve" ? fam.groupIds.map((id) => byId.get(id)).filter((g): g is T.FamilyGroup => !!g && g.inheritance?.state === "inherited") : [];
+    return clone({
+      ...fam,
+      receipt: { kind: req.decision === "approve" ? "approved" : "rejected", version, instances: applied.length, rawClashCount: applied.reduce((n, g) => n + g.clashIds.length, 0), readyToSend: { families: 1, groups: 0 }, learning: [], uncuratedCorrections: 0, curationThreshold: 5, ...(req.proposalId ? { agent: { proposalId: req.proposalId, unchanged: true } } : {}) },
+    }) as T.FamilyDecisionResponse;
+  }
+
+  async undoFamilyDecision(familyId: string, req: { testId: string; version: number }): Promise<T.FamilyDecisionResponse> {
+    await delay(150);
+    const { fam, byId } = this.familyById(req.testId, familyId);
+    if (!fam.decision || fam.decision.version !== req.version) throw new ApiError("La decisión ya no es la vigente.", 409, "conflict");
+    fam.decision = undefined;
+    fam.issue = undefined;
+    for (const gid of fam.groupIds) {
+      const g = byId.get(gid);
+      if (g && g.inheritance?.state !== "exception") g.inheritance = { state: "none" };
+    }
+    refreshFamily(fam, byId);
+    return clone({ ...fam, receipt: { kind: "undone", instances: 0, rawClashCount: 0, readyToSend: { families: 0, groups: 0 }, learning: [], uncuratedCorrections: 0, curationThreshold: 5 } }) as T.FamilyDecisionResponse;
+  }
+
+  async rejectAgentProposal(proposalId: string): Promise<{ proposalId: string; state: string; feedbackId: string }> {
+    await delay(80);
+    return { proposalId, state: "rejected", feedbackId: `FB-mock-${proposalId.slice(-6)}` };
+  }
+
+  async getCycleLoop(projectId: string, testKey?: string): Promise<T.CycleLoop> {
+    await delay(120);
+    const fams = [...this.families.entries()].find(([k]) => !testKey || k === testKey);
+    const groups = fams ? fams[1].groups : [];
+    const decided = groups.filter((g) => g.inheritance?.state === "inherited" || g.inheritance?.state === "exception");
+    const exc = groups.filter((g) => g.inheritance?.state === "exception").length;
+    return {
+      projectId, testKey: fams?.[0] ?? testKey ?? "", version: 42,
+      proposals: { engine: groups.length, agent: 0 },
+      decisions: { total: groups.length, accepted: decided.length - exc, corrected: exc, pending: groups.length - decided.length, oneByOne: 0 },
+      acc: { applied: 0, failed: 0 },
+      learning: { corrections: 0, uncurated: 0, suggestions: 0, published: 0 },
+      accuracyByVersion: [],
+      agent: { decided: 0, acceptedUnchanged: 0, rejected: 0, pending: 0 },
+    };
+  }
+
+  /** X3: the answer is stored; validity/action answers become a human decision on the ubicaciones of the question. */
+  async answerQuestion(questionId: string, req: T.QuestionAnswerRequest): Promise<T.AgentQuestion> {
+    await delay(200);
+    for (const [testId, f] of this.families) {
+      const q = f.m2.questions.find((x) => x.id === questionId);
+      if (!q) continue;
+      if (q.state !== "open") throw new ApiError("La pregunta ya no está abierta.", 409, "conflict");
+      const { project, modelSet } = this.locateTest(testId);
+      const now = new Date().toISOString();
+      const decisionIds: string[] = [];
+      // The decision comes ONLY from the structured option the coordinator picked (never from text).
+      const opt = req.optionIndex !== undefined ? q.options?.[req.optionIndex] : undefined;
+      if (req.optionIndex !== undefined && !opt) throw new ApiError("Opción inexistente.", 400, "validation");
+      if (!opt && !req.answer?.trim()) throw new ApiError("Elige una opción o escribe una respuesta.", 400, "validation");
+      const affected = q.affectedGroups ?? q.groupIds.length;
+      if (opt && (opt.validity || opt.action) && affected > 3 && req.confirmCount !== affected)
+        throw new ApiError(`Esta respuesta decide ${affected} ubicaciones: confírmalo.`, 409, "conflict", "confirm_count_required");
+      const meaning = { validity: opt?.validity, action: opt?.action, answer: opt ? opt.label : (req.answer ?? "") };
+      if ((q.kind === "validity" && meaning.validity) || (q.kind === "action" && meaning.action)) {
+        const d = this.data(testId);
+        for (const gid of q.groupIds) {
+          const p = d.proposals.find((x) => x.targetId === gid);
+          const changes: T.DecisionChange[] = [];
+          if (meaning.validity && p && p.fields.validity.value !== meaning.validity) changes.push({ field: "validity", aiValue: p.fields.validity.value, humanValue: meaning.validity });
+          const kind: T.DecisionKind = meaning.action === "postpone" ? "postpone" : changes.length ? "correct" : "accept";
+          const dec: T.Decision = {
+            id: newId(),
+            proposalId: p?.id ?? "",
+            targetType: "group",
+            targetId: gid,
+            testId,
+            modelSetId: modelSet.id,
+            projectId: project.id,
+            kind,
+            changes,
+            reasonCode: changes.length ? (req.reasonCode ?? "R99") : undefined,
+            note: `Respuesta a ${q.id}: ${meaning.answer}`,
+            viewedInViewerMs: 0,
+            decidedAt: now,
+            userId: ME.id,
+            userName: ME.name,
+          };
+          this.decisionsOf(testId).push(dec);
+          decisionIds.push(dec.id);
+        }
+      }
+      Object.assign(q, { state: "answered", answer: meaning.answer, answeredBy: ME.name, answeredAt: now, decisionIds });
+      this.log({ actor: { type: "user", id: ME.id, name: ME.short }, action: "question.answered", projectId: project.id, targetIds: [q.id, ...q.groupIds], details: { kind: q.kind, decisions: decisionIds.length } });
+      return clone(q);
+    }
+    throw new ApiError("Pregunta no encontrada.", 404, "not_found");
+  }
+
+  /** M3 issue checks per test (built once; verdict decisions are stored on them). */
+  private issueChecks = new Map<string, ReturnType<typeof buildIssueChecks>>();
+  private checksOf(testId: string) {
+    let c = this.issueChecks.get(testId);
+    if (!c) {
+      const f = this.familiesOf(testId);
+      const d = this.data(testId);
+      c = buildIssueChecks(d.test, f.groups, d.proposals);
+      this.issueChecks.set(testId, c);
+    }
+    return c;
+  }
+
+  /** M4 agenda, notes and saved views per test (built once; notes/views are editable). */
+  private meetings = new Map<string, ReturnType<typeof buildAgenda>>();
+  private meetingOf(testId: string) {
+    let m = this.meetings.get(testId);
+    if (!m) {
+      const f = this.familiesOf(testId);
+      m = buildAgenda(this.data(testId).test, f.families, f.groups, this.checksOf(testId).checks);
+      this.meetings.set(testId, m);
+    }
+    return m;
+  }
+
+  // ── WS-N: "Qué sigue" and flows (mock) ──
+  private mockFlows = new MockFlows();
+  async getNextSteps(p: { projectId?: string; testKey?: string }): Promise<T.NextStepsPayload> {
+    await delay(80);
+    return this.mockFlows.nextSteps(p);
+  }
+  async listFlowRuns(projectId?: string): Promise<T.FlowRunsPayload> {
+    await delay(60);
+    return this.mockFlows.list(projectId);
+  }
+  async getFlowRun(runId: string): Promise<T.FlowRunView> {
+    await delay(40);
+    return this.mockFlows.get(runId);
+  }
+  async runFlow(flowId: T.FlowId, req: T.FlowRunRequest): Promise<T.FlowRunView> {
+    await delay(150);
+    const run = this.mockFlows.start(flowId, req);
+    this.log({ actor: { type: "user", id: ME.id, name: "Coordinador" }, action: "flow.started", projectId: req.projectId, targetIds: [run.runId], details: { flow: flowId, startedBy: "human" } });
+    return run;
+  }
+  async cancelFlowRun(runId: string): Promise<{ cancelled: boolean }> {
+    await delay(60);
+    return this.mockFlows.cancel(runId);
+  }
+  async watchFlowRun(runId: string, onEvent: (e: T.FlowEvent) => void, signal?: AbortSignal): Promise<void> {
+    await this.mockFlows.watch(runId, onEvent, signal);
+  }
+
+  // ── Agent chat (mock streaming agent) ──
+  private mockChat = new MockChat(this.mockFlows);
+  async chat(req: T.ChatRequest, onEvent: (e: T.ChatEvent) => void, signal?: AbortSignal): Promise<void> {
+    await this.mockChat.run(req, onEvent, signal);
+  }
+  async getChat(testId: string, chatId?: string): Promise<T.ChatHistory> {
+    await delay(60);
+    return clone(chatId ? this.mockChat.get(chatId) : { chatId: "", testId, messages: [] });
+  }
+  async cancelChat(chatId: string): Promise<void> {
+    this.mockChat.cancel(chatId);
+  }
+  async getChatStatus(): Promise<T.ChatStatus> {
+    await delay(80);
+    // ?chat=no_claude / ?chat=no_login in the page URL simulates the preflight failures (mock only).
+    const flag = MOCK_CHAT_FLAG;
+    return { installed: flag !== "no_claude", loggedIn: flag !== "no_login" && flag !== "no_claude", version: "2.1.267 (mock)" };
+  }
+  async applyRegroup(proposalId: string, testId: string, decision: "apply" | "reject" = "apply"): Promise<unknown> {
+    await delay(200);
+    this.log({ actor: { type: "user", id: ME.id, name: ME.short }, action: decision === "apply" ? "regroup.applied" : "regroup.rejected", projectId: "", targetIds: [proposalId], details: { testId } });
+    return { ok: true, proposalId };
+  }
+
+  async getAgenda(testId: string): Promise<T.AgendaPayload> {
+    await delay(150);
+    const v = this.data(testId).test.modelSetVersion;
+    return clone({ testId, version: v, baseVersion: v - 1, cap: AGENDA_CAP, disciplines: this.meetingOf(testId).disciplines });
+  }
+
+  async getNotes(testId: string): Promise<T.NotesPayload> {
+    await delay(80);
+    return clone({ testId, notes: this.meetingOf(testId).notes });
+  }
+
+  async putNote(testId: string, targetType: T.NoteTargetType, targetId: string, text: string): Promise<T.MeetingNote> {
+    await delay(120);
+    const m = this.meetingOf(testId);
+    const prev = this.meetingOf(testId).notes.find((n) => n.targetType === targetType && n.targetId === targetId);
+    const note: T.MeetingNote = { testKey: testId, version: this.data(testId).test.modelSetVersion, targetType, targetId, text: text.slice(0, 2000), author: ME.name, updatedAt: new Date().toISOString(), revision: (prev?.revision ?? 0) + 1 };
+    m.notes = m.notes.filter((n) => !(n.targetType === targetType && n.targetId === targetId));
+    if (text.trim()) m.notes.push(note);
+    return clone(note);
+  }
+
+  async getFamilyView(testId: string, familyId: string): Promise<T.SavedView | null> {
+    await delay(60);
+    return clone(this.meetingOf(testId).views.find((v) => v.familyId === familyId) ?? null);
+  }
+
+  async putFamilyView(testId: string, familyId: string, camera: unknown): Promise<T.SavedView> {
+    await delay(100);
+    if (JSON.stringify(camera ?? null).length > 20_000) throw new ApiError("La vista supera 20 KB.", 400, "validation");
+    const m = this.meetingOf(testId);
+    const v: T.SavedView = { testKey: testId, familyId, camera, savedAt: new Date().toISOString(), savedBy: ME.name };
+    m.views = [...m.views.filter((x) => x.familyId !== familyId), v];
+    return clone(v);
+  }
+
+  async getIssueChecks(testId: string): Promise<T.IssueChecksPayload> {
+    await delay(150);
+    const { checks } = this.checksOf(testId);
+    const counts = { resuelta: 0, avance: 0, sigue_abierta: 0, dice_resuelta: 0, no_verificable: 0 } as Record<T.IssueVerdict, number>;
+    for (const c of checks) counts[c.verdict]++;
+    return clone({ testId, version: this.data(testId).test.modelSetVersion, counts, checks, readAt: new Date(Date.now() - 2 * 3600_000).toISOString() });
+  }
+
+  async getReminders(testId: string): Promise<T.RemindersPayload> {
+    await delay(100);
+    return clone({ testId, reminders: this.checksOf(testId).reminders });
+  }
+
+  async decideIssueVerdict(testId: string, issueId: string, req: T.IssueVerdictDecisionRequest): Promise<T.IssueCheck> {
+    await delay(150);
+    const c = this.checksOf(testId).checks.find((x) => x.issueId === issueId);
+    if (!c) throw new ApiError("Incidencia no encontrada.", 404, "not_found");
+    if (req.decision === "reject" && !req.reasonCode) throw new ApiError("Rechazar requiere un motivo (V01–V05).", 400, "validation");
+    c.decision = { kind: req.decision, reasonCode: req.reasonCode, note: req.note, decidedBy: ME.name, decidedAt: new Date().toISOString() };
+    this.log({ actor: { type: "user", id: ME.id, name: ME.short }, action: "issue.verdict." + req.decision, projectId: "", testId, targetIds: [issueId], details: { verdict: c.verdict, reasonCode: req.reasonCode ?? null } });
+    return clone(c);
+  }
+
+  async getTriage(projectId: string, modelSetId: string, testId?: string): Promise<T.TriagePayloadWithFamilies> {
+    this.ensureSeed();
+    const project = this.findProject(projectId);
+    const ms = this.findModelSet(projectId, modelSetId);
+    const opts = testId ? ms.tests.find((t) => t.testId === testId) : ms.tests.find((t) => this.isCached(t));
+    if (!opts) throw new ApiError("No hay pruebas analizadas para este conjunto.", 409, "conflict", "not_ingested");
+    if (!this.isCached(opts)) throw new ApiError("La prueba no está descargada.", 409, "conflict", "not_ingested");
+    const d = this.data(opts.testId);
+    await delay(400);
+    if (!this.firstLoad.has(opts.testId)) this.firstLoad.set(opts.testId, Date.now());
+    const tests = await this.listTests(projectId, modelSetId);
+    return clone({
+      project: this.projectSummary(project),
+      modelSet: this.modelSetSummary(project, ms),
+      test: d.test,
+      tests,
+      disciplines: DISCIPLINES,
+      groups: this.familiesOf(opts.testId).groups,
+      families: this.familiesOf(opts.testId).families,
+      changeSummary: this.familiesOf(opts.testId).m1.changeSummary,
+      scopeChanges: this.familiesOf(opts.testId).m1.scopeChanges,
+      accSync: this.familiesOf(opts.testId).m1.accSync ?? undefined,
+      questions: this.familiesOf(opts.testId).m2.questions,
+      problemTypes: PROBLEM_TYPES,
+      clashes: d.clashes,
+      proposals: d.proposals,
+      decisions: this.decisionsOf(opts.testId),
+      changesCursor: "0",
+    });
+  }
+
+  /** After ~90 s the "agent" updates three proposals once, to exercise the refresh bar. */
+  async getTriageChanges(_p: string, _m: string, testId: string, cursor: string): Promise<T.TriageChanges> {
+    await delay(60);
+    const first = this.firstLoad.get(testId) ?? Date.now();
+    if (this.changesSent.has(testId) || Date.now() - first < 90000) return { cursor, proposals: [] };
+    this.changesSent.add(testId);
+    const d = this.data(testId);
+    const pending = new Set(d.proposals.map((p) => p.id));
+    for (const x of latestDecisions(this.decisionsOf(testId)).values()) pending.delete(x.proposalId);
+    const changed = d.proposals.filter((p) => pending.has(p.id)).slice(5, 8);
+    const now = new Date().toISOString();
+    for (const p of changed) {
+      p.updatedAt = now;
+      p.fields.validity.confidence = Math.min(0.97, p.fields.validity.confidence + 0.08);
+      p.rationale += " Actualizado: se confirmó con las propiedades del modelo que no hay pasada modelada.";
+      this.log({ actor: { type: "agent", id: "agent", name: "Agente" }, action: "proposal.updated", projectId: _p, modelSetId: _m, testId, targetIds: [p.targetId], details: { proposalId: p.id } });
+    }
+    return { cursor: String(Number(cursor) + 1), proposals: clone(changed) };
+  }
+
+  async listGroups(q: T.GroupQuery): Promise<T.Page<T.ClashGroup>> {
+    await delay();
+    const d = this.data(q.testId);
+    const props = new Map(d.proposals.map((p) => [p.targetId, p]));
+    let list = d.groups.filter((g) => {
+      const p = props.get(g.id);
+      const f = q.filter ?? {};
+      if (f.pair?.length && !f.pair.includes(`${g.pair[0]}:${g.pair[1]}`) && !f.pair.includes(`${g.pair[1]}:${g.pair[0]}`)) return false;
+      if (f.priority?.length && (!p || !f.priority.includes(p.fields.priority.value))) return false;
+      if (f.validity?.length && (!p || !f.validity.includes(p.fields.validity.value))) return false;
+      if (f.level?.length && !f.level.includes(g.location?.level ?? "")) return false;
+      if (f.accStatus?.length && !f.accStatus.includes(g.accStatus)) return false;
+      if (f.delta?.length && !f.delta.includes(g.delta)) return false;
+      return true;
+    });
+    if (q.sort === "count_desc") list = [...list].sort((a, b) => b.clashIds.length - a.clashIds.length);
+    else if (q.sort === "distance") list = [...list].sort((a, b) => b.penetrationMaxMm - a.penetrationMaxMm);
+    else if (q.sort === "confidence_asc")
+      list = [...list].sort((a, b) => (props.get(a.id) ? minConfidence(props.get(a.id)!) : 1) - (props.get(b.id) ? minConfidence(props.get(b.id)!) : 1));
+    else list = [...list].sort((a, b) => (props.get(a.id)?.fields.priority.value ?? 5) - (props.get(b.id)?.fields.priority.value ?? 5) || b.clashIds.length - a.clashIds.length);
+    const start = Number(q.cursor ?? 0);
+    const limit = q.limit ?? 50;
+    const items = list.slice(start, start + limit);
+    return { items: clone(items), total: list.length, nextCursor: start + limit < list.length ? String(start + limit) : undefined };
+  }
+
+  async getGroup(testId: string, groupId: string): Promise<T.GroupDetail> {
+    await delay();
+    const d = this.data(testId);
+    const group = d.groups.find((g) => g.id === groupId);
+    if (!group) throw new ApiError("Grupo no encontrado", 404, "not_found");
+    const proposal = d.proposals.find((p) => p.targetId === groupId);
+    const decisions = this.decisionsOf(testId).filter((x) => x.targetId === groupId);
+    const history: T.HistoryEntry[] = [];
+    if (proposal) history.push({ at: proposal.createdAt, kind: "agent", text: `Agente propuso (${proposal.runId})`, actor: "Agente" });
+    for (const x of decisions) history.push({ at: x.decidedAt, kind: "decision", text: x.kind, actor: x.userName });
+    const reviewReasons: string[] = [];
+    if (group.confidence < 0.7) reviewReasons.push(`confianza ${group.confidence.toFixed(2)} < 0,70`);
+    if (group.validity === "needs_info") reviewReasons.push("validez requiere información");
+    if (group.severity === "critical") reviewReasons.push("severidad crítica");
+    return clone({ group, proposal, clashes: d.clashes.filter((c) => c.groupId === groupId), decisions, history, reviewReasons });
+  }
+
+  async listGroupClashes(testId: string, groupId: string, p?: { limit?: number; cursor?: string }) {
+    await delay(80);
+    const all = this.data(testId).clashes.filter((c) => c.groupId === groupId);
+    const start = Number(p?.cursor ?? 0);
+    const limit = p?.limit ?? 100;
+    return { items: clone(all.slice(start, start + limit)), total: all.length, nextCursor: start + limit < all.length ? String(start + limit) : undefined };
+  }
+
+  async getElementProperties(testId: string, refs: string[]): Promise<T.ElementProperties[]> {
+    await delay(120);
+    const d = this.data(testId);
+    const byRef = new Map<string, T.ElementInfo>();
+    for (const c of d.clashes) {
+      byRef.set(c.a.ref, c.a);
+      byRef.set(c.b.ref, c.b);
+    }
+    return refs.map((ref): T.ElementProperties => {
+      const e = byRef.get(ref);
+      if (!e) return { ref, found: false, props: {} };
+      const r = rng(e.dbId);
+      return {
+        ref,
+        found: true,
+        props: {
+          Categoría: e.category,
+          Familia: e.family ?? null,
+          Tipo: e.type ?? null,
+          Nivel: e.level ?? null,
+          Sistema: e.system ?? null,
+          "Desfase desde nivel (mm)": r.int(2200, 3000),
+          Material: e.discipline === "EST" ? "Hormigón H30" : e.discipline === "ARQ" ? "Volcanita ST 12,5" : e.discipline === "CLI" ? "Acero galvanizado" : e.discipline === "ELE" ? "Acero galvanizado" : "PVC",
+          Subproyecto: `${e.discipline}-Principal`,
+          Marca: e.name.split(" ").pop() ?? null,
+          Comentarios: null,
+          ExternalId: e.externalId ?? null,
+          Modelo: e.modelName,
+        },
+      };
+    });
+  }
+
+  async listProposals(p: { testId: string; ids?: string[]; limit?: number; cursor?: string }) {
+    await delay(80);
+    let list = this.data(p.testId).proposals;
+    if (p.ids?.length) list = list.filter((x) => p.ids!.includes(x.id));
+    const start = Number(p.cursor ?? 0);
+    const limit = p.limit ?? 50;
+    return { items: clone(list.slice(start, start + limit)), total: list.length, nextCursor: start + limit < list.length ? String(start + limit) : undefined };
+  }
+
+  async listAssignees(): Promise<T.Assignee[]> {
+    await delay(60);
+    return [
+      ...DISCIPLINES.map((d) => ({ id: `role-${d.code}`, name: `Modelador ${d.code}`, kind: "role" as const })),
+      { id: "co-climatec", name: "Climatec Ltda. (CLI)", kind: "company" },
+      { id: "co-hidro", name: "Hidrosur SpA (SAN)", kind: "company" },
+      { id: "u-dmunoz", name: "Diego Muñoz", kind: "user" },
+      { id: "u-pvaldes", name: "Paula Valdés", kind: "user" },
+    ];
+  }
+
+  // ── Decisions ───────────────────────────────────────────────────
+
+  async saveDecisions(decisions: T.Decision[]) {
+    await delay(90);
+    const saved: string[] = [];
+    for (const d of decisions) {
+      const list = this.decisionsOf(d.testId);
+      if (!list.some((x) => x.id === d.id)) {
+        list.push(clone(d));
+        const action = d.kind === "undo" ? "decision.undone" : d.kind === "note" ? "decision.note" : `decision.${d.kind === "accept" ? "accepted" : d.kind === "correct" ? "corrected" : d.kind === "reject" ? "rejected" : "postponed"}`;
+        this.log({
+          actor: { type: "user", id: d.userId, name: d.userName },
+          action,
+          projectId: d.projectId,
+          modelSetId: d.modelSetId,
+          testId: d.testId,
+          targetIds: [d.targetId],
+          details: { proposalId: d.proposalId, reasonCode: d.reasonCode ?? null, viewedInViewerMs: d.viewedInViewerMs, bulk: d.bulk?.size ?? null },
+        });
+        if (d.kind === "correct" || d.kind === "reject") this.corrections.unshift(...this.toCorrections(d));
+      }
+      saved.push(d.id);
+    }
+    return { saved };
+  }
+
+  private toCorrections(d: T.Decision): T.CorrectionRow[] {
+    const base = { decisionId: d.id, at: d.decidedAt, userName: d.userName, targetId: d.targetId, targetLabel: d.targetId, reasonCode: d.reasonCode, note: d.note };
+    if (d.kind === "reject") return [{ ...base, field: "reject", aiValue: "—", humanValue: "Rechazada", ruleIds: [] }];
+    return d.changes.map((c) => ({
+      ...base,
+      field: c.field,
+      aiValue: JSON.stringify(c.aiValue),
+      humanValue: JSON.stringify(c.humanValue),
+      ruleIds: c.ruleIds ?? [],
+      confidence: c.aiConfidence,
+    }));
+  }
+
+  async listDecisions(p: { testId?: string; projectId?: string; limit?: number; cursor?: string }) {
+    await delay(80);
+    let all = [...this.decisions.values()].flat();
+    if (p.testId) all = all.filter((d) => d.testId === p.testId);
+    if (p.projectId) all = all.filter((d) => d.projectId === p.projectId);
+    const start = Number(p.cursor ?? 0);
+    const limit = p.limit ?? 100;
+    return { items: clone(all.slice(start, start + limit)), total: all.length, nextCursor: start + limit < all.length ? String(start + limit) : undefined };
+  }
+
+  async sendToApproval(p: { projectId: string; modelSetId: string; testId: string }) {
+    this.ensureSeed();
+    await delay(250);
+    const latest = latestDecisions(this.decisionsOf(p.testId));
+    const unbatched = [...latest.values()].filter((d) => !d.batchId && d.kind !== "postpone");
+    if (!unbatched.length) throw new ApiError("No hay decisiones para enviar", 400, "validation");
+    const batch = this.makeBatch(p.testId, unbatched, "ready", new Date().toISOString());
+    // rejected decisions are part of the batch record but produce no ACC writes
+    for (const d of unbatched) d.batchId = batch.id;
+    this.log({ actor: { type: "user", id: ME.id, name: ME.short }, action: "batch.ready", projectId: p.projectId, modelSetId: p.modelSetId, testId: p.testId, batchId: batch.id, targetIds: [], details: { decisions: unbatched.length, items: batch.items.length } });
+    return clone(batch);
+  }
+
+  // ── Batches ─────────────────────────────────────────────────────
+
+  async listBatches(p?: { state?: T.BatchState[]; projectId?: string }) {
+    this.ensureSeed();
+    await delay();
+    this.tickApplyJobs();
+    return [...this.batches.values()]
+      .filter((b) => (!p?.state?.length || p.state.includes(b.state)) && (!p?.projectId || b.projectId === p.projectId))
+      .map((b) => this.summarize(b));
+  }
+
+  async getBatch(id: string) {
+    await delay();
+    this.tickApplyJobs();
+    return clone(this.getBatchOrThrow(id));
+  }
+
+  async preflightBatch(id: string): Promise<T.PreflightResult> {
+    const b = this.getBatchOrThrow(id);
+    await delay(900);
+    let conflicts = 0;
+    b.items.forEach((item, i) => {
+      if (item.operation === "clash.setStatus" && i % 61 === 5 && !item.conflict) {
+        item.conflict = { reason: "la interferencia fue cerrada en ACC por J. Pérez", accValueNow: "closed" };
+        item.excluded = true;
+      }
+      if (item.conflict) conflicts++;
+    });
+    if (b.items.some((i) => i.operation === "issue.create") && !b.items.some((i) => i.conflict && i.operation === "issue.create")) {
+      const issueItem = b.items.find((i) => i.operation === "issue.create");
+      if (issueItem && b.items.length > 40) {
+        issueItem.conflict = { reason: "ya existe la incidencia #312 para este par de elementos", accValueNow: "#312" };
+        issueItem.excluded = true;
+        conflicts++;
+      }
+    }
+    b.lastPreflightAt = new Date().toISOString();
+    recount(b);
+    this.log({ actor: { type: "server", id: "server", name: "Servidor" }, action: "preflight.run", projectId: b.projectId, modelSetId: b.modelSetId, testId: b.testId, batchId: b.id, targetIds: [], details: { conflicts } });
+    return { at: b.lastPreflightAt, conflicts, batch: clone(b) };
+  }
+
+  async setBatchItemsExcluded(id: string, itemIds: string[], excluded: boolean) {
+    const b = this.getBatchOrThrow(id);
+    await delay(60);
+    const set = new Set(itemIds);
+    for (const i of b.items) if (set.has(i.id)) i.excluded = excluded;
+    return clone(recount(b));
+  }
+
+  async updateBatchIssue(id: string, itemId: string, issue: Partial<T.IssueDraft>) {
+    const b = this.getBatchOrThrow(id);
+    await delay(60);
+    const item = b.items.find((i) => i.id === itemId);
+    if (item?.issue) {
+      item.issue = { ...item.issue, ...issue };
+      item.fields = item.fields.map((f) => (f.field === "Título" && issue.title ? { ...f, accNew: issue.title } : f));
+      item.reasonCode = "R13";
+      item.origin = "ai_corrected";
+    }
+    return clone(recount(b));
+  }
+
+  private releaseDecisions(b: T.Batch) {
+    for (const d of this.decisionsOf(b.testId)) if (d.batchId === b.id) delete d.batchId;
+  }
+
+  async returnBatchToReview(id: string) {
+    const b = this.getBatchOrThrow(id);
+    await delay();
+    b.state = "draft";
+    this.releaseDecisions(b);
+    this.batches.delete(id);
+    this.log({ actor: { type: "user", id: ME.id, name: ME.short }, action: "batch.returned", projectId: b.projectId, modelSetId: b.modelSetId, testId: b.testId, batchId: b.id, targetIds: [], details: {} });
+    return clone(b);
+  }
+
+  async rebaseBatch(id: string): Promise<T.BatchRebaseResult> {
+    this.getBatchOrThrow(id);
+    await delay();
+    // Demo batches never go stale (the mock has a single version per test).
+    throw new Error("Llevar decisiones a otra versión no está disponible en modo demo.");
+  }
+
+  async discardBatch(id: string) {
+    const b = this.getBatchOrThrow(id);
+    await delay();
+    b.state = "discarded";
+    this.releaseDecisions(b);
+    this.log({ actor: { type: "user", id: ME.id, name: ME.short }, action: "batch.discarded", projectId: b.projectId, modelSetId: b.modelSetId, testId: b.testId, batchId: b.id, targetIds: [], details: {} });
+    return clone(b);
+  }
+
+  async approveBatch(id: string, req: T.ApproveRequest): Promise<T.ApplyStatus> {
+    const b = this.getBatchOrThrow(id);
+    await delay(300);
+    if (b.state !== "ready") throw new ApiError("El lote no está listo para aprobar", 400, "validation");
+    if (!b.lastPreflightAt || Date.now() - new Date(b.lastPreflightAt).getTime() > 10 * 60000)
+      throw new ApiError("Pre-chequeo vencido", 400, "validation");
+    const excluded = new Set(req.excludedItemIds);
+    for (const i of b.items) if (excluded.has(i.id)) i.excluded = true;
+    recount(b);
+    b.state = "approved";
+    b.approvedBy = ME.short;
+    b.approvedAt = new Date().toISOString();
+    const live = b.items.filter((i) => !i.excluded);
+    b.approval = { approvedBy: ME.short, approvedAt: b.approvedAt, expiresAt: new Date(Date.now() + 24 * 3600000).toISOString(), channel: "web-ui", valid: true };
+    this.log({ actor: { type: "user", id: ME.id, name: ME.short }, action: "batch.approved", projectId: b.projectId, modelSetId: b.modelSetId, testId: b.testId, batchId: b.id, targetIds: [], details: { items: live.length, note: req.note ?? null } });
+    return this.applyStatus(id);
+  }
+
+  // Passkeys: the mock behaves like fixtures mode (demo approval), so the WebAuthn endpoints are unavailable.
+  async getApproveOptions(): Promise<T.ApproveOptionsResponse> {
+    throw new ApiError("Modo demostración: la aprobación usa demo: true, sin passkey.", 400, "validation", "validation_error");
+  }
+
+  async getRegisterOptions(): Promise<T.RegisterOptionsResponse> {
+    throw new ApiError("Modo demostración: no hay passkeys que registrar.", 400, "validation", "validation_error");
+  }
+
+  async registerPasskey(): Promise<{ credentialId: string; label: string; enrolledVia: "enroll-code" | "step-up" }> {
+    throw new ApiError("Modo demostración: no hay passkeys que registrar.", 400, "validation", "validation_error");
+  }
+
+  /** dryRun returns the exact bodies; a real apply starts the (simulated) job. */
+  async applyBatch(id: string, req: T.ApplyRequest): Promise<T.ApplyResponse> {
+    const b = this.getBatchOrThrow(id);
+    await delay(400);
+    const dryRun = req.dryRun ?? true;
+    if (b.state !== "approved" || !b.approval?.valid) {
+      return { dryRun, ok: false, refused: { reason: "approval_missing", message: "El lote no tiene una aprobación humana válida." }, requests: [], status: this.applyStatus(id) };
+    }
+    const live = b.items.filter((i) => !i.excluded && i.mcOperation !== "none");
+    const close = live.filter((i) => i.mcOperation === "clash.close");
+    const assign = live.filter((i) => i.mcOperation === "clash.assign");
+    const requests: T.ApplyResponse["requests"] = [];
+    const base = `/bim360/clash/v3/containers/${b.projectId}/tests/${b.testId}`;
+    const closeGroups = [...new Set(close.map((i) => i.groupId))];
+    if (close.length)
+      requests.push({
+        idempotencyKey: fakeHash(id + "close").slice(0, 16), operation: "clashes:close", path: `${base}/clashes:close`, groups: closeGroups.length, clashes: close.length, outcome: dryRun ? "would_apply" : "applied",
+        body: { groups: closeGroups.map((g) => ({ clashes: close.filter((i) => i.groupId === g).map((i) => i.targetIds[0].replace(/^C-/, "")), reason: "NOT_AN_ISSUE" })) },
+      });
+    if (assign.length)
+      requests.push({
+        idempotencyKey: fakeHash(id + "assign").slice(0, 16), operation: "clashes:assign", path: `${base}/clashes:assign`, groups: assign.length, clashes: assign.reduce((n, i) => n + (i.issue?.linkClashIds.length ?? 0), 0), outcome: dryRun ? "would_apply" : "applied",
+        body: { groups: assign.map((i) => ({ clashes: (i.issue?.linkClashIds ?? []).map((c) => c.replace(/^C-/, "")), issue: { title: i.issue?.title, description: i.issue?.description, assignedTo: i.issue?.assigneeRole, dueDate: i.issue?.dueDate } })) },
+      });
+    if (!dryRun) {
+      const failures = live
+        .filter((i, idx) => i.operation === "clash.setStatus" && idx % 97 === 13)
+        .slice(0, 1)
+        .map((i) => ({ itemId: i.id, label: i.label, message: "ACC respondió 409: la interferencia cambió de estado durante la aplicación." }));
+      this.applyJobs.set(id, { startedAt: Date.now(), issueTotal: b.counts.issuesCreate, statusTotal: b.counts.statusChanges, failures });
+      this.log({ actor: { type: "user", id: ME.id, name: ME.short }, action: "batch.apply", projectId: b.projectId, modelSetId: b.modelSetId, testId: b.testId, batchId: b.id, targetIds: [], details: { requests: requests.length } });
+    }
+    return clone({ dryRun, ok: true, requests, status: this.applyStatus(id) });
+  }
+
+  private applyStatus(id: string): T.ApplyStatus {
+    const b = this.getBatchOrThrow(id);
+    const job = this.applyJobs.get(id);
+    if (!job) {
+      const done = b.state === "applied" || b.state === "partial";
+      return {
+        batchId: id,
+        state: b.state,
+        issues: { done: done ? b.counts.issuesCreate : 0, total: b.counts.issuesCreate },
+        statuses: { done: done ? b.counts.statusChanges : 0, total: b.counts.statusChanges },
+        log: [],
+        failures: [],
+      };
+    }
+    const elapsed = (Date.now() - job.startedAt) / 1000;
+    const issuesDone = Math.min(job.issueTotal, Math.floor(elapsed * 3));
+    const statusDone = Math.min(job.statusTotal, Math.floor(Math.max(0, elapsed - job.issueTotal / 3) * 60));
+    const finished = issuesDone >= job.issueTotal && statusDone >= job.statusTotal;
+    const log: T.ApplyStatus["log"] = [];
+    if (issuesDone) log.push({ at: new Date().toISOString(), text: `Incidencias creadas: ${issuesDone}/${job.issueTotal}`, ok: true });
+    if (statusDone) log.push({ at: new Date().toISOString(), text: `Estados actualizados: ${statusDone}/${job.statusTotal}`, ok: true });
+    if (finished && b.state === "approved") {
+      b.state = job.failures.length ? "partial" : "applied";
+      b.appliedAt = new Date().toISOString();
+      this.log({ actor: { type: "server", id: "server", name: "Servidor" }, action: "acc.issue.created", projectId: b.projectId, modelSetId: b.modelSetId, testId: b.testId, batchId: b.id, targetIds: [], details: { count: job.issueTotal }, accResponseId: `acc-${newId().slice(0, 8)}` });
+      this.log({ actor: { type: "server", id: "server", name: "Servidor" }, action: "acc.clash.statusChanged", projectId: b.projectId, modelSetId: b.modelSetId, testId: b.testId, batchId: b.id, targetIds: [], details: { count: job.statusTotal - job.failures.length }, accResponseId: `acc-${newId().slice(0, 8)}` });
+      for (const f of job.failures)
+        this.log({ actor: { type: "server", id: "server", name: "Servidor" }, action: "acc.error", projectId: b.projectId, batchId: b.id, targetIds: [f.label], details: { message: f.message } });
+    }
+    if (finished) for (const f of job.failures) log.push({ at: new Date().toISOString(), text: `${f.label}: ${f.message}`, ok: false });
+    return {
+      batchId: id,
+      state: b.state,
+      issues: { done: issuesDone, total: job.issueTotal },
+      statuses: { done: statusDone, total: job.statusTotal },
+      log,
+      failures: finished ? job.failures : [],
+    };
+  }
+
+  private tickApplyJobs() {
+    for (const id of this.applyJobs.keys()) this.applyStatus(id);
+  }
+
+  async getApplyStatus(id: string) {
+    await delay(80);
+    return clone(this.applyStatus(id));
+  }
+
+  // ── Learning / rules ────────────────────────────────────────────
+
+  async submitFeedback(input: T.FeedbackInput) {
+    await delay(80);
+    const id = `F-${newId().slice(0, 8)}`;
+    this.log({ actor: { type: "user", id: ME.id, name: ME.short }, action: "feedback.recorded", projectId: PROJECTS[0].id, targetIds: [], details: { verdict: input.verdict, scope: input.scope } });
+    return { feedbackId: id };
+  }
+
+  async listRules(): Promise<T.RuleSummary[]> {
+    await delay();
+    return RULES.map((r, i) => this.ruleSummary(r, i));
+  }
+
+  private ruleSummary(r: (typeof RULES)[number], i: number): T.RuleSummary {
+    const g = rng(i * 31 + 7);
+    const hits = r.state === "disabled" ? 0 : g.int(4, 160);
+    return {
+      id: r.id,
+      name: r.name,
+      scope: r.scope,
+      effect: r.effect,
+      state: r.state,
+      hits7d: hits,
+      acceptance: hits ? Number((0.55 + g.next() * 0.44).toFixed(2)) : null,
+      corrections: hits ? g.int(0, Math.ceil(hits / 6)) : 0,
+      updatedAt: new Date(Date.now() - g.int(2, 60) * 86400000).toISOString(),
+      file: r.file,
+    };
+  }
+
+  async getRule(ruleId: string): Promise<T.RuleDetail> {
+    await delay();
+    const idx = RULES.findIndex((r) => r.id === ruleId);
+    if (idx < 0) throw new ApiError("Regla no encontrada", 404, "not_found");
+    const r = RULES[idx];
+    const tb = this.data("T-3f9a21c0");
+    const latest = latestDecisions(this.decisionsOf("T-3f9a21c0"));
+    const hits = tb.proposals.filter((p) => p.ruleIds.includes(ruleId)).slice(0, 8);
+    const g = rng(idx + 3);
+    return {
+      ...this.ruleSummary(r, idx),
+      description: r.description,
+      conditions: r.conditions,
+      yaml: `- id: ${r.id}\n  name: "${r.name}"\n  scope: "${r.scope}"\n  effect: ${r.effect}\n  when:\n${r.conditions.map((c) => `    - "${c}"`).join("\n")}\n  state: ${r.state}`,
+      recentHits: hits.map((p) => {
+        const d = latest.get(p.targetId);
+        const grp = tb.groups.find((x) => x.id === p.targetId);
+        return {
+          groupId: p.targetId,
+          projectId: PROJECTS[0].id,
+          modelSetId: PROJECTS[0].modelSets[0].id,
+          title: grp?.title ?? p.targetId,
+          decision: d ? (d.kind === "accept" ? "accepted" : d.kind === "correct" ? "corrected" : d.kind === "reject" ? "rejected" : "postponed") : "pending",
+          at: p.createdAt,
+        };
+      }),
+      reasonDistribution: (["R01", "R02", "R03", "R08", "R09"] as const).map((code) => ({ code, count: g.int(0, 9) })).filter((x) => x.count > 0),
+    };
+  }
+
+  async getRulesOverview(): Promise<T.RulesOverview> {
+    await delay();
+    return mockRulesOverview();
+  }
+
+  async previewRuleChange(change: T.RuleChangeRequest): Promise<T.RuleChangePreview> {
+    await delay(150);
+    const ids = "ruleIds" in change ? change.ruleIds : [change.ruleId];
+    return { kind: change.kind, title: `${change.kind} ${ids.join(", ")}`, ruleIds: ids, patch: "", effect: ["Modo demostración: el impacto real se calcula en el servidor."], errors: [], warnings: [] };
+  }
+
+  async createRuleSuggestion(req: { change: T.RuleChangeRequest; rationale: string; title?: string }): Promise<T.RuleSuggestion> {
+    await delay(150);
+    const ids = "ruleIds" in req.change ? req.change.ruleIds : [req.change.ruleId];
+    const s: T.RuleSuggestion = { id: `RS-${newId().slice(0, 4)}`, title: req.title ?? `${req.change.kind} ${ids.join(", ")}`, count: 0, reasonCode: "R99", pair: "", summary: req.rationale, patch: "", affected: 0, state: "pending", createdAt: new Date().toISOString(), origin: "coordinador", changeKind: req.change.kind, ruleIds: ids };
+    this.suggestions.push(s);
+    return clone(s);
+  }
+
+  async listRuleSuggestions() {
+    await delay();
+    return clone(this.suggestions);
+  }
+
+  async decideRuleSuggestion(id: string, decision: "approve" | "reject") {
+    await delay(150);
+    const s = this.suggestions.find((x) => x.id === id);
+    if (!s) throw new ApiError("Sugerencia no encontrada", 404, "not_found");
+    s.state = decision === "approve" ? "approved" : "rejected";
+    this.log({ actor: { type: "user", id: ME.id, name: ME.short }, action: decision === "approve" ? "rule.approved" : "rule.rejected", projectId: PROJECTS[0].id, targetIds: [id], details: { title: s.title } });
+    return clone(s);
+  }
+
+  async getRulePublishOptions(): Promise<T.RulePublishOptions> {
+    throw new ApiError("Modo demostración: se publica sin passkey.", 400, "validation");
+  }
+
+  async publishRuleSuggestion(id: string, op: "publish" | "revert") {
+    await delay(300);
+    const s = this.suggestions.find((x) => x.id === id);
+    if (!s) throw new ApiError("Sugerencia no encontrada", 404, "not_found");
+    const at = new Date().toISOString();
+    if (op === "publish") {
+      if (s.state !== "approved" && s.state !== "reverted") throw new ApiError("Solo se publica una sugerencia aprobada.", 409, "conflict");
+      s.state = "published";
+      s.publication = { id: `RP-${newId().slice(0, 8)}`, at, by: ME.short, proof: "demo", files: ["rules/classification-rules.yaml"] };
+    } else {
+      if (s.state !== "published" || !s.publication) throw new ApiError("No hay una publicación vigente.", 409, "conflict");
+      s.state = "reverted";
+      s.publication = { ...s.publication, reverted: { at, by: ME.short } };
+    }
+    this.log({ actor: { type: "user", id: ME.id, name: ME.short }, action: op === "publish" ? "rule.published" : "rule.reverted", projectId: PROJECTS[0].id, targetIds: [id], details: { title: s.title } });
+    return clone(s);
+  }
+
+  async listCorrections(p?: { projectId?: string; limit?: number; cursor?: string }) {
+    await delay();
+    const start = Number(p?.cursor ?? 0);
+    const limit = p?.limit ?? 500;
+    return { items: clone(this.corrections.slice(start, start + limit)), total: this.corrections.length };
+  }
+
+  async getCalibration(): Promise<T.Calibration> {
+    await delay();
+    const bands = (alta: number, media: number, baja: number): T.CalibrationBand[] => [
+      { band: "alta", proposals: alta, acceptedUnchanged: Math.round(alta * 0.95) },
+      { band: "media", proposals: media, acceptedUnchanged: Math.round(media * 0.78) },
+      { band: "baja", proposals: baja, acceptedUnchanged: Math.round(baja * 0.52) },
+    ];
+    return {
+      thresholds: { high: 0.85, medium: 0.6 },
+      minDecisions: 50,
+      bands: bands(1204, 412, 38),
+      byField: [
+        { field: "validity", source: "rule", bands: bands(820, 160, 12) },
+        { field: "validity", source: "llm", bands: bands(120, 140, 22) },
+        { field: "priority", source: "rule", bands: bands(610, 220, 30) },
+        { field: "priority", source: "llm", bands: bands(90, 110, 41) },
+        { field: "owner", source: "rule", bands: bands(980, 90, 8) },
+        { field: "owner", source: "llm", bands: bands(40, 33, 6) },
+      ],
+      spotCheck: { reviewed: 61, corrected: 4 },
+    };
+  }
+
+  // ── G4/G5: project ACC issue settings (mock, in memory) ──
+  private issueSettingsByProject = new Map<string, T.IssueSettings>();
+
+  private mockIssueSettings(projectId: string): T.IssueSettings {
+    let s = this.issueSettingsByProject.get(projectId);
+    if (!s) {
+      s = {
+        projectId,
+        version: 0,
+        issueType: null,
+        effectiveIssueType: { typeId: "00000000-0000-4000-a000-00000000f1a7", subtypeId: "00000000-0000-4000-a000-00000000f1a8", label: "Coordinación / Clash", source: "fixtures" },
+        assignees: [],
+        codes: DISCIPLINES.map((d) => ({ code: d.code, label: d.code })),
+        pendingProposals: [],
+      };
+      this.issueSettingsByProject.set(projectId, s);
+    }
+    return s;
+  }
+
+  async listIssueTypes(): Promise<T.AccIssueType[]> {
+    await delay(60);
+    return [
+      { id: "00000000-0000-4000-a000-00000000f1a7", title: "Coordinación", subtypes: [{ id: "00000000-0000-4000-a000-00000000f1a8", title: "Clash" }, { id: "00000000-0000-4000-a000-00000000f1a9", title: "Diseño" }] },
+      { id: "00000000-0000-4000-a000-00000000f1b0", title: "Calidad", subtypes: [{ id: "00000000-0000-4000-a000-00000000f1b1", title: "Observación" }] },
+    ];
+  }
+
+  async getIssueSettings(projectId: string): Promise<T.IssueSettings> {
+    await delay(60);
+    return clone(this.mockIssueSettings(projectId));
+  }
+
+  async setIssueType(projectId: string, req: { typeId: string; subtypeId: string; label: string } | { clear: true }): Promise<T.IssueSettings> {
+    const s = this.mockIssueSettings(projectId);
+    s.issueType = "clear" in req ? null : { typeId: req.typeId, subtypeId: req.subtypeId, label: req.label };
+    if (s.issueType) s.effectiveIssueType = { ...s.issueType, source: "project" };
+    s.version++;
+    return clone(s);
+  }
+
+  async setIssueAssignee(projectId: string, discipline: string, assignee: { id: string; type: "user" | "role" | "company"; label: string } | null): Promise<T.IssueSettings> {
+    const s = this.mockIssueSettings(projectId);
+    s.assignees = s.assignees.filter((a) => a.discipline !== discipline);
+    if (assignee) s.assignees.push({ discipline, ...assignee });
+    s.assignees.sort((a, b) => a.discipline.localeCompare(b.discipline));
+    s.version++;
+    return clone(s);
+  }
+
+  async decideIssueSettingsSuggestion(projectId: string, proposalId: string): Promise<T.IssueSettings> {
+    const s = this.mockIssueSettings(projectId);
+    s.pendingProposals = s.pendingProposals.filter((p) => p.id !== proposalId);
+    return clone(s);
+  }
+
+  // ── Human-side parity (docs/ai/agent-human-parity.md) ──────────
+
+  private projectNotes = new Map<string, string>();
+  private feedbackRows: T.FeedbackRow[] = mockFeedback();
+
+  async getTestHygiene(testId: string): Promise<T.TestHygiene> {
+    await delay(120);
+    return mockHygiene(testId, this.data(testId));
+  }
+  async getReport(scope: T.ReportScope): Promise<T.ReportData> {
+    await delay(120);
+    const ms = PROJECTS.flatMap((p) => p.modelSets).find((m) => m.id === scope.modelSetId) ?? PROJECTS[0].modelSets[0];
+    const tests = ms.tests.filter((o) => this.isCached(o)).map((o) => this.data(o.testId));
+    return mockReport(scope, tests);
+  }
+  async listReportFiles(projectId: string): Promise<T.ReportFile[]> {
+    await delay(60);
+    return projectId === PROJECTS[0].id ? clone(MOCK_REPORT_FILES) : [];
+  }
+  async getReportFile(_projectId: string, name: string): Promise<T.ReportFileContent> {
+    await delay(60);
+    const f = MOCK_REPORT_FILES.find((x) => x.name === name);
+    if (!f) throw new ApiError("Informe no encontrado", 404, "not_found");
+    return { name, format: f.format, content: f.format === "md" ? "# Informe semanal de coordinación\n\n(mock)\n" : "<h1>Informe semanal de coordinación</h1><p>(mock)</p>" };
+  }
+  async getProjectNotes(projectId: string): Promise<T.ProjectNotes> {
+    await delay(60);
+    const text = this.projectNotes.get(projectId) ?? `# Notas del proyecto ${projectId}\n\n- 2026-10-28 · [convención] Pasadas de CLI en vigas del N03 previstas por plano E-301 (confirmado por coordinador)\n`;
+    return { projectId, path: `.coordinator/projects/${projectId}/notes.md`, text, lines: text.split("\n").length };
+  }
+  async appendProjectNote(projectId: string, text: string, kind?: string): Promise<T.ProjectNotes> {
+    await delay(100);
+    const clean = text.replace(/\s+/g, " ").trim();
+    if (clean.length < 3 || clean.length > 500) throw new ApiError("La nota debe tener entre 3 y 500 caracteres.", 400, "validation");
+    if (/https?:\/\//i.test(clean)) throw new ApiError("La nota no puede contener URLs.", 400, "validation");
+    const prev = (await this.getProjectNotes(projectId)).text;
+    this.projectNotes.set(projectId, `${prev.endsWith("\n") ? prev : `${prev}\n`}- ${new Date().toISOString().slice(0, 10)} · [${kind ?? "convención"}] ${clean} (confirmado por coordinador)\n`);
+    return this.getProjectNotes(projectId);
+  }
+  async listFeedback(p?: { projectId?: string; source?: T.FeedbackSource[]; limit?: number; cursor?: string }): Promise<T.Page<T.FeedbackRow>> {
+    await delay(80);
+    const rows = this.feedbackRows.filter((r) => !p?.source?.length || p.source.includes(r.source));
+    const start = Number(p?.cursor ?? 0);
+    const limit = p?.limit ?? 200;
+    return { items: clone(rows.slice(start, start + limit)), total: rows.length };
+  }
+  async detachFamilyInstance(familyId: string, req: { testId: string; groupId: string }): Promise<T.FamiliesPayload> {
+    await delay(120);
+    const all = this.familiesOf(req.testId);
+    const { fam, byId } = this.familyById(req.testId, familyId);
+    if (!fam.groupIds.includes(req.groupId)) throw new ApiError(`La ubicación ${req.groupId} no pertenece a ${fam.id}`, 404, "not_found");
+    if (fam.groupIds.length < 2) throw new ApiError("La familia tiene una sola ubicación.", 400, "validation");
+    const id = `F-M${newId().replace(/-/g, "").slice(0, 9)}`;
+    fam.groupIds = fam.groupIds.filter((g) => g !== req.groupId);
+    const solo: T.TriageFamily = { ...clone(fam), id, groupIds: [req.groupId], mergedFrom: [], decision: undefined, exceptions: [], pendingProposals: [] };
+    all.families.push(solo);
+    const g = byId.get(req.groupId);
+    if (g) g.familyId = id;
+    for (const f of [fam, solo]) resizeFamily(f, byId);
+    return this.getFamilies(req.testId);
+  }
+  async mergeFamilies(req: { testId: string; from: string; into: string }): Promise<T.FamiliesPayload> {
+    await delay(120);
+    const all = this.familiesOf(req.testId);
+    const { fam: from, byId } = this.familyById(req.testId, req.from);
+    const { fam: into } = this.familyById(req.testId, req.into);
+    if (from.id === into.id) throw new ApiError("No se puede fusionar una familia consigo misma.", 400, "validation");
+    if (from.decision?.status === "approved") throw new ApiError(`${from.id} ya tiene una decisión; recházala antes de fusionarla.`, 409, "conflict");
+    into.groupIds = [...into.groupIds, ...from.groupIds];
+    into.mergedFrom = [...into.mergedFrom, from.id, ...from.mergedFrom];
+    for (const gid of from.groupIds) {
+      const g = byId.get(gid);
+      if (g) g.familyId = into.id;
+    }
+    all.families = all.families.filter((f) => f.id !== from.id);
+    resizeFamily(into, byId);
+    return this.getFamilies(req.testId);
+  }
+
+  // ── Datos y respaldos (demo: in memory, nothing is written) ──
+  private dataSettings: T.BackupSettings = { targetDir: "", keep: 14 };
+  private dataBackups: T.BackupInfo[] = [
+    { name: "coordinator-2026-11-10.zip", bytes: 3_482_113, createdAt: "2026-11-10T09:00:05.000Z", kind: "scheduled" },
+    { name: "coordinator-2026-11-09.zip", bytes: 3_401_920, createdAt: "2026-11-09T09:00:04.000Z", kind: "scheduled" },
+  ];
+  async getDataStatus(): Promise<T.DataStatus> {
+    await delay(80);
+    const last = this.dataBackups[0];
+    return {
+      home: "C:\\Users\\demo\\AppData\\Local\\bim-coordinator\\data",
+      mode: "default",
+      defaultHome: "C:\\Users\\demo\\AppData\\Local\\bim-coordinator\\data",
+      legacyHome: "C:\\proyectos\\coordination-agent\\.coordinator",
+      backupsDir: "C:\\Users\\demo\\AppData\\Local\\bim-coordinator\\backups",
+      migration: { migratedAt: "2026-11-09T08:59:58.000Z", from: "C:\\proyectos\\coordination-agent\\.coordinator", fileCount: 412, pending: false },
+      settings: clone(this.dataSettings),
+      backups: clone(this.dataBackups),
+      ...(last ? { lastBackup: { ...last, fileCount: 412 } } : {}),
+      scheduleActive: true,
+    };
+  }
+  async backupNow(): Promise<T.BackupInfo> {
+    await delay(400);
+    const d = new Date();
+    const p = (n: number) => String(n).padStart(2, "0");
+    const b: T.BackupInfo = { name: `coordinator-${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.zip`, bytes: 3_500_000, createdAt: d.toISOString(), kind: "manual" };
+    this.dataBackups = [b, ...this.dataBackups].slice(0, this.dataSettings.keep * 2);
+    return clone(b);
+  }
+  async saveDataSettings(req: T.DataSettingsRequest): Promise<T.BackupSettings> {
+    await delay(80);
+    if (req.targetDir && !/^([A-Za-z]:\\|\\\\|\/)/.test(req.targetDir)) throw new ApiError("La carpeta externa debe ser una ruta absoluta.", 400, "validation");
+    this.dataSettings = { targetDir: req.targetDir?.trim() ?? this.dataSettings.targetDir, keep: req.keep ?? this.dataSettings.keep };
+    return clone(this.dataSettings);
+  }
+  async exportData(): Promise<{ blob: Blob; fileName: string }> {
+    throw new ApiError("Modo demostración: no hay datos locales que exportar.", 400, "validation");
+  }
+  async stageDataImport(): Promise<T.DataImportStage> {
+    throw new ApiError("Modo demostración: la restauración solo existe con el servidor local.", 400, "validation");
+  }
+  async getDataRestoreOptions(): Promise<T.DataRestoreOptions> {
+    throw new ApiError("Modo demostración: la restauración solo existe con el servidor local.", 400, "validation");
+  }
+  async restoreData(): Promise<T.DataRestoreResult> {
+    throw new ApiError("Modo demostración: la restauración solo existe con el servidor local.", 400, "validation");
+  }
+  async cancelDataImport(): Promise<void> {}
+}

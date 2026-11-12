@@ -1,0 +1,35 @@
+{
+  "page": {},
+  "modelSetViews": [
+    {
+      "viewId": "0d0b0426-6d79-4e17-ac79-1c846b791af1",
+      "name": "EST_MEP",
+      "description": "Estructura vs instalaciones",
+      "isPrivate": false,
+      "definition": [
+        {
+          "lineageUrn": "urn:adsk.wipprod:dm.lineage:MWFkYWJhZDMzODU0NGFmNg",
+          "viewableName": "{3D}"
+        },
+        {
+          "lineageUrn": "urn:adsk.wipprod:dm.lineage:YTBmZDFhMmQ3YTcwMDBlNA",
+          "viewableName": "{3D}"
+        },
+        {
+          "lineageUrn": "urn:adsk.wipprod:dm.lineage:Njk0YjMzYzlhOTYyYjYzOA",
+          "viewableName": "{3D}"
+        },
+        {
+          "lineageUrn": "urn:adsk.wipprod:dm.lineage:NzliNGVjODczZGQwODk1Mg",
+          "viewableName": "{3D}"
+        },
+        {
+          "lineageUrn": "urn:adsk.wipprod:dm.lineage:ZmUzYTc4MmI0MDBhZjdiZQ",
+          "viewableName": "{3D}"
+        }
+      ],
+      "createdBy": "PD23PXGV8V3V",
+      "createdTime": "2026-09-01T10:00:00.000Z"
+    }
+  ]
+}

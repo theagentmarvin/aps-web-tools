@@ -234,12 +234,20 @@ function buildPointCloud() {
 
 // ── Raycaster events ──────────────────────────────────────
 
+/** Optional external click handler (e.g. clash workspace selects the clash). Return true to suppress the info card. */
+let externalClickHandler: ((markerId: string) => boolean | void) | null = null;
+
+export function setMarkerClickHandler(handler: ((markerId: string) => boolean | void) | null) {
+  externalClickHandler = handler;
+}
+
 function onCanvasClick(e) {
   if (!raycaster || !pointCloud || !camera || markupItems.length === 0) return;
 
   if (hovered != null) {
     selected = hovered;
     const item = markupItems[selected];
+    if (item && externalClickHandler && externalClickHandler(item.id) === true) return;
     if (item) showInfoCard(item, e.clientX, e.clientY);
     const viewer = getViewer();
     viewer?.impl?.invalidate?.(true);

@@ -1,0 +1,152 @@
+/**
+ * Spanish labels used by generated group titles and issue drafts.
+ *
+ * Rule names: the rule YAML `nameEs` wins (engine review resolution 13); this
+ * table is only the fallback for rules that still lack it (the loader warns).
+ * Class labels have no YAML counterpart and live here.
+ */
+
+export const RULE_NAMES_ES: Readonly<Record<string, string>> = {
+  "HYG-001": "Elemento demolido",
+  "HYG-002": "Objeto no físico o analítico",
+  "HYG-003": "Obra provisoria (4D)",
+  "HYG-004": "Elemento sin categoría",
+  "DUP-001": "Mismo elemento en dos archivos",
+  "DUP-002": "Elemento duplicado por dos vistas del mismo archivo",
+  "DUP-003": "Instancias idénticas superpuestas",
+  "DUP-004": "Copia de elemento de otra disciplina",
+  "DUP-005": "ARQ remodela muros estructurales",
+  "DUP-006": "ARQ remodela losas estructurales",
+  "FP-001": "Aislación contra su propia tubería/ducto",
+  "FP-002": "Aislación contra su anfitrión (sin sistema)",
+  "FP-003": "Componentes conectados del mismo sistema",
+  "FP-004": "Armadura dentro de su elemento de hormigón",
+  "FP-005": "Armadura contra otros elementos",
+  "FP-006": "Uniones dentro del modelo estructural",
+  "FP-007": "Uniones arquitectónicas del mismo archivo",
+  "FP-008": "Artefacto embutido en cielo",
+  "FP-009": "Artefacto embutido en muro",
+  "FP-010": "Pasada o camisa modelada",
+  "FP-011": "Sello cortafuego",
+  "FP-012": "Compuerta cortafuego en muro o losa",
+  "FP-013": "Subcomponentes de familia anidada",
+  "FP-014": "Revestimiento sobre estructura",
+  "FP-015": "Topografía o terreno",
+  "FP-016": "Instalación por pasada modelada",
+  "SEI-001": "Instalación cruza junta sísmica",
+  "TOL-001": "Contacto sin penetración",
+  "TOL-002": "Holgura insuficiente",
+  "TOL-003": "Penetración dentro de tolerancia",
+  "TOL-004": "Flexible contra elemento no estructural",
+  "TOL-005": "Conduit embutido bajo 1/3 del espesor",
+  "TOL-006": "Conduit embutido sobre 1/3 del espesor",
+  "TOL-007": "Conduit menor contra elemento no estructural",
+  "TOL-008": "Instalación menor por tabique no RF",
+  "TOL-009": "Tubería menor en sobrelosa",
+  "CLR-001": "Zona de mantención invadida por estructura",
+  "CLR-002": "Zona de mantención invadida",
+  "NI-001": "Modelo genérico sin función declarada",
+  "NI-002": "Elemento referencial o de reserva",
+  "INC-001": "Rociador obstruido",
+  "ELV-001": "Elemento en shaft de ascensor",
+  "EST-001": "Instalación atraviesa pilar",
+  "EST-002": "Red gravitacional contra estructura",
+  "EST-003": "Instalación por losa postensada",
+  "EST-004": "Ducto grande contra viga",
+  "EST-005": "Instalación ≥ 100 mm contra viga",
+  "EST-006": "Instalación menor contra viga",
+  "EST-007": "Instalación por muro estructural",
+  "EST-008": "Instalación contra fundación",
+  "EST-009": "Montante sin pasada en losa",
+  "EST-010": "Tramo horizontal embebido en losa",
+  "EST-011": "Instalación contra losa (orientación desconocida)",
+  "AE-001": "Puerta/ventana contra estructura",
+  "AE-002": "Viga bajo cielo",
+  "AE-003": "Tabique/piso modelado dentro de estructura",
+  "AE-004": "Tabique superpuesto con estructura",
+  "AE-005": "Muro cortina contra estructura",
+  "AE-006": "Escalera de ARQ contra estructura",
+  "MA-001": "Instalación en escalera",
+  "MA-002": "Instalación en vano de puerta/ventana",
+  "MA-003": "Instalación contra fachada",
+  "MA-004": "Bajada vertical por cielo",
+  "MA-005": "Instalación bajo cota de cielo",
+  "MA-006": "Instalación por muro resistente al fuego",
+  "MA-007": "Instalación grande por tabique",
+  "MA-008": "Equipo o terminal contra muro",
+  "MA-013": "Pasada por muro sin resistencia al fuego informada",
+  "MA-009": "Instalación por cubierta",
+  "MA-010": "Instalación contra piso no estructural",
+  "MA-011": "Instalación contra mobiliario",
+  "MA-012": "Instalación contra baranda",
+  "MM-001": "Red gravitacional contra red gravitacional",
+  "MM-002": "Red gravitacional contra otra instalación",
+  "MM-003": "Gas contra electricidad",
+  "MM-004": "Red troncal de incendio contra instalación",
+  "MM-005": "Equipo contra red",
+  "MM-006": "Equipo contra equipo",
+  "MM-007": "Aislación contra otro sistema",
+  "MM-008": "Conduit contra instalación",
+  "MM-009": "Terminal contra red",
+  "MM-010": "Cruce entre redes",
+  "DEF-999": "Sin regla específica",
+};
+
+export interface ClassLabel {
+  one: string;
+  many: string;
+  /** Grammatical gender for participles ("atravesada" / "atravesado"). */
+  g: "f" | "m";
+}
+
+export const CLASS_LABELS_ES: Readonly<Record<string, ClassLabel>> = {
+  non_physical: { one: "objeto no físico", many: "objetos no físicos", g: "m" },
+  analytical: { one: "elemento analítico", many: "elementos analíticos", g: "m" },
+  rebar: { one: "armadura", many: "armaduras", g: "f" },
+  sleeve_opening: { one: "pasada", many: "pasadas", g: "f" },
+  firestop: { one: "sello cortafuego", many: "sellos cortafuego", g: "m" },
+  insulation: { one: "aislación", many: "aislaciones", g: "f" },
+  temporary_works: { one: "obra provisoria", many: "obras provisorias", g: "f" },
+  clearance_zone: { one: "zona de mantención", many: "zonas de mantención", g: "f" },
+  site: { one: "terreno", many: "terrenos", g: "m" },
+  elevator: { one: "ascensor", many: "ascensores", g: "m" },
+  structure_column: { one: "pilar", many: "pilares", g: "m" },
+  structure_framing: { one: "viga", many: "vigas", g: "f" },
+  structure_foundation: { one: "fundación", many: "fundaciones", g: "f" },
+  structure_wall: { one: "muro estructural", many: "muros estructurales", g: "m" },
+  structure_floor: { one: "losa", many: "losas", g: "f" },
+  structure_other: { one: "conexión estructural", many: "conexiones estructurales", g: "f" },
+  stairs: { one: "escalera", many: "escaleras", g: "f" },
+  roof: { one: "cubierta", many: "cubiertas", g: "f" },
+  curtain_wall: { one: "fachada", many: "fachadas", g: "f" },
+  door_window: { one: "vano", many: "vanos", g: "m" },
+  arch_wall: { one: "tabique", many: "tabiques", g: "m" },
+  arch_floor: { one: "piso", many: "pisos", g: "m" },
+  railing: { one: "baranda", many: "barandas", g: "f" },
+  ceiling: { one: "cielo", many: "cielos", g: "m" },
+  furniture: { one: "mueble", many: "muebles", g: "m" },
+  gravity_pipe: { one: "tubería gravitacional", many: "tuberías gravitacionales", g: "f" },
+  fire_main: { one: "red troncal de incendio", many: "redes troncales de incendio", g: "f" },
+  fire_branch: { one: "ramal de incendio", many: "ramales de incendio", g: "m" },
+  sprinkler: { one: "rociador", many: "rociadores", g: "m" },
+  flexible: { one: "flexible", many: "flexibles", g: "m" },
+  duct_large: { one: "ducto", many: "ductos", g: "m" },
+  duct: { one: "ducto", many: "ductos", g: "m" },
+  cable_tray: { one: "escalerilla", many: "escalerillas", g: "f" },
+  pipe_large: { one: "tubería", many: "tuberías", g: "f" },
+  pipe: { one: "tubería", many: "tuberías", g: "f" },
+  conduit: { one: "conduit", many: "conduits", g: "m" },
+  mep_equipment: { one: "equipo", many: "equipos", g: "m" },
+  mep_terminal: { one: "terminal", many: "terminales", g: "m" },
+  generic: { one: "modelo genérico", many: "modelos genéricos", g: "m" },
+  other: { one: "elemento", many: "elementos", g: "m" },
+};
+
+export function classLabel(cls: string | undefined): ClassLabel {
+  return (cls && CLASS_LABELS_ES[cls]) || { one: cls ?? "elemento", many: cls ? `${cls}s` : "elementos", g: "m" };
+}
+
+/** Spanish rule name: YAML `nameEs` (via the rule set), else this table, else the fallback. */
+export function ruleNameEs(ruleId: string, fallback?: string, rs?: { ruleNamesEs: ReadonlyMap<string, string> }): string {
+  return rs?.ruleNamesEs.get(ruleId) ?? RULE_NAMES_ES[ruleId] ?? fallback ?? ruleId;
+}

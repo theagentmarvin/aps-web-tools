@@ -1,0 +1,10 @@
+--- a/rules/classification-rules.yaml
++++ b/rules/classification-rules.yaml
+@@ -267,5 +267,5 @@
+     when:
+-      clash: { sameModelFile: true }
++      clash: { sameOriginFile: true }
+       both: { discipline: EST }
+     then: { validity: false_positive, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, severity: none, confidence: 0.9, suggestedAction: close_not_issue,
+-            rationale: "Uniones de geometría dentro del modelo estructural ({a.category} con {b.category}). Se resuelven con 'unir geometría', no son interferencias de coordinación." }
++            rationale: "Uniones de geometría dentro del modelo estructural ({a.category} con {b.category}), incluidas las vistas a través de una copia vinculada del mismo archivo. Se resuelven con 'unir geometría', no son interferencias de coordinación." }

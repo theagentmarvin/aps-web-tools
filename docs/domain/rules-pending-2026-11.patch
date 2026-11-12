@@ -1,0 +1,707 @@
+--- a/classification-rules.yaml
++++ b/classification-rules.yaml
+@@ -140,6 +140,7 @@ rules:
+ # ---------------------------------------------------------------------------
+   - id: HYG-001
+     name: demolished element
++    nameEs: "Elemento demolido"
+     when:
+       a: { isDemolished: true }
+     then: { validity: false_positive, nature: workflow, rootCause: model_hygiene, responsibleDiscipline: COORD, severity: none, confidence: 0.95, suggestedAction: close_not_issue,
+@@ -147,6 +148,7 @@ rules:
+ 
+   - id: HYG-002
+     name: non-physical or analytical object
++    nameEs: "Objeto no físico o analítico"
+     when:
+       a: { elementClass: [non_physical, analytical] }
+     then: { validity: false_positive, nature: hard, rootCause: model_hygiene, responsibleDiscipline: COORD, severity: none, confidence: 0.97, suggestedAction: close_not_issue,
+@@ -154,6 +156,7 @@ rules:
+ 
+   - id: HYG-003
+     name: temporary works (4D)
++    nameEs: "Obra provisoria (4D)"
+     when:
+       a: { isTemporaryWorks: true }
+     then: { validity: needs_info, nature: workflow, rootCause: not_applicable, responsibleDiscipline: COORD, severity: low, confidence: 0.8, suggestedAction: request_info,
+@@ -161,6 +164,7 @@ rules:
+ 
+   - id: HYG-004
+     name: missing category
++    nameEs: "Elemento sin categoría"
+     when:
+       a: { category: { exists: false } }
+     then: { validity: needs_info, nature: hard, rootCause: model_hygiene, responsibleDiscipline: COORD, severity: low, confidence: 0.5, suggestedAction: request_info,
+@@ -171,6 +175,7 @@ rules:
+ # ---------------------------------------------------------------------------
+   - id: DUP-001
+     name: same element in two different model files
++    nameEs: "Mismo elemento en dos archivos"
+     when:
+       clash: { sameExternalId: true, sameModelFile: false }
+     then: { validity: false_positive, nature: duplicate, rootCause: duplicate_model, responsibleDiscipline: COORD, severity: none, confidence: 0.97, suggestedAction: hygiene_issue,
+@@ -178,6 +183,7 @@ rules:
+ 
+   - id: DUP-002
+     name: same element twice in same file (two viewables)
++    nameEs: "Elemento duplicado por dos vistas del mismo archivo"
+     when:
+       clash: { sameExternalId: true }
+     then: { validity: false_positive, nature: duplicate, rootCause: duplicate_model, responsibleDiscipline: COORD, severity: none, confidence: 0.98, suggestedAction: hygiene_issue,
+@@ -185,6 +191,7 @@ rules:
+ 
+   - id: DUP-003
+     name: identical non-MEP instances overlapping in same file
++    nameEs: "Instancias idénticas superpuestas"
+     when:
+       clash: { sameModelFile: true, sameCategory: true, sameType: true, penetrationRatio: { gte: 0.9 } }
+       both: { not: { elementClass: { inSet: MEP_DIST } } }
+@@ -193,6 +200,7 @@ rules:
+ 
+   - id: DUP-004
+     name: foreign copy of another discipline's element
++    nameEs: "Copia de elemento de otra disciplina"
+     when:
+       clash: { sameCategory: true, sameModelFile: false, penetrationRatio: { gte: 0.5 } }
+       a: { isForeign: true }
+@@ -202,6 +210,7 @@ rules:
+ 
+   - id: DUP-005
+     name: ARQ re-modeled structural wall
++    nameEs: "ARQ remodela muros estructurales"
+     when:
+       clash: { penetrationRatio: { gte: 0.8 } }
+       a: { disciplineGroup: ARQ, category: Walls, isFinishLayer: false }
+@@ -211,6 +220,7 @@ rules:
+ 
+   - id: DUP-006
+     name: ARQ re-modeled structural slab
++    nameEs: "ARQ remodela losas estructurales"
+     when:
+       clash: { penetrationRatio: { gte: 0.8 } }
+       a: { disciplineGroup: ARQ, category: Floors, isFinishLayer: false }
+@@ -223,6 +233,7 @@ rules:
+ # ---------------------------------------------------------------------------
+   - id: FP-001
+     name: insulation vs its own host (same system)
++    nameEs: "Aislación contra su propia tubería/ducto"
+     when:
+       clash: { sameModelFile: true, sameSystemName: true }
+       a: { isInsulation: true }
+@@ -232,6 +243,7 @@ rules:
+ 
+   - id: FP-002
+     name: insulation vs host (system unknown)
++    nameEs: "Aislación contra su anfitrión (sin sistema)"
+     when:
+       clash: { sameModelFile: true }
+       a: { isInsulation: true, systemName: { exists: false } }
+@@ -241,6 +253,7 @@ rules:
+ 
+   - id: FP-003
+     name: connected components of same system
++    nameEs: "Componentes conectados del mismo sistema"
+     when:
+       clash: { sameModelFile: true, sameSystemName: true }
+       both: { category: { inSet: MEP_CONNECTED_CATS } }
+@@ -249,6 +262,7 @@ rules:
+ 
+   - id: FP-004
+     name: rebar vs concrete host
++    nameEs: "Armadura dentro de su elemento de hormigón"
+     when:
+       a: { elementClass: rebar }
+       b: { anyOf: [ { isStructural: true }, { discipline: EST } ] }
+@@ -257,6 +271,7 @@ rules:
+ 
+   - id: FP-005
+     name: rebar vs anything else
++    nameEs: "Armadura contra otros elementos"
+     when:
+       a: { elementClass: rebar }
+     then: { validity: tolerated, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, severity: none, confidence: 0.7, suggestedAction: mark_reviewed,
+@@ -264,6 +279,7 @@ rules:
+ 
+   - id: FP-006
+     name: structural self-joins in the structural model
++    nameEs: "Uniones dentro del modelo estructural"
+     when:
+       clash: { sameModelFile: true }
+       both: { discipline: EST }
+@@ -272,6 +288,7 @@ rules:
+ 
+   - id: FP-007
+     name: architectural self-joins in the same file
++    nameEs: "Uniones arquitectónicas del mismo archivo"
+     when:
+       clash: { sameModelFile: true }
+       both: { category: { inSet: ARQ_SELF_CATS } }
+@@ -280,6 +297,7 @@ rules:
+ 
+   - id: FP-008
+     name: ceiling-hosted device in ceiling
++    nameEs: "Artefacto embutido en cielo"
+     when:
+       a: { category: { inSet: CEILING_HOSTED_CATS } }
+       b: { category: Ceilings }
+@@ -288,6 +306,7 @@ rules:
+ 
+   - id: FP-009
+     name: wall-hosted device embedded in wall
++    nameEs: "Artefacto embutido en muro"
+     when:
+       clash: { penetrationMm: { lte: 150 } }
+       a: { category: { inSet: WALL_HOSTED_CATS } }
+@@ -297,13 +316,25 @@ rules:
+ 
+   - id: FP-010
+     name: modeled sleeve or opening
++    nameEs: "Pasada o camisa modelada"
+     when:
+       a: { isSleeveOrOpening: true }
+     then: { validity: false_positive, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, severity: none, confidence: 0.88, suggestedAction: close_not_issue,
+             rationale: "'{a.family}' es una pasada/camisa/hueco modelado como elemento independiente: la interferencia confirma la pasada, no es un problema. Si el hueco cortara al anfitrión no habría interferencia." }
+ 
++  - id: FP-016
++    name: MEP through a modeled sleeve
++    nameEs: "Instalación por pasada modelada"
++    when:
++      clash: { coveredBySleeve: true }
++      a: { elementClass: { inSet: MEP_DIST } }
++      b: { elementClass: { inSet: STRUCTURE } }
++    then: { validity: false_positive, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, secondaryDiscipline: EST, severity: none, confidence: 0.9, suggestedAction: close_not_issue,
++            rationale: "{a.category} pasa por la camisa/pasada modelada en {b.category} '{b.type}'. Confirmar que la pasada figura en el plano de pasadas aprobado por el calculista." }
++
+   - id: FP-011
+     name: firestop element
++    nameEs: "Sello cortafuego"
+     when:
+       a: { isFirestop: true }
+     then: { validity: false_positive, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, severity: none, confidence: 0.9, suggestedAction: close_not_issue,
+@@ -311,6 +342,7 @@ rules:
+ 
+   - id: FP-012
+     name: fire damper in wall or slab
++    nameEs: "Compuerta cortafuego en muro o losa"
+     when:
+       a: { isFireDamper: true }
+       b: { category: [Walls, Floors] }
+@@ -319,6 +351,7 @@ rules:
+ 
+   - id: FP-013
+     name: nested family components
++    nameEs: "Subcomponentes de familia anidada"
+     when:
+       clash: { nestedRelation: true }
+     then: { validity: false_positive, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, severity: none, confidence: 0.9, suggestedAction: close_not_issue,
+@@ -326,6 +359,7 @@ rules:
+ 
+   - id: FP-014
+     name: finish layer over structure
++    nameEs: "Revestimiento sobre estructura"
+     when:
+       a: { isFinishLayer: true }
+       b: { elementClass: { inSet: STRUCTURE } }
+@@ -334,6 +368,7 @@ rules:
+ 
+   - id: FP-015
+     name: topography or site
++    nameEs: "Topografía o terreno"
+     when:
+       a: { elementClass: site }
+     then: { validity: false_positive, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, severity: none, confidence: 0.85, suggestedAction: close_not_issue,
+@@ -344,6 +379,7 @@ rules:
+ # ---------------------------------------------------------------------------
+   - id: SEI-001
+     name: MEP crossing a seismic joint
++    nameEs: "Instalación cruza junta sísmica"
+     when:
+       a: { elementClass: { inSet: MEP_DIST } }
+       b: { isSeismicJoint: true }
+@@ -355,6 +391,7 @@ rules:
+ # ---------------------------------------------------------------------------
+   - id: TOL-001
+     name: touching without penetration and no clearance requirement violated
++    nameEs: "Contacto sin penetración"
+     when:
+       clash: { distanceMm: { gte: 0 }, clearanceViolation: false }
+     then: { validity: tolerated, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, severity: none, confidence: 0.9, suggestedAction: mark_reviewed,
+@@ -362,6 +399,7 @@ rules:
+ 
+   - id: TOL-002
+     name: clearance violation
++    nameEs: "Holgura insuficiente"
+     when:
+       clash: { clearanceViolation: true }
+     then: { validity: real, nature: clearance, rootCause: design_coordination, responsibleDiscipline: "@mover", severity: low, confidence: 0.7, suggestedAction: create_issue,
+@@ -369,6 +407,7 @@ rules:
+ 
+   - id: TOL-003
+     name: penetration within pair tolerance
++    nameEs: "Penetración dentro de tolerancia"
+     when:
+       clash: { withinTolerance: true }
+     then: { validity: tolerated, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, severity: none, confidence: 0.85, suggestedAction: mark_reviewed,
+@@ -376,6 +415,7 @@ rules:
+ 
+   - id: TOL-004
+     name: flexible duct/pipe vs non-structure
++    nameEs: "Flexible contra elemento no estructural"
+     when:
+       clash: { penetrationMm: { lte: 100 } }
+       a: { elementClass: flexible }
+@@ -385,6 +425,7 @@ rules:
+ 
+   - id: TOL-005
+     name: conduit embedded in structural slab/wall within 1/3 thickness
++    nameEs: "Conduit embutido bajo 1/3 del espesor"
+     when:
+       a: { elementClass: conduit, sizeMm: { lte: { ref: 'b.sizeMm', factor: 0.333 } } }
+       b: { elementClass: [structure_floor, structure_wall] }
+@@ -393,6 +434,7 @@ rules:
+ 
+   - id: TOL-006
+     name: conduit embedded in structure above 1/3 thickness (or thickness unknown)
++    nameEs: "Conduit embutido sobre 1/3 del espesor"
+     when:
+       a: { elementClass: conduit }
+       b: { elementClass: [structure_floor, structure_wall] }
+@@ -401,6 +443,7 @@ rules:
+ 
+   - id: TOL-007
+     name: small conduit vs non-structure
++    nameEs: "Conduit menor contra elemento no estructural"
+     when:
+       clash: { penetrationMm: { lte: 25 } }
+       a: { elementClass: conduit, sizeMm: { lte: 25 } }
+@@ -410,6 +453,7 @@ rules:
+ 
+   - id: TOL-008
+     name: small MEP through non-rated partition
++    nameEs: "Instalación menor por tabique no RF"
+     when:
+       a: { elementClass: { inSet: MEP_DIST }, sizeMm: { lte: 150 } }
+       b: { elementClass: arch_wall, isFireRated: false, fireRating: { exists: true } }
+@@ -418,6 +462,7 @@ rules:
+ 
+   - id: TOL-009
+     name: small water/heating pipe in non-structural floor build-up
++    nameEs: "Tubería menor en sobrelosa"
+     when:
+       a: { elementClass: [pipe, fire_branch], discipline: [CAL, AP], sizeMm: { lte: 32 } }
+       b: { elementClass: arch_floor }
+@@ -429,6 +474,7 @@ rules:
+ # ---------------------------------------------------------------------------
+   - id: CLR-001
+     name: clearance zone vs structure
++    nameEs: "Zona de mantención invadida por estructura"
+     when:
+       a: { elementClass: clearance_zone }
+       b: { elementClass: { inSet: STRUCTURE } }
+@@ -437,6 +483,7 @@ rules:
+ 
+   - id: CLR-002
+     name: clearance zone vs anything else
++    nameEs: "Zona de mantención invadida"
+     when:
+       a: { elementClass: clearance_zone }
+     then: { validity: real, nature: clearance, rootCause: design_coordination, responsibleDiscipline: "$b", secondaryDiscipline: "$a", severity: medium, confidence: 0.75, suggestedAction: create_issue,
+@@ -447,6 +494,7 @@ rules:
+ # ---------------------------------------------------------------------------
+   - id: NI-001
+     name: generic model
++    nameEs: "Modelo genérico sin función declarada"
+     when:
+       a: { elementClass: generic }
+     then: { validity: needs_info, nature: hard, rootCause: lod_mismatch, responsibleDiscipline: "$a", severity: low, confidence: 0.7, suggestedAction: request_info,
+@@ -454,6 +502,7 @@ rules:
+ 
+   - id: NI-002
+     name: placeholder element
++    nameEs: "Elemento referencial o de reserva"
+     when:
+       a: { isPlaceholder: true }
+     then: { validity: needs_info, nature: hard, rootCause: lod_mismatch, responsibleDiscipline: "$a", severity: low, confidence: 0.7, suggestedAction: request_info,
+@@ -464,6 +513,7 @@ rules:
+ # ---------------------------------------------------------------------------
+   - id: INC-001
+     name: sprinkler head obstructed
++    nameEs: "Rociador obstruido"
+     when:
+       a: { elementClass: sprinkler }
+       b: { anyOf: [ { elementClass: { inSet: MEP_DIST } }, { elementClass: { inSet: STRUCTURE } }, { elementClass: [mep_terminal, mep_equipment] } ] }
+@@ -472,6 +522,7 @@ rules:
+ 
+   - id: ELV-001
+     name: anything in elevator shaft
++    nameEs: "Elemento en shaft de ascensor"
+     when:
+       a: { not: { isElevator: true } }
+       b: { elementClass: elevator }
+@@ -483,6 +534,7 @@ rules:
+ # ---------------------------------------------------------------------------
+   - id: EST-001
+     name: MEP through structural column
++    nameEs: "Instalación atraviesa pilar"
+     when:
+       a: { elementClass: { inSet: MEP_ANY } }
+       b: { elementClass: structure_column }
+@@ -491,6 +543,7 @@ rules:
+ 
+   - id: EST-002
+     name: gravity drainage vs structure (not vertical stacks)
++    nameEs: "Red gravitacional contra estructura"
+     when:
+       a: { elementClass: gravity_pipe, not: { orientation: vertical } }
+       b: { elementClass: { inSet: STRUCTURE } }
+@@ -499,6 +552,7 @@ rules:
+ 
+   - id: EST-003
+     name: MEP vs post-tensioned slab
++    nameEs: "Instalación por losa postensada"
+     when:
+       a: { elementClass: { inSet: MEP_ANY } }
+       b: { isPostTensioned: true }
+@@ -507,6 +561,7 @@ rules:
+ 
+   - id: EST-004
+     name: large duct vs beam
++    nameEs: "Ducto grande contra viga"
+     when:
+       a: { elementClass: duct_large }
+       b: { elementClass: structure_framing }
+@@ -515,6 +570,7 @@ rules:
+ 
+   - id: EST-005
+     name: MEP >= 100 mm vs beam
++    nameEs: "Instalación ≥ 100 mm contra viga"
+     when:
+       a: { elementClass: { inSet: MEP_DIST }, sizeMm: { gte: 100 } }
+       b: { elementClass: structure_framing }
+@@ -523,6 +579,7 @@ rules:
+ 
+   - id: EST-006
+     name: other MEP vs beam
++    nameEs: "Instalación menor contra viga"
+     when:
+       a: { elementClass: { inSet: MEP_ANY } }
+       b: { elementClass: structure_framing }
+@@ -531,6 +588,7 @@ rules:
+ 
+   - id: EST-007
+     name: MEP through structural (RC) wall
++    nameEs: "Instalación por muro estructural"
+     when:
+       a: { elementClass: { inSet: MEP_ANY } }
+       b: { elementClass: structure_wall }
+@@ -539,6 +597,7 @@ rules:
+ 
+   - id: EST-008
+     name: MEP vs foundation
++    nameEs: "Instalación contra fundación"
+     when:
+       a: { elementClass: { inSet: MEP_ANY } }
+       b: { elementClass: structure_foundation }
+@@ -547,6 +606,7 @@ rules:
+ 
+   - id: EST-009
+     name: vertical MEP through structural slab (missing opening)
++    nameEs: "Montante sin pasada en losa"
+     when:
+       a: { elementClass: { inSet: MEP_DIST }, orientation: vertical }
+       b: { elementClass: structure_floor }
+@@ -555,6 +615,7 @@ rules:
+ 
+   - id: EST-010
+     name: horizontal MEP embedded in structural slab
++    nameEs: "Tramo horizontal embebido en losa"
+     when:
+       a: { elementClass: { inSet: MEP_DIST }, orientation: [horizontal, sloped] }
+       b: { elementClass: structure_floor }
+@@ -563,6 +624,7 @@ rules:
+ 
+   - id: EST-011
+     name: MEP vs structural slab, orientation unknown
++    nameEs: "Instalación contra losa (orientación desconocida)"
+     when:
+       a: { elementClass: { inSet: MEP_ANY } }
+       b: { elementClass: structure_floor }
+@@ -574,6 +636,7 @@ rules:
+ # ---------------------------------------------------------------------------
+   - id: AE-001
+     name: door/window vs structure
++    nameEs: "Puerta/ventana contra estructura"
+     when:
+       a: { elementClass: door_window }
+       b: { elementClass: { inSet: STRUCTURE } }
+@@ -582,6 +645,7 @@ rules:
+ 
+   - id: AE-002
+     name: beam below ceiling
++    nameEs: "Viga bajo cielo"
+     when:
+       a: { elementClass: ceiling }
+       b: { elementClass: structure_framing }
+@@ -590,6 +654,7 @@ rules:
+ 
+   - id: AE-003
+     name: partition/floor modeled into structure (modeling noise)
++    nameEs: "Tabique/piso modelado dentro de estructura"
+     when:
+       clash: { penetrationMm: { lte: 100 } }
+       a: { elementClass: [arch_wall, arch_floor] }
+@@ -599,6 +664,7 @@ rules:
+ 
+   - id: AE-004
+     name: partition significantly overlapping structure
++    nameEs: "Tabique superpuesto con estructura"
+     when:
+       a: { elementClass: [arch_wall, arch_floor] }
+       b: { elementClass: { inSet: STRUCTURE } }
+@@ -607,6 +673,7 @@ rules:
+ 
+   - id: AE-005
+     name: curtain wall vs structure
++    nameEs: "Muro cortina contra estructura"
+     when:
+       a: { elementClass: curtain_wall }
+       b: { elementClass: { inSet: STRUCTURE } }
+@@ -615,6 +682,7 @@ rules:
+ 
+   - id: AE-006
+     name: architectural stair vs structure
++    nameEs: "Escalera de ARQ contra estructura"
+     when:
+       a: { elementClass: stairs, disciplineGroup: ARQ }
+       b: { elementClass: { inSet: STRUCTURE } }
+@@ -626,6 +694,7 @@ rules:
+ # ---------------------------------------------------------------------------
+   - id: MA-001
+     name: MEP vs stairs (headroom / egress)
++    nameEs: "Instalación en escalera"
+     when:
+       a: { elementClass: { inSet: MEP_ANY } }
+       b: { elementClass: stairs }
+@@ -634,6 +703,7 @@ rules:
+ 
+   - id: MA-002
+     name: MEP vs door/window opening
++    nameEs: "Instalación en vano de puerta/ventana"
+     when:
+       a: { elementClass: { inSet: MEP_ANY } }
+       b: { elementClass: door_window }
+@@ -642,6 +712,7 @@ rules:
+ 
+   - id: MA-003
+     name: MEP vs curtain wall / facade
++    nameEs: "Instalación contra fachada"
+     when:
+       a: { elementClass: { inSet: MEP_ANY } }
+       b: { elementClass: curtain_wall }
+@@ -650,6 +721,7 @@ rules:
+ 
+   - id: MA-004
+     name: vertical MEP drop through ceiling
++    nameEs: "Bajada vertical por cielo"
+     when:
+       a: { elementClass: { inSet: MEP_DIST }, orientation: vertical }
+       b: { elementClass: ceiling }
+@@ -658,6 +730,7 @@ rules:
+ 
+   - id: MA-005
+     name: MEP below ceiling level
++    nameEs: "Instalación bajo cota de cielo"
+     when:
+       a: { elementClass: { inSet: MEP_ANY } }
+       b: { elementClass: ceiling }
+@@ -666,6 +739,7 @@ rules:
+ 
+   - id: MA-006
+     name: MEP through fire-rated wall
++    nameEs: "Instalación por muro resistente al fuego"
+     when:
+       a: { elementClass: { inSet: MEP_ANY } }
+       b: { elementClass: arch_wall, isFireRated: true }
+@@ -674,14 +748,16 @@ rules:
+ 
+   - id: MA-007
+     name: large MEP through partition
++    nameEs: "Instalación grande por tabique"
+     when:
+       a: { elementClass: { inSet: MEP_DIST }, sizeMm: { gt: 150 } }
+       b: { elementClass: arch_wall }
+-    then: { validity: real, nature: hard, rootCause: missing_opening, responsibleDiscipline: "$a", secondaryDiscipline: ARQ, severity: low, confidence: 0.7, suggestedAction: create_issue,
+-            rationale: "{a.category} de {a.sizeMm} mm atraviesa tabique '{b.type}': requiere vano con refuerzo de perfilería. ARQ debe incorporarlo." }
++    then: { validity: real, nature: hard, rootCause: missing_opening, responsibleDiscipline: "$b", secondaryDiscipline: "$a", severity: low, confidence: 0.7, suggestedAction: create_issue,
++            rationale: "{a.category} de {a.sizeMm} mm atraviesa tabique '{b.type}': requiere vano con refuerzo de perfilería. {b.discipline} debe incorporarlo; {a.discipline} confirma medida y ubicación." }
+ 
+   - id: MA-013
+     name: small MEP through wall with unknown fire rating
++    nameEs: "Pasada por muro sin resistencia al fuego informada"
+     when:
+       a: { elementClass: { inSet: MEP_DIST }, sizeMm: { lte: 150 } }
+       b: { elementClass: arch_wall, isFireRated: false, fireRating: { exists: false } }
+@@ -690,6 +766,7 @@ rules:
+ 
+   - id: MA-008
+     name: MEP equipment/terminal vs wall
++    nameEs: "Equipo o terminal contra muro"
+     when:
+       a: { elementClass: { inSet: MEP_ANY } }
+       b: { elementClass: arch_wall }
+@@ -698,6 +775,7 @@ rules:
+ 
+   - id: MA-009
+     name: MEP vs roof
++    nameEs: "Instalación por cubierta"
+     when:
+       a: { elementClass: { inSet: MEP_ANY } }
+       b: { elementClass: roof }
+@@ -706,6 +784,7 @@ rules:
+ 
+   - id: MA-010
+     name: MEP vs non-structural floor
++    nameEs: "Instalación contra piso no estructural"
+     when:
+       a: { elementClass: { inSet: MEP_ANY } }
+       b: { elementClass: arch_floor }
+@@ -714,6 +793,7 @@ rules:
+ 
+   - id: MA-011
+     name: MEP vs furniture/casework
++    nameEs: "Instalación contra mobiliario"
+     when:
+       a: { elementClass: { inSet: MEP_ANY } }
+       b: { elementClass: furniture }
+@@ -722,6 +802,7 @@ rules:
+ 
+   - id: MA-012
+     name: MEP vs railing
++    nameEs: "Instalación contra baranda"
+     when:
+       a: { elementClass: { inSet: MEP_ANY } }
+       b: { elementClass: railing }
+@@ -733,6 +814,7 @@ rules:
+ # ---------------------------------------------------------------------------
+   - id: MM-001
+     name: gravity vs gravity
++    nameEs: "Red gravitacional contra red gravitacional"
+     when:
+       both: { elementClass: gravity_pipe }
+     then: { validity: real, nature: hard, rootCause: design_coordination, responsibleDiscipline: COORD, severity: high, confidence: 0.7, suggestedAction: escalate,
+@@ -740,6 +822,7 @@ rules:
+ 
+   - id: MM-002
+     name: gravity vs other MEP
++    nameEs: "Red gravitacional contra otra instalación"
+     when:
+       a: { elementClass: gravity_pipe }
+       b: { elementClass: { inSet: MEP_ANY } }
+@@ -748,6 +831,7 @@ rules:
+ 
+   - id: MM-003
+     name: gas vs electrical / low voltage
++    nameEs: "Gas contra electricidad"
+     when:
+       a: { discipline: GAS }
+       b: { discipline: [ELE, CORR] }
+@@ -756,6 +840,7 @@ rules:
+ 
+   - id: MM-004
+     name: fire main vs MEP
++    nameEs: "Red troncal de incendio contra instalación"
+     when:
+       a: { elementClass: fire_main }
+       b: { elementClass: { inSet: MEP_ANY } }
+@@ -764,6 +849,7 @@ rules:
+ 
+   - id: MM-005
+     name: MEP equipment vs distribution
++    nameEs: "Equipo contra red"
+     when:
+       a: { elementClass: mep_equipment }
+       b: { elementClass: { inSet: MEP_DIST } }
+@@ -772,6 +858,7 @@ rules:
+ 
+   - id: MM-006
+     name: equipment vs equipment
++    nameEs: "Equipo contra equipo"
+     when:
+       both: { elementClass: mep_equipment }
+     then: { validity: real, nature: hard, rootCause: design_coordination, responsibleDiscipline: COORD, severity: medium, confidence: 0.7, suggestedAction: escalate,
+@@ -779,6 +866,7 @@ rules:
+ 
+   - id: MM-007
+     name: insulation vs other system
++    nameEs: "Aislación contra otro sistema"
+     when:
+       a: { elementClass: insulation }
+       b: { elementClass: { inSet: MEP_ANY } }
+@@ -787,6 +875,7 @@ rules:
+ 
+   - id: MM-008
+     name: conduit vs MEP beyond tolerance
++    nameEs: "Conduit contra instalación"
+     when:
+       a: { elementClass: conduit }
+       b: { elementClass: { inSet: MEP_ANY } }
+@@ -795,6 +884,7 @@ rules:
+ 
+   - id: MM-009
+     name: terminal vs distribution
++    nameEs: "Terminal contra red"
+     when:
+       a: { elementClass: mep_terminal }
+       b: { elementClass: { inSet: MEP_DIST } }
+@@ -803,6 +893,7 @@ rules:
+ 
+   - id: MM-010
+     name: distribution vs distribution (different systems)
++    nameEs: "Cruce entre redes"
+     when:
+       both: { elementClass: { inSet: MEP_DIST } }
+     then: { validity: real, nature: hard, rootCause: routing_conflict, responsibleDiscipline: "@mover", secondaryDiscipline: "@other", severity: medium, confidence: 0.75, suggestedAction: create_issue,
+@@ -813,6 +904,7 @@ rules:
+ # ---------------------------------------------------------------------------
+   - id: DEF-999
+     name: unclassified
++    nameEs: "Sin regla específica"
+     when: {}
+     then: { validity: real, nature: hard, rootCause: design_coordination, responsibleDiscipline: "@mover", severity: medium, confidence: 0.4, suggestedAction: create_issue, humanReview: true,
+             rationale: "Interferencia entre {a.category} ({a.discipline}) y {b.category} ({b.discipline}) sin regla específica. Requiere revisión del coordinador." }
+@@ -840,3 +932,6 @@ annotations:
+   - id: ANN-006
+     when: { a: { elementClass: { inSet: STRUCTURE } }, b: { elementClass: { inSet: MEP_ANY } } }
+     then: { tags: [requiere_calculista], note: "Toda pasada en estructura requiere aprobación del ingeniero calculista." }
++  - id: ANN-007
++    when: { clash: { penetrationMm: { gt: 0 }, withinTolerance: false }, a: { elementClass: { inSet: STRUCTURE } }, b: { anyOf: [ { elementClass: { inSet: MEP_ANY } }, { isSleeveOrOpening: true } ] } }
++    then: { tags: [pasada_estructural], note: "Pasada o embebido en estructura: cerrarla o aceptarla equivale a aprobar una pasada, lo que solo puede hacer el calculista." }
+--- a/discipline-matrix.yaml
++++ b/discipline-matrix.yaml
+@@ -16,11 +16,11 @@
+ # 3. Ordered lists are FIRST-MATCH-WINS unless stated otherwise.
+ # 4. Engine computation order per element:
+ #      normalize category (categoryAliases) -> modelDiscipline (fileName)
+-#      -> discipline (systemRefinement / category fallback) -> derivedFlags
+-#      (in listed order; later flags may reference earlier ones) ->
+-#      sizeMm -> elementClass (+ moveRank).
++#      -> discipline (systemRefinement / category fallback) -> sizeMm ->
++#      derivedFlags (in listed order; later flags may reference earlier ones
++#      and sizeMm) -> elementClass (+ moveRank).
+ # =============================================================================
+-version: 1
++version: 2
+ 
+ # -----------------------------------------------------------------------------
+ # Disciplines. `code` is canonical (Chilean practice). `group` drives pair
+@@ -352,8 +352,8 @@ derivedFlags:
+     # Chilean resistance classes F-15..F-180 (NCh 935 / OGUC), EI, RF.
+     when:
+       anyOf:
+-        - { fireRating: { exists: true, notMatches: '^(none|ninguno|ninguna|0|-|n/?a)$' } }
+-        - { type: { matches: '\bf-? ?(15|30|60|90|120|150|180)\b|\bei ?(30|60|90|120|180)\b|\brf\b|cortafuego|resistente al fuego|fire ?rated' } }
++        - { fireRating: { exists: true, notMatches: '^(none|no|ninguno|ninguna|sin|sin rf|s/ ?rf|no rf|f-?0|0|-|n/?a)$' } }
++        - { type: { matches: '\bf-? ?(15|30|60|90|120|150|180)\b|\bei ?(30|60|90|120|180)\b|(?<!sin |no |s/)\brf\b|cortafuego|resistente al fuego|fire ?rated' } }
+         - { family: { matches: 'cortafuego|fire ?rated' } }
+   - flag: isPlaceholder
+     when:

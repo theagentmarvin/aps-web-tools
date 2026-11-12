@@ -1,0 +1,131 @@
+# =============================================================================
+# priority-scoring.yaml — Clash / group priority model (v1)
+# Turns a classified clash (or a group) into a 0-100 score and a P1..P4 band.
+# Spec: docs/domain/clash-taxonomy.md (section "Severidad y prioridad").
+#
+# score = round( 100 * SUM_i( weight_i * factor_i ) )   factor_i in [0, 1]
+# then apply `overrides` in order, then clamp to [0, 100], then band.
+#
+# Piecewise-linear curves: `points: [[x0, y0], [x1, y1], ...]` sorted by x.
+#   x <= x0 -> y0; x >= xn -> yn; otherwise linear interpolation.
+# Missing input -> the factor's `missing` value.
+#
+# GROUP SCORING: a group is scored with its WORST member for severity,
+# disciplineCriticality, penetration and elementSize (max of member
+# factors), its zone of the worst member, and groupCount = number of member
+# clashes. Members keep their own scores for sorting inside the group.
+# =============================================================================
+version: 1
+
+weights:               # must sum to 1.00 (loader validates, tolerance 0.001)
+  severity:              0.35
+  disciplineCriticality: 0.15
+  penetration:           0.15
+  elementSize:           0.10
+  zoneCriticality:       0.10
+  groupCount:            0.10
+  scheduleProximity:     0.05
+
+factors:
+
+  severity:
+    # From classification output `severity`.
+    map: { critical: 1.00, high: 0.75, medium: 0.45, low: 0.20, none: 0.00 }
+    missing: 0.45
+
+  disciplineCriticality:
+    # Uses disciplines[].criticality from discipline-matrix.yaml.
+    # factor = 0.7 * max(critA, critB) + 0.3 * min(critA, critB)
+    # (A pipe through a beam is a structural problem even if the pipe is minor.)
+    combine: { maxWeight: 0.7, minWeight: 0.3 }
+    missing: 0.5
+
+  penetration:
+    # Input: clash.penetrationMm (hard clashes). For clearance clashes
+    # (distanceMm >= 0 OR classification nature == clearance) use the fixed
+    # `clearanceValue`: depth into a soft zone says nothing about severity.
+    points: [[0, 0.0], [10, 0.15], [50, 0.45], [150, 0.75], [300, 1.0]]
+    clearanceValue: 0.15
+    missing: 0.3
+
+  elementSize:
+    # Input: sizeMm of the MOVING element (the one that must be rerouted);
+    # if no mover, max(sizeMm) of the MEP side; else max of both.
+    # Big things are expensive to reroute.
+    points: [[0, 0.0], [25, 0.1], [100, 0.4], [300, 0.7], [600, 1.0]]
+    missing: 0.3
+
+  zoneCriticality:
+    # Input: element `level` (and optional project zone tags). First matching
+    # pattern on the normalized level name of either side wins (take max of
+    # both sides). Project overrides go in `.coordinator/project.yaml` under
+    # the same key and are evaluated BEFORE these defaults.
+    patterns:
+      - { match: 'sala de (maquinas|bombas|calderas)|sala tecnica|subestacion|grupo electrogeno|shaft', value: 1.0 }
+      - { match: 'subterraneo|sotano|basement|^s-?\d|^-\d|nivel -\d|piso -\d|estacionamiento', value: 0.8 }
+      - { match: 'cubierta|techumbre|azotea|roof|sala de equipos', value: 0.7 }
+      - { match: 'zocalo|lobby|acceso|hall|primer piso|piso 1$|nivel 1$|^n\+?0?1$|planta baja', value: 0.6 }
+      - { match: '.*', value: 0.4 }        # typical floor
+    missing: 0.4
+
+  groupCount:
+    # Input: number of clashes represented (1 for a single clash).
+    # factor = min(1, log10(count) / log10(saturation))
+    saturation: 50
+    missing: 0.0
+
+  scheduleProximity:
+    # PLACEHOLDER until a schedule source exists (Primavera/MS Project/ACC
+    # Schedule). Input: days until installation start of the affected
+    # level/zone for the moving discipline. Negative = already late.
+    points: [[-30, 1.0], [0, 1.0], [30, 0.8], [90, 0.4], [180, 0.1]]
+    missing: 0.5          # neutral when no schedule
+
+overrides:
+  # Applied in order after the weighted sum. `when` keys: classification
+  # output fields (scalar = equals, list = in) and `tags` (tag present).
+  # Ops: set {score, band} | add <n> | floor <n> | cap <n>. Clamp 0..100 at the end.
+  # Band is derived from the final score unless an override `set` it.
+  - id: OVR-001
+    when: { validity: [false_positive, tolerated] }
+    set: { score: 0, band: NONE }
+    note: No priority for non-issues.
+  - id: OVR-002
+    when: { severity: critical }
+    floor: 75
+    note: Critical always lands in P1.
+  - id: OVR-003
+    when: { tags: seguridad_personas, severity: [high, critical] }
+    floor: 70
+    note: Life-safety high severity never below upper P2.
+  - id: OVR-004
+    when: { validity: needs_info }
+    cap: 60
+    note: Needs-info cannot outrank confirmed real problems at P1.
+  - id: OVR-005
+    when: { suggestedAction: hygiene_issue }
+    cap: 45
+    note: Model hygiene is batched, not urgent per clash (the group may still be P3).
+  - id: OVR-006
+    when: { tags: regresion }
+    add: 15
+    note: A clash that was resolved and came back (set by the re-test diff, see methodology step 8).
+
+bands:              # evaluated top-down on the final score
+  - { band: P1, minScore: 75, es: "Crítica - resolver antes de la próxima reunión de coordinación", targetBusinessDays: 3 }
+  - { band: P2, minScore: 50, es: "Alta - resolver en el ciclo semanal",                            targetBusinessDays: 7 }
+  - { band: P3, minScore: 25, es: "Media - resolver antes del hito de entrega",                      targetBusinessDays: 14 }
+  - { band: P4, minScore: 0,  es: "Baja - backlog / siguiente revisión de modelo",                   targetBusinessDays: 30 }
+
+# -----------------------------------------------------------------------------
+# Worked example (for unit tests): ALC pipe Ø110 through EST beam, -60 mm,
+# level "Piso 3", single clash, no schedule.
+#   severity critical            1.00 * 0.35 = 0.3500
+#   discipline 0.7*1.0+0.3*0.85  0.955 * 0.15 = 0.14325
+#   penetration 60mm -> 0.45+(10/100)*0.30 = 0.48 * 0.15 = 0.0720
+#   elementSize 110 -> 0.4+(10/200)*0.3 = 0.415 * 0.10 = 0.0415
+#   zone 'piso 3' -> 0.4         * 0.10 = 0.0400
+#   groupCount 1 -> 0            * 0.10 = 0.0000
+#   schedule missing 0.5         * 0.05 = 0.0250
+#   sum = 0.67175 -> 67 ; OVR-002 floor 75 -> 75 -> P1
+# -----------------------------------------------------------------------------

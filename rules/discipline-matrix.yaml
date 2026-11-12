@@ -1,0 +1,531 @@
+# =============================================================================
+# discipline-matrix.yaml — Disciplines, detection, element classes, who-moves,
+# tolerances. Coordinator-editable. Consumed by core/rules (loader) and
+# core/classify (engine). Spec: docs/domain/clash-taxonomy.md.
+#
+# CONVENTIONS (binding for the loader/engine)
+# -----------------------------------------------------------------------------
+# 1. Text normalization: every string value (property values, file names,
+#    category names) is normalized BEFORE matching:
+#      lowercase -> Unicode NFD -> strip combining marks (accents) -> trim ->
+#      collapse internal whitespace to one space.
+#    Therefore every regex and literal in this file is written in lowercase
+#    without accents. Regex flavour = ECMAScript, applied with flag "i" anyway.
+# 2. Element matchers use the SAME matcher DSL documented at the top of
+#    rules/classification-rules.yaml (section "ELEMENT MATCHER").
+# 3. Ordered lists are FIRST-MATCH-WINS unless stated otherwise.
+# 4. Engine computation order per element:
+#      normalize category (categoryAliases) -> modelDiscipline (fileName)
+#      -> discipline (systemRefinement / category fallback) -> derivedFlags
+#      (in listed order; later flags may reference earlier ones) ->
+#      sizeMm -> elementClass (+ moveRank).
+# =============================================================================
+version: 1
+
+# -----------------------------------------------------------------------------
+# Disciplines. `code` is canonical (Chilean practice). `group` drives pair
+# patterns ("@MEP", "@ARQ", ...). `criticality` (0..1) feeds priority scoring.
+# -----------------------------------------------------------------------------
+disciplines:
+  - { code: ARQ,   group: ARQ,  criticality: 0.50, es: Arquitectura,                          en: Architecture,            aliases: [arq, arc, arch, ar, arquitectura, architecture] }
+  - { code: INT,   group: ARQ,  criticality: 0.30, es: Interiorismo / Arquitectura interior,   en: Interiors,               aliases: [int, inter, interiorismo, interiors, id] }
+  - { code: FAC,   group: ARQ,  criticality: 0.60, es: Fachada / Muro cortina,                en: Facade,                  aliases: [fac, fach, fachada, facade, mc, muro cortina, curtain wall] }
+  - { code: MOB,   group: ARQ,  criticality: 0.20, es: Mobiliario / Equipamiento,             en: Furniture & equipment,   aliases: [mob, mobiliario, eq, equip, ffe, ff&e] }
+  - { code: PAI,   group: ARQ,  criticality: 0.20, es: Paisajismo,                            en: Landscape,               aliases: [pai, pais, paisajismo, landscape, land] }
+  - { code: EST,   group: EST,  criticality: 1.00, es: Estructura (calculo),                  en: Structure,               aliases: [est, estr, estructura, calculo, str, struct, structural, ing] }
+  - { code: CLI,   group: MEP,  criticality: 0.70, es: Climatizacion (HVAC) y ventilacion,    en: HVAC,                    aliases: [cli, clima, climatizacion, hvac, mec, mech, mecanica, ven, vent, ventilacion, ext, extraccion, presurizacion] }
+  - { code: CAL,   group: MEP,  criticality: 0.60, es: Calefaccion (hidronica / radiante),     en: Heating (hydronic),      aliases: [cal, calef, calefaccion, heating, hyd] }
+  - { code: SAN,   group: MEP,  criticality: 0.75, es: Instalaciones sanitarias (combinado),  en: Plumbing (combined),     aliases: [san, sanit, sanitaria, sanitarias, ins, plumbing, plb, ph] }
+  - { code: AP,    group: MEP,  criticality: 0.60, es: Agua potable (fria / caliente),        en: Domestic water,          aliases: [ap, apf, apc, agua potable, dw, dcw, dhw] }
+  - { code: ALC,   group: MEP,  criticality: 0.85, es: Alcantarillado / aguas servidas,       en: Sanitary drainage,       aliases: [alc, alcantarillado, as, aguas servidas, sw, dr, drainage] }
+  - { code: ALL,   group: MEP,  criticality: 0.85, es: Aguas lluvias,                         en: Storm drainage,          aliases: [all, aall, aguas lluvias, ll, storm, pluvial] }
+  - { code: ELE,   group: MEP,  criticality: 0.60, es: Electricidad (fuerza y alumbrado),     en: Electrical,              aliases: [ele, elec, electricidad, electrical, el, ilu, iluminacion, fuerza] }
+  - { code: CORR,  group: MEP,  criticality: 0.40, es: Corrientes debiles,                    en: Low voltage / ICT,       aliases: [corr, cd, cdeb, corrientes debiles, com, tel, ict, dat, datos, lv, cctv, seg] }
+  - { code: INC,   group: MEP,  criticality: 0.90, es: "Proteccion contra incendio (red humeda, red seca, rociadores)", en: Fire protection, aliases: [inc, pci, incendio, fp, fire, rh, rs, red humeda, red seca, spk, rociadores, sprinkler] }
+  - { code: GAS,   group: MEP,  criticality: 0.85, es: Gas,                                   en: Gas,                     aliases: [gas, gn, glp] }
+  - { code: ASC,   group: ASC,  criticality: 0.85, es: Ascensores y montacargas,              en: Elevators,               aliases: [asc, ascensor, ascensores, elev, elevator, lift] }
+  - { code: CIV,   group: CIV,  criticality: 0.50, es: Urbanizacion / obras civiles / pavimentacion, en: Civil / site,      aliases: [civ, urb, urbanizacion, pav, pavimentacion, civil, site, top, topografia] }
+  - { code: COORD, group: COORD, criticality: 0.00, es: Coordinacion BIM (federado),         en: BIM coordination,        aliases: [coord, coordinacion, fed, federado, nwd, nwc] }
+  - { code: UNK,   group: UNK,  criticality: 0.50, es: Desconocida,                           en: Unknown,                 aliases: [] }
+
+# Group tokens usable in pair patterns. "@MEP" = any discipline whose group is MEP.
+# "*" = any discipline. Pair patterns are UNORDERED.
+groups: [ARQ, EST, MEP, ASC, CIV, COORD, UNK]
+
+# -----------------------------------------------------------------------------
+# Category normalization. Model Properties / viewer often returns "Revit Pipes"
+# or localized "Revit Tuberias". Strip prefixes, then map aliases -> canonical
+# English Revit category name. Unknown categories are kept as-is (normalized).
+# Spanish names follow Revit es-ES localization (VERIFY against the project's
+# Revit language; add aliases here, not in code).
+# NOTE: in Revit es-ES "Techos" = Ceilings and "Cubiertas" = Roofs. In Chile
+# people say "cielo" (ceiling) and "techumbre/cubierta" (roof). Do not confuse.
+# -----------------------------------------------------------------------------
+categoryPrefixStrip: ['revit ', 'ost_']
+categoryAliases:
+  Walls:                        [walls, muros, muro]
+  Floors:                       [floors, suelos, pisos, losas, losa]
+  Ceilings:                     [ceilings, techos, cielos, cielo falso, cielos falsos]
+  Roofs:                        [roofs, cubiertas, techumbre]
+  Doors:                        [doors, puertas]
+  Windows:                      [windows, ventanas]
+  Stairs:                       [stairs, escaleras]
+  Railings:                     [railings, barandillas, barandas, top rails, pasamanos]
+  Ramps:                        [ramps, rampas]
+  Curtain Panels:               [curtain panels, paneles de muro cortina]
+  Curtain Wall Mullions:        [curtain wall mullions, montantes de muro cortina]
+  Columns:                      [columns, pilares]
+  Structural Columns:           [structural columns, pilares estructurales]
+  Structural Framing:           [structural framing, armazon estructural]
+  Structural Foundations:       [structural foundations, cimentacion estructural]
+  Structural Connections:       [structural connections, conexiones estructurales]
+  Structural Rebar:             [structural rebar, armadura estructural]
+  Structural Area Reinforcement: [structural area reinforcement, armadura de area estructural]
+  Structural Path Reinforcement: [structural path reinforcement, armadura de camino estructural]
+  Structural Fabric Reinforcement: [structural fabric reinforcement, armadura de malla estructural, structural fabric areas]
+  Pipes:                        [pipes, tuberias]
+  Pipe Fittings:                [pipe fittings, uniones de tuberia]
+  Pipe Accessories:             [pipe accessories, accesorios de tuberias, accesorios de tuberia]
+  Flex Pipes:                   [flex pipes, tuberias flexibles]
+  Pipe Insulation:              [pipe insulations, pipe insulation, aislamientos de tuberias, aislamiento de tuberia]
+  Ducts:                        [ducts, conductos]
+  Duct Fittings:                [duct fittings, uniones de conducto, uniones de conductos]
+  Duct Accessories:             [duct accessories, accesorios de conductos, accesorios de conducto]
+  Flex Ducts:                   [flex ducts, conductos flexibles]
+  Duct Insulation:              [duct insulations, duct insulation, aislamientos de conductos]
+  Duct Linings:                 [duct linings, revestimientos de conductos, forros de conductos]
+  Air Terminals:                [air terminals, terminales de aire]
+  Mechanical Equipment:         [mechanical equipment, equipos mecanicos]
+  Plumbing Fixtures:            [plumbing fixtures, aparatos sanitarios]
+  Sprinklers:                   [sprinklers, rociadores]
+  Cable Tray:                   [cable trays, cable tray, bandejas de cables]
+  Cable Tray Fittings:          [cable tray fittings, uniones de bandeja de cables]
+  Conduits:                     [conduits, tubos]
+  Conduit Fittings:             [conduit fittings, uniones de tubo]
+  Electrical Equipment:         [electrical equipment, equipos electricos]
+  Electrical Fixtures:          [electrical fixtures, aparatos electricos]
+  Lighting Fixtures:            [lighting fixtures, luminarias]
+  Lighting Devices:             [lighting devices, dispositivos de iluminacion]
+  Fire Alarm Devices:           [fire alarm devices, dispositivos de alarma de incendios]
+  Communication Devices:        [communication devices, dispositivos de comunicacion]
+  Data Devices:                 [data devices, dispositivos de datos]
+  Security Devices:             [security devices, dispositivos de seguridad]
+  Telephone Devices:            [telephone devices, dispositivos telefonicos]
+  Nurse Call Devices:           [nurse call devices, dispositivos de llamada a enfermera]
+  Generic Models:               [generic models, modelos genericos]
+  Specialty Equipment:          [specialty equipment, equipos especializados]
+  Furniture:                    [furniture, mobiliario]
+  Furniture Systems:            [furniture systems, sistemas de mobiliario]
+  Casework:                     [casework, mobiliario de cocina, mobiliario empotrado]
+  Mass:                         [mass, masa]
+  Rooms:                        [rooms, habitaciones]
+  Spaces:                       [spaces, espacios]
+  Areas:                        [areas]
+  HVAC Zones:                   [hvac zones, zonas de climatizacion]
+  Shaft Openings:               [shaft openings, huecos de patinillo, aberturas de hueco]
+  Topography:                   [topography, topografia]
+  Toposolid:                    [toposolid, solido topografico]
+  Site:                         [site, emplazamiento]
+  Parking:                      [parking, aparcamiento, estacionamiento]
+  Planting:                     [planting, vegetacion, plantas]
+
+# Spanish display labels (Chilean usage) used when rendering {x.category} in
+# rationales and issue text. Missing -> canonical English name.
+categoryLabelsEs:
+  Walls: muro
+  Floors: losa
+  Ceilings: cielo
+  Roofs: cubierta
+  Doors: puerta
+  Windows: ventana
+  Stairs: escalera
+  Railings: baranda
+  Curtain Panels: panel de muro cortina
+  Curtain Wall Mullions: montante de muro cortina
+  Structural Columns: pilar
+  Structural Framing: viga
+  Structural Foundations: fundación
+  Structural Rebar: armadura
+  Pipes: tubería
+  Pipe Fittings: fitting de tubería
+  Pipe Accessories: accesorio de tubería
+  Flex Pipes: tubería flexible
+  Pipe Insulation: aislación de tubería
+  Ducts: ducto
+  Duct Fittings: fitting de ducto
+  Duct Accessories: accesorio de ducto
+  Flex Ducts: ducto flexible
+  Duct Insulation: aislación de ducto
+  Air Terminals: rejilla/difusor
+  Mechanical Equipment: equipo mecánico
+  Plumbing Fixtures: artefacto sanitario
+  Sprinklers: rociador
+  Cable Tray: escalerilla portaconductores
+  Cable Tray Fittings: accesorio de escalerilla
+  Conduits: tubo conduit
+  Conduit Fittings: accesorio de conduit
+  Electrical Equipment: tablero/equipo eléctrico
+  Electrical Fixtures: artefacto eléctrico
+  Lighting Fixtures: luminaria
+  Lighting Devices: interruptor/dispositivo de iluminación
+  Generic Models: modelo genérico
+  Specialty Equipment: equipo especial
+  Furniture: mobiliario
+  Casework: mueble fijo
+
+# Category sets referenced by name in matchers as { inSet: <setName> }.
+categorySets:
+  STRUCT_CATS:   [Structural Columns, Structural Framing, Structural Foundations, Structural Connections]
+  REBAR_CATS:    [Structural Rebar, Structural Area Reinforcement, Structural Path Reinforcement, Structural Fabric Reinforcement]
+  PIPE_CATS:     [Pipes, Pipe Fittings, Pipe Accessories, Flex Pipes]
+  DUCT_CATS:     [Ducts, Duct Fittings, Duct Accessories, Flex Ducts]
+  TRAY_CATS:     [Cable Tray, Cable Tray Fittings]
+  CONDUIT_CATS:  [Conduits, Conduit Fittings]
+  INSUL_CATS:    [Pipe Insulation, Duct Insulation, Duct Linings]
+  MEP_RUN_CATS:  [Pipes, Pipe Fittings, Pipe Accessories, Flex Pipes, Ducts, Duct Fittings, Duct Accessories, Flex Ducts, Cable Tray, Cable Tray Fittings, Conduits, Conduit Fittings]
+  MEP_CONNECTED_CATS: [Pipes, Pipe Fittings, Pipe Accessories, Flex Pipes, Ducts, Duct Fittings, Duct Accessories, Flex Ducts, Cable Tray, Cable Tray Fittings, Conduits, Conduit Fittings, Sprinklers, Air Terminals, Plumbing Fixtures, Mechanical Equipment, Electrical Equipment, Pipe Insulation, Duct Insulation, Duct Linings]
+  MEP_EQUIP_CATS: [Mechanical Equipment, Electrical Equipment, Plumbing Fixtures]
+  CEILING_HOSTED_CATS: [Lighting Fixtures, Air Terminals, Sprinklers, Fire Alarm Devices, Security Devices, Communication Devices, Data Devices, Lighting Devices, Electrical Fixtures, Telephone Devices, Nurse Call Devices]
+  WALL_HOSTED_CATS: [Electrical Fixtures, Lighting Devices, Lighting Fixtures, Plumbing Fixtures, Communication Devices, Data Devices, Fire Alarm Devices, Security Devices, Telephone Devices, Nurse Call Devices, Air Terminals]
+  ARQ_SELF_CATS: [Walls, Floors, Ceilings, Roofs, Doors, Windows, Stairs, Railings, Ramps, Curtain Panels, Curtain Wall Mullions, Columns, Casework, Furniture, Generic Models, Specialty Equipment]
+  NON_PHYSICAL_CATS: [Rooms, Spaces, Areas, HVAC Zones, Mass, Lines, Grids, Levels, Reference Planes, Scope Boxes, Cameras, Views, Detail Items]
+  FURNITURE_CATS: [Furniture, Furniture Systems, Casework, Planting, Parking, Entourage]
+  CURTAIN_CATS:  [Curtain Panels, Curtain Wall Mullions, Curtain Systems]
+  SITE_CATS:     [Topography, Toposolid, Site]
+
+# -----------------------------------------------------------------------------
+# Discipline detection.
+# discipline (element owner) = who must fix that element = the model it lives in.
+#   step 1  modelDiscipline from documentName (iso19650 -> fileNamePatterns).
+#   step 2  systemRefinement: refines an MEP element's discipline from its
+#           system (e.g. a SAN model contains AP, ALC, ALL and often INC "red
+#           humeda"). Applies only if modelDiscipline is in `refinableFrom`.
+#   step 3  if still unknown: categoryDefaults; else UNK.
+# categoryDiscipline = categoryDefaults[category] (what the element IS), used
+# to detect foreign copies (isForeign flag), e.g. structural columns modeled
+# inside the ARQ file.
+# -----------------------------------------------------------------------------
+detection:
+  iso19650:
+    # Project-Originator-Volume-Level-Type-Role-Number[-...].ext
+    # Split the file name (without extension) on "-". If >= 7 fields and
+    # field[4] is a model type, map field[5] (role) through roleCodes; if not
+    # found, try the role against discipline aliases (Chilean ISO variants put
+    # "ARQ", "EST" there).
+    modelTypes: [m3, m2, mod, mo, md, dm]
+    roleCodes:   # UK NA / ISO 19650-2 annex roles -> discipline
+      a: ARQ
+      s: EST
+      m: CLI
+      h: CLI
+      p: SAN
+      d: ALC
+      e: ELE
+      f: INC
+      i: INT
+      l: PAI
+      c: CIV
+      g: CIV
+      k: COORD
+      w: COORD
+      z: COORD
+  fileNamePatterns:
+    # Token match: file name (normalized, extension removed) is split on any
+    # non-alphanumeric char; a pattern matches if ANY token equals ANY listed
+    # token. First matching entry wins, so specific sub-disciplines go first.
+    # Use `regex` for anything a token list cannot express.
+    - { discipline: COORD, tokens: [fed, federado, coord, coordinacion, nwd] }
+    - { discipline: INC,   tokens: [inc, pci, incendio, rh, rs, spk, rociadores, sprinkler, sprinklers, fp] }
+    - { discipline: GAS,   tokens: [gas, gn, glp] }
+    - { discipline: ALL,   tokens: [all, aall, ll, pluvial, storm] }
+    - { discipline: ALC,   tokens: [alc, alcantarillado, servidas] }
+    - { discipline: AP,    tokens: [ap, apf, apc] }
+    - { discipline: SAN,   tokens: [san, sanit, sanitaria, sanitarias, sanitario, plumbing, plb] }
+    - { discipline: CAL,   tokens: [cal, calef, calefaccion] }
+    - { discipline: CLI,   tokens: [cli, clima, climatizacion, hvac, mec, mech, ven, ventilacion, extraccion] }
+    - { discipline: CORR,  tokens: [corr, cd, cdeb, debiles, ict, tel, datos, cctv] }
+    - { discipline: ELE,   tokens: [ele, elec, electricidad, electrico, electrical, ilu, iluminacion] }
+    - { discipline: ASC,   tokens: [asc, ascensor, ascensores, elev, elevator] }
+    - { discipline: EST,   tokens: [est, estr, estructura, estructural, calculo, str, struct] }
+    - { discipline: FAC,   tokens: [fac, fachada, facade] }
+    - { discipline: INT,   tokens: [int, interiorismo, interiors] }
+    - { discipline: PAI,   tokens: [pai, paisajismo, landscape] }
+    - { discipline: CIV,   tokens: [urb, urbanizacion, pav, pavimentacion, civil, top, topografia] }
+    - { discipline: MOB,   tokens: [mob, mobiliario, ffe] }
+    - { discipline: ARQ,   tokens: [arq, arc, arch, arquitectura, architecture] }
+    # Fallback: "MEP"/"MEPF"/"INST" combined models -> UNK owner, refined by system.
+    - { discipline: UNK,   tokens: [mep, mepf, inst, instalaciones, especialidades] }
+
+  refinableFrom: [SAN, CLI, INC, ELE, CORR, UNK, AP, ALC, ALL, CAL, GAS]
+
+  systemRefinement:
+    # First match wins. Matchers see the element's normalized properties.
+    # systemClassification is normalized via systemClassificationAliases below.
+    - discipline: INC
+      when: { anyOf: [ { systemClassification: { matches: '^fireprotection' } }, { systemType: { matches: 'incendio|red humeda|red seca|rociador|sprinkler|\bspk\b|\bpci\b|\brh\b|\brs\b|fire' } }, { category: Sprinklers } ] }
+    - discipline: GAS
+      when: { anyOf: [ { systemType: { matches: '\bgas\b|\bgn\b|\bglp\b|natural gas|gas licuado' } }, { systemName: { matches: '\bgas\b' } } ] }
+    - discipline: ALL
+      when: { anyOf: [ { systemClassification: Storm }, { systemType: { matches: 'aguas? lluvias?|\baall\b|\ball\b|pluvial|storm|bajada de agua' } } ] }
+    - discipline: ALC
+      when: { anyOf: [ { systemClassification: [Sanitary, Vent] }, { systemType: { matches: 'alcantarillado|aguas? servidas|\balc\b|desag|grises|negras|sanitari|sewer|waste|ventilacion sanitaria' } } ] }
+    - discipline: CAL
+      when: { anyOf: [ { systemClassification: [HydronicSupply, HydronicReturn] }, { systemType: { matches: 'calefaccion|radiante|hidronic|losa radiante|caldera' } } ] }
+    - discipline: AP
+      when: { anyOf: [ { systemClassification: [DomesticColdWater, DomesticHotWater] }, { systemType: { matches: 'agua potable|\bap\b|\bapf\b|\bapc\b|agua fria|agua caliente|retorno ac' } } ] }
+    - discipline: CLI
+      when: { anyOf: [ { systemClassification: [SupplyAir, ReturnAir, ExhaustAir, OtherAir] }, { category: { inSet: DUCT_CATS } }, { category: [Air Terminals, Duct Insulation, Duct Linings] }, { systemType: { matches: 'condensado|refrigerante|vrf|vrv|\bchw\b|agua helada' } } ] }
+    - discipline: CORR
+      when: { anyOf: [ { category: [Communication Devices, Data Devices, Security Devices, Telephone Devices, Nurse Call Devices, Fire Alarm Devices] }, { systemType: { matches: 'corrientes debiles|datos|cctv|telefon|alarma|deteccion|control de acceso|\bcd\b' } }, { type: { matches: 'corrientes debiles|\bcd\b|datos|cctv' } } ] }
+    - discipline: ELE
+      when: { anyOf: [ { category: { inSet: TRAY_CATS } }, { category: { inSet: CONDUIT_CATS } }, { category: [Electrical Equipment, Electrical Fixtures, Lighting Fixtures, Lighting Devices] } ] }
+
+  categoryDefaults:
+    ARQ:  [Walls, Floors, Ceilings, Roofs, Doors, Windows, Stairs, Railings, Ramps, Columns, Casework, Furniture, Furniture Systems, Specialty Equipment, Planting, Parking]
+    FAC:  [Curtain Panels, Curtain Wall Mullions, Curtain Systems]
+    EST:  [Structural Columns, Structural Framing, Structural Foundations, Structural Connections, Structural Rebar, Structural Area Reinforcement, Structural Path Reinforcement, Structural Fabric Reinforcement]
+    CLI:  [Ducts, Duct Fittings, Duct Accessories, Flex Ducts, Duct Insulation, Duct Linings, Air Terminals, Mechanical Equipment]
+    SAN:  [Pipes, Pipe Fittings, Pipe Accessories, Flex Pipes, Pipe Insulation, Plumbing Fixtures]
+    INC:  [Sprinklers]
+    ELE:  [Cable Tray, Cable Tray Fittings, Conduits, Conduit Fittings, Electrical Equipment, Electrical Fixtures, Lighting Fixtures, Lighting Devices]
+    CORR: [Communication Devices, Data Devices, Security Devices, Telephone Devices, Nurse Call Devices, Fire Alarm Devices]
+    CIV:  [Topography, Toposolid, Site]
+
+# Revit "System Classification" normalization (English + es-ES). Regexes on the
+# normalized value. VERIFY Spanish strings on the first real project.
+systemClassificationAliases:
+  DomesticColdWater:  ['^domestic cold water$', 'agua fria (domestica|sanitaria)']
+  DomesticHotWater:   ['^domestic hot water$', 'agua caliente (domestica|sanitaria)']
+  Sanitary:           ['^sanitary$', '^sanitario$', '^saneamiento$']
+  Vent:               ['^vent$', '^ventilacion$']
+  Storm:              ['^storm$', 'pluvial']
+  HydronicSupply:     ['^hydronic supply$', 'suministro hidronico', 'impulsion hidronica']
+  HydronicReturn:     ['^hydronic return$', 'retorno hidronico']
+  FireProtectionWet:  ['^fire protection wet$', 'proteccion contra incendios humed']
+  FireProtectionDry:  ['^fire protection dry$', 'proteccion contra incendios sec']
+  FireProtectionPreAction: ['pre-?action', 'accion previa']
+  FireProtectionOther: ['^fire protection other$', 'otra proteccion contra incendios']
+  SupplyAir:          ['^supply air$', 'aire de (impulsion|suministro)']
+  ReturnAir:          ['^return air$', 'aire de retorno']
+  ExhaustAir:         ['^exhaust air$', 'aire de (escape|extraccion|salida)']
+  OtherAir:           ['^other air$', 'otro aire']
+  OtherPipe:          ['^other$', '^otros?$']
+
+# -----------------------------------------------------------------------------
+# Element size (sizeMm) resolution, first non-null wins. Values in mm.
+#   MEP round: outsideDiameterMm, diameterMm
+#   MEP rect / trays: max(widthMm, heightMm)
+#   Walls: widthMm (wall thickness, Revit "Width"/"Ancho")
+#   Floors / Ceilings / Roofs: thicknessMm
+#   Structural Framing: heightMm (beam depth h); fallback max(widthMm, heightMm)
+#   Structural Columns: max(widthMm, heightMm) or diameterMm
+#   Insulation: hostSizeMm + 2*insulationThicknessMm if available, else insulationThicknessMm
+# If unresolvable -> sizeMm missing (rules using sizeMm then do not match).
+# -----------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------
+# Derived boolean flags. Evaluated in order; always defined (default false).
+# -----------------------------------------------------------------------------
+derivedFlags:
+  - flag: isDemolished
+    when: { phaseDemolished: { exists: true, notMatches: '^(none|ninguno|ninguna)$' } }
+  - flag: isAnalytical
+    when: { anyOf: [ { category: { matches: 'analytical|analitic' } }, { family: { matches: 'analytical|analitic' } } ] }
+  - flag: isInsulation
+    when: { category: { inSet: INSUL_CATS } }
+  - flag: isSleeveOrOpening
+    when:
+      anyOf:
+        - { category: [Shaft Openings, Openings] }
+        - { category: [Generic Models, Pipe Accessories, Duct Accessories, Specialty Equipment, Structural Connections], family: { matches: 'pasada|camisa|manga|sleeve|vaina|opening|hueco|perforacion|void|vacio|shaft' } }
+        - { category: [Generic Models, Pipe Accessories, Duct Accessories, Specialty Equipment, Structural Connections], type: { matches: 'pasada|camisa|manga|sleeve|vaina|opening|hueco|perforacion|void|vacio' } }
+  - flag: isFirestop
+    when:
+      anyOf:
+        - { category: [Generic Models, Pipe Accessories, Duct Accessories, Specialty Equipment], family: { matches: 'sello|sellado|firestop|fire ?stop|collar|intumescente' } }
+        - { category: [Generic Models, Pipe Accessories, Duct Accessories, Specialty Equipment], type: { matches: 'sello|sellado|firestop|fire ?stop|collar|intumescente' } }
+  - flag: isFireDamper
+    when:
+      category: Duct Accessories
+      anyOf: [ { family: { matches: 'damper|compuerta' } }, { type: { matches: 'cortafuego|corta ?fuego|fire|humo|smoke' } } ]
+  - flag: isFireRated
+    # Chilean resistance classes F-15..F-180 (NCh 935 / OGUC), EI, RF.
+    when:
+      anyOf:
+        - { fireRating: { exists: true, notMatches: '^(none|ninguno|ninguna|0|-|n/?a)$' } }
+        - { type: { matches: '\bf-? ?(15|30|60|90|120|150|180)\b|\bei ?(30|60|90|120|180)\b|\brf\b|cortafuego|resistente al fuego|fire ?rated' } }
+        - { family: { matches: 'cortafuego|fire ?rated' } }
+  - flag: isPlaceholder
+    when:
+      anyOf:
+        - { family: { matches: 'placeholder|dummy|referencial|\bref\b|temporal|\btmp\b|provisorio|envolvente|bounding|bbox|generico de espacio' } }
+        - { type: { matches: 'placeholder|dummy|referencial|\bref\b|provisorio|envolvente|reserva de espacio' } }
+  - flag: isClearanceZone
+    when:
+      category: [Generic Models, Specialty Equipment, Mechanical Equipment, Electrical Equipment]
+      anyOf:
+        - { family: { matches: 'zona de mantencion|espacio libre|clearance|zona libre|zona de servicio|acceso de mantencion|service ?zone|zona de operacion|volumen de mantencion' } }
+        - { type: { matches: 'zona de mantencion|espacio libre|clearance|zona libre|zona de servicio|service ?zone' } }
+  - flag: isTemporaryWorks
+    when:
+      anyOf:
+        - { family: { matches: 'grua|andamio|moldaje|alzaprima|faena|shoring|crane|scaffold|puntal|cierre provisorio|plataforma de trabajo' } }
+        - { type: { matches: 'grua|andamio|moldaje|alzaprima|faena|shoring|crane|scaffold' } }
+  - flag: isFinishLayer
+    when:
+      category: [Floors, Walls]   # not Ceilings: a ceiling is never a finish layer over structure
+      anyOf:
+        - { type: { matches: 'piso|pavimento|sobrelosa|revestimiento|terminacion|ceramic|porcelanato|alfombra|vinilic|enchape|estuco|finish|flooring|tile|afinado|mortero|palmeta|madera flotante|guardapolvo' } }
+      not: { type: { matches: '\bha\b|h\.a\.|hormigon armado|estructural|structural' } }
+  - flag: isStructural
+    when:
+      anyOf:
+        - { category: { inSet: STRUCT_CATS } }
+        - { category: [Walls, Floors], structural: true }
+        - { category: [Walls, Floors], modelDiscipline: EST, isFinishLayer: false }
+        - { category: [Walls, Floors], type: { matches: '\bha\b|h\.a\.|hormigon armado|muro estructural|losa estructural|structural|postensad' } }
+  - flag: isPostTensioned
+    when: { category: Floors, anyOf: [ { type: { matches: 'postensad|post-?tensad|post-?tension|\bpt\b' } }, { family: { matches: 'postensad|post-?tension' } } ] }
+  - flag: isGravity
+    when:
+      category: { inSet: PIPE_CATS }
+      anyOf:
+        - { systemClassification: [Sanitary, Storm] }
+        - { systemType: { matches: 'alcantarillado|aguas? servidas|\balc\b|aguas? lluvias?|\baall\b|pluvial|desag|drenaje|grises|negras|sanitari|condensado|drain|sewer|storm|waste' } }
+        - { discipline: [ALC, ALL] }
+      not: { systemClassification: Vent }
+  - flag: isFlexible
+    when:
+      anyOf:
+        - { category: [Flex Ducts, Flex Pipes] }
+        - { category: { inSet: CONDUIT_CATS }, anyOf: [ { family: { matches: 'flex' } }, { type: { matches: 'flex|corrugad' } } ] }
+  - flag: isElevator
+    when:
+      anyOf:
+        - { discipline: ASC }
+        - { family: { matches: 'ascensor|elevator|montacarga|lift' } }
+        - { type: { matches: 'ascensor|elevator|montacarga|caja de ascensor|shaft ascensor' } }
+  - flag: isSeismicJoint
+    when:
+      anyOf:
+        - { family: { matches: 'junta (sismica|de dilatacion)|seismic joint|expansion joint' } }
+        - { type: { matches: 'junta (sismica|de dilatacion)|seismic joint|expansion joint' } }
+  - flag: isForeign
+    # Element lives in a model of another discipline group than what it is.
+    # E.g. structural column inside the ARQ file -> copy/duplicate risk.
+    # Engine-native: true iff category NOT in foreignExemptCategories AND
+    # categoryDiscipline.group != modelDiscipline.group, both known, neither COORD/UNK.
+    when: { foreignCheck: true }
+
+# Categories legitimately modeled by more than one discipline (walls and slabs
+# exist in both ARQ and EST files, generics everywhere). Never "foreign".
+foreignExemptCategories: [Walls, Floors, Stairs, Ramps, Railings, Roofs, Columns, Generic Models, Specialty Equipment, Mechanical Equipment, Furniture, Casework]
+
+# -----------------------------------------------------------------------------
+# Element classes. First match wins. moveRank: higher = harder to move.
+# null = not a "routing" object (who-moves does not apply).
+# -----------------------------------------------------------------------------
+elementClasses:
+  - { class: non_physical,       moveRank: null, when: { category: { inSet: NON_PHYSICAL_CATS } } }
+  - { class: analytical,         moveRank: null, when: { isAnalytical: true } }
+  - { class: rebar,              moveRank: null, when: { category: { inSet: REBAR_CATS } } }
+  - { class: sleeve_opening,     moveRank: null, when: { isSleeveOrOpening: true } }
+  - { class: firestop,           moveRank: null, when: { isFirestop: true } }
+  - { class: insulation,         moveRank: inherit, when: { isInsulation: true } }   # inherit: use the rank of the class its host would get (same category family); unknown -> 40
+  - { class: temporary_works,    moveRank: null, when: { isTemporaryWorks: true } }
+  - { class: clearance_zone,     moveRank: null, when: { isClearanceZone: true } }
+  - { class: site,               moveRank: 100,  when: { category: { inSet: SITE_CATS } } }
+  - { class: elevator,           moveRank: 100,  when: { isElevator: true } }
+  - { class: structure_column,   moveRank: 100,  when: { category: [Structural Columns] } }
+  - { class: structure_framing,  moveRank: 100,  when: { category: [Structural Framing] } }
+  - { class: structure_foundation, moveRank: 100, when: { category: [Structural Foundations] } }
+  - { class: structure_wall,     moveRank: 100,  when: { category: Walls, isStructural: true } }
+  - { class: structure_floor,    moveRank: 100,  when: { category: Floors, isStructural: true } }
+  - { class: structure_other,    moveRank: 95,   when: { category: [Structural Connections] } }
+  - { class: stairs,             moveRank: 95,   when: { category: [Stairs, Ramps] } }
+  - { class: roof,               moveRank: 95,   when: { category: Roofs } }
+  - { class: curtain_wall,       moveRank: 90,   when: { category: { inSet: CURTAIN_CATS } } }
+  - { class: door_window,        moveRank: 90,   when: { category: [Doors, Windows] } }
+  - { class: arch_wall,          moveRank: 85,   when: { category: Walls } }
+  - { class: arch_floor,         moveRank: 85,   when: { category: Floors } }
+  - { class: railing,            moveRank: 80,   when: { category: Railings } }
+  - { class: ceiling,            moveRank: 45,   when: { category: Ceilings } }
+  - { class: furniture,          moveRank: 50,   when: { category: { inSet: FURNITURE_CATS } } }
+  - { class: gravity_pipe,       moveRank: 90,   when: { isGravity: true } }
+  - { class: fire_main,          moveRank: 58,   when: { category: [Pipes, Pipe Fittings, Pipe Accessories], discipline: INC, sizeMm: { gte: 65 } } }
+  - { class: fire_branch,        moveRank: 35,   when: { category: [Pipes, Pipe Fittings, Pipe Accessories], discipline: INC } }
+  - { class: sprinkler,          moveRank: 30,   when: { category: Sprinklers } }
+  - { class: flexible,           moveRank: 10,   when: { isFlexible: true } }
+  - { class: duct_large,         moveRank: 80,   when: { category: [Ducts, Duct Fittings, Duct Accessories], anyOf: [ { sizeMm: { gte: 400 } }, { systemType: { matches: 'humo|presuriz|smoke|pressuriz|extraccion de incendio' } } ] } }
+  - { class: duct,               moveRank: 60,   when: { category: [Ducts, Duct Fittings, Duct Accessories] } }
+  - { class: cable_tray,         moveRank: 65,   when: { category: { inSet: TRAY_CATS } } }
+  - { class: pipe_large,         moveRank: 55,   when: { category: [Pipes, Pipe Fittings, Pipe Accessories], sizeMm: { gte: 100 } } }
+  - { class: pipe,               moveRank: 40,   when: { category: [Pipes, Pipe Fittings, Pipe Accessories] } }
+  - { class: conduit,            moveRank: 20,   when: { category: { inSet: CONDUIT_CATS } } }
+  - { class: mep_equipment,      moveRank: 70,   when: { category: { inSet: MEP_EQUIP_CATS } } }
+  - { class: mep_terminal,       moveRank: 25,   when: { category: [Air Terminals, Lighting Fixtures, Lighting Devices, Electrical Fixtures, Fire Alarm Devices, Communication Devices, Data Devices, Security Devices, Telephone Devices, Nurse Call Devices] } }
+  - { class: generic,            moveRank: null, when: { category: Generic Models } }
+  - { class: other,              moveRank: 50,   when: {} }
+
+# Class groupings usable in matchers as { elementClass: { inSet: <name> } }.
+classSets:
+  STRUCTURE:     [structure_column, structure_framing, structure_foundation, structure_wall, structure_floor, structure_other]
+  MEP_DIST:      [gravity_pipe, fire_main, fire_branch, duct_large, duct, cable_tray, pipe_large, pipe, conduit, flexible]
+  MEP_ANY:       [gravity_pipe, fire_main, fire_branch, sprinkler, duct_large, duct, cable_tray, pipe_large, pipe, conduit, flexible, mep_equipment, mep_terminal, insulation]
+  ARCH_FIXED:    [arch_wall, arch_floor, door_window, curtain_wall, stairs, roof, railing]
+
+# -----------------------------------------------------------------------------
+# Who moves. Default: the side with the LOWER moveRank moves (= "mover").
+# Ties (|rankA - rankB| <= tieThreshold): smaller sizeMm moves; if sizes are
+# equal/unknown -> mover = none, responsible = COORD (coordinator decides).
+# Overrides below are checked first, in order (unordered pair on classes).
+# `mover` = class that moves; `approver` = discipline that must approve.
+# -----------------------------------------------------------------------------
+whoMoves:
+  tieThreshold: 5
+  hierarchy_note: >
+    Estructura no se mueve (salvo pasadas aprobadas por el calculista) > elevador
+    y shafts > alcantarillado/aguas lluvias por gravedad > ductos grandes y de
+    presurizacion/extraccion de humo > equipos > bandejas portaconductores >
+    ductos menores > red de incendio troncal > tuberias a presion grandes >
+    cielos (decision de ARQ) > tuberias a presion > ramales de incendio >
+    rociadores > terminales > conduit > flexibles.
+  overrides:
+    - { classes: ['@STRUCTURE', '@MEP_ANY'],   mover: '@MEP_ANY', approver: EST, note: 'Estructura no se mueve; la especialidad desvia o solicita pasada aprobada por calculista.' }
+    - { classes: [gravity_pipe, '*'],          mover: other,      note: 'La gravedad manda: cambiar pendiente es la ultima opcion.' }
+    - { classes: [sprinkler, '@MEP_DIST'],     mover: sprinkler,  approver: INC, note: 'Rociador se reubica o se agrega bajo la obstruccion (criterio NFPA 13).' }
+    - { classes: [ceiling, '@MEP_ANY'],        mover: '@MEP_ANY', approver: ARQ, note: 'Primero se intenta subir la instalacion en el entretecho; bajar cielo lo decide ARQ.' }
+    - { classes: [door_window, '@MEP_ANY'],    mover: '@MEP_ANY', note: 'Los vanos no se mueven por instalaciones.' }
+    - { classes: ['@ARCH_FIXED', '@MEP_ANY'],  mover: '@MEP_ANY', approver: ARQ, note: 'Muros, losas, fachadas y escaleras no se mueven por instalaciones; se coordina el vano o la pasada.' }
+    - { classes: [mep_terminal, '@MEP_DIST'],  mover: '@MEP_DIST', approver: ARQ, note: 'Terminales siguen el plano de cielo aprobado; la red se desvia.' }
+    - { classes: [mep_equipment, '@MEP_DIST'], mover: '@MEP_DIST', note: 'Equipos se ubican por layout de sala tecnica.' }
+
+# -----------------------------------------------------------------------------
+# Tolerances (mm). First matching entry wins: put most specific first.
+#   hardMm: penetration <= hardMm is "within tolerance" (tolerated).
+#   clearanceMm: if the test reports dist >= 0, a gap < clearanceMm is a
+#     clearance violation. ACC Model Coordination runs hard clash only, so in
+#     practice clearance is used only when a clearance-capable source is
+#     ingested; keep the values anyway.
+# Match keys: `classes` (unordered, class or @classSet or '*') and/or
+# `disciplines` (unordered, code, '@GROUP' or '*').
+# -----------------------------------------------------------------------------
+tolerances:
+  default: { hardMm: 10, clearanceMm: 0 }
+  entries:
+    # Gas vs electricity first: never tolerated, overrides the conduit tolerance.
+    - { disciplines: [GAS, ELE],                hardMm: 0,  clearanceMm: 50, note: 'Separacion gas-electricidad: VERIFICAR distancia minima vigente (DS 66 SEC / RIC). 50 mm es valor de partida.' }
+    - { disciplines: [GAS, CORR],               hardMm: 0,  clearanceMm: 50 }
+    - { classes: [gravity_pipe, '@STRUCTURE'],  hardMm: 3,  clearanceMm: 25, note: 'Gravedad vs estructura: sin tolerancia real.' }
+    - { classes: ['@MEP_ANY', structure_column], hardMm: 3, clearanceMm: 25, note: 'Nada atraviesa pilares.' }
+    - { classes: ['@MEP_ANY', '@STRUCTURE'],    hardMm: 5,  clearanceMm: 25, note: 'Estructura: 5 mm absorbe ruido de modelado, no mas.' }
+    - { classes: [sprinkler, '*'],              hardMm: 5,  clearanceMm: 50 }
+    - { classes: [gravity_pipe, '@MEP_ANY'],    hardMm: 5,  clearanceMm: 25 }
+    - { classes: [conduit, '*'],                hardMm: 15, clearanceMm: 0,  note: 'Conduit se ajusta en obra.' }
+    - { classes: [flexible, '*'],               hardMm: 50, clearanceMm: 0,  note: 'Flexibles se acomodan en terreno.' }
+    - { classes: ['@MEP_ANY', ceiling],         hardMm: 20, clearanceMm: 0 }
+    - { classes: ['@ARCH_FIXED', '@STRUCTURE'], hardMm: 20, clearanceMm: 0,  note: 'Tabiques hasta fondo de viga: ruido de modelado.' }
+    - { disciplines: ['@MEP', '@MEP'],          hardMm: 10, clearanceMm: 25, note: 'Holgura para aislacion/soporteria no modelada.' }
+    - { disciplines: ['@ARQ', '@MEP'],          hardMm: 15, clearanceMm: 0 }
+    - { disciplines: [EST, EST],                hardMm: 10, clearanceMm: 0 }
+    - { disciplines: ['@ARQ', '@ARQ'],          hardMm: 10, clearanceMm: 0 }

@@ -1,0 +1,52 @@
+# =============================================================================
+# property-aliases.yaml — Revit parameter names -> canonical ElementProps fields
+# Consumed by server/aps/index-properties.ts (loadPropertyAliases) when mapping
+# Model Properties (Index v2) rows. Spec: docs/research/aps-model-coordination-api.md §4.
+#
+# * Each list is PRECEDENCE-ORDERED: the first parameter with a non-empty value
+#   wins. Matching is case- and accent-insensitive and ignores Index
+#   pseudo-categories (__category__, __name__, ...).
+# * Revit pseudo-fields (category _RC, family _RFN, type _RFT, name) are fixed
+#   by the Index API and are NOT configured here.
+# * Names cover English and Revit es-ES. VERIFY against the project's Revit
+#   language and add names here, never in code.
+# * Length fields (diameter, width, ... insulationThickness) are converted to
+#   millimetres using the field `uom`; `lengthUnitWhenMissing` applies when the
+#   Index gives no uom (UNVERIFIED for real Index data).
+# * `bboxUnit`: unit of Index bboxMin/bboxMax (model units, UNVERIFIED; Revit
+#   internal units are feet). ElementProps.bbox is always in metres.
+# =============================================================================
+version: 1
+lengthUnitWhenMissing: mm
+bboxUnit: ft
+
+aliases:
+  level:
+    - Level
+    - Reference Level
+    - Base Constraint
+    - Schedule Level
+    - Base Level
+    - Nivel
+    - Nivel de referencia
+    - Restricción de base
+    - Nivel de planificación
+    - Nivel base
+  systemClassification: [System Classification, Clasificación de sistema]
+  systemType: [System Type, Tipo de sistema]
+  systemName: [System Name, Nombre de sistema]
+  size: [Size, Tamaño]
+  diameter: [Diameter, Diámetro, Nominal Diameter, Diámetro nominal]
+  outsideDiameter: [Outside Diameter, Diámetro exterior]
+  width: [Width, Anchura, Ancho, b]
+  height: [Height, Altura, h]
+  thickness: [Thickness, Default Thickness, Grosor, Grosor predeterminado, Espesor]
+  insulationThickness: [Insulation Thickness, Grosor de aislamiento, Espesor de aislamiento]
+  material: [Structural Material, Material, Material estructural]
+  workset: [Workset, Subproyecto]
+  phaseCreated: [Phase Created, Fase de creación]
+  phaseDemolished: [Phase Demolished, Fase de derribo]
+  fireRating: [Fire Rating, Resistencia al fuego]
+  structural: [Structural, Estructural]
+  comments: [Comments, Comentarios]
+  mark: [Mark, Marca]

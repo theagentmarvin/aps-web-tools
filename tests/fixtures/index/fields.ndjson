@@ -1,0 +1,39 @@
+{"key":"p4a6d1b48","category":"__name__","type":"String","name":"name","uom":null}
+{"key":"pdf93fe06","category":"__category__","type":"String","name":"Category","uom":null}
+{"key":"p256ca5bc","category":"__categoryId__","type":"Integer","name":"CategoryId","uom":null}
+{"key":"p462855e0","category":"__category__","type":"String","name":"_RC","uom":null}
+{"key":"p418be263","category":"__category__","type":"String","name":"_RFN","uom":null}
+{"key":"p3b8bd8f1","category":"__category__","type":"String","name":"_RFT","uom":null}
+{"key":"p8c1dfb24","category":"Restricciones","type":"String","name":"Restricción de base","uom":null}
+{"key":"p10cee6d0","category":"Cotas","type":"Double","name":"Anchura","uom":"mm"}
+{"key":"p01d068d9","category":"Datos de identidad","type":"String","name":"Resistencia al fuego","uom":null}
+{"key":"p9eb30ecc","category":"Estructural","type":"Boolean","name":"Estructural","uom":null}
+{"key":"p691565bb","category":"Datos de identidad","type":"String","name":"Subproyecto","uom":null}
+{"key":"p87bfb4f0","category":"Fases","type":"String","name":"Fase de creación","uom":null}
+{"key":"p4f9299fd","category":"Restricciones","type":"String","name":"Nivel","uom":null}
+{"key":"pdab40620","category":"Cotas","type":"Double","name":"Grosor","uom":"mm"}
+{"key":"pc15d58ac","category":"Restricciones","type":"String","name":"Nivel de referencia","uom":null}
+{"key":"pb3fcd288","category":"Cotas","type":"Double","name":"b","uom":"mm"}
+{"key":"padfcc916","category":"Cotas","type":"Double","name":"h","uom":"mm"}
+{"key":"p0312701f","category":"Materiales y acabados","type":"String","name":"Material estructural","uom":null}
+{"key":"p43b9e921","category":"Estructural","type":"String","name":"Uso estructural","uom":null}
+{"key":"p93ef7b6c","category":"Mecánico","type":"String","name":"Clasificación de sistema","uom":null}
+{"key":"p2632aa32","category":"Mecánico","type":"String","name":"Tipo de sistema","uom":null}
+{"key":"p3a6bfc6b","category":"Mecánico","type":"String","name":"Nombre de sistema","uom":null}
+{"key":"pe948d7f9","category":"Cotas","type":"Double","name":"Altura","uom":"mm"}
+{"key":"pfb7857af","category":"Cotas","type":"String","name":"Tamaño","uom":null}
+{"key":"pef8cf55f","category":"Cotas","type":"Double","name":"Grosor de aislamiento","uom":"mm"}
+{"key":"pc4fc72f1","category":"Cotas","type":"Double","name":"Diámetro","uom":"mm"}
+{"key":"p6c07ce9d","category":"Cotas","type":"Double","name":"Diámetro exterior","uom":"mm"}
+{"key":"peb76ba60","category":"Datos de identidad","type":"String","name":"Comentarios","uom":null}
+{"key":"pd50ea35e","category":"Datos de identidad","type":"String","name":"Marca","uom":null}
+{"key":"p448466e3","category":"Constraints","type":"String","name":"Reference Level","uom":null}
+{"key":"p75ce8a6d","category":"Electrical","type":"String","name":"Service Type","uom":null}
+{"key":"pbcb4deb7","category":"Dimensions","type":"Double","name":"Width","uom":"ft"}
+{"key":"pe8ca227a","category":"Dimensions","type":"Double","name":"Height","uom":"ft"}
+{"key":"p4038ae84","category":"Dimensions","type":"String","name":"Size","uom":null}
+{"key":"pf17a1ee5","category":"Identity Data","type":"String","name":"Workset","uom":null}
+{"key":"p8f41db1f","category":"Phasing","type":"String","name":"Phase Created","uom":null}
+{"key":"pb76df082","category":"Dimensions","type":"Double","name":"Diameter","uom":"ft"}
+{"key":"p1aec2517","category":"Dimensions","type":"Double","name":"Outside Diameter","uom":"ft"}
+{"key":"p2ec0763c","category":"Identity Data","type":"String","name":"Comments","uom":null}

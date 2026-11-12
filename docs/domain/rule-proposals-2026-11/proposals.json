@@ -1,0 +1,23 @@
+[
+  {
+    "patchFile": "p1.patch",
+    "title": "FP-017/FP-019: red conectada a su propio artefacto o equipo (lavamanos, fan-coil)",
+    "scope": "project",
+    "rationale": "Medido en v11 real (T-3bde5861): 707 conflictos únicos (1.414 MC) pasan a false_positive: 657 tuberías AP/ALC Ø13–41 contra 'Bathroom Sink (Yacht)' (antes 450 tolerated TOL-003 + 207 real MM-005/MM-002) y 50 ductos CLI 356 mm contra 'FANCOIL-4-PIPE-NO RISER' (49 real MM-005 + 1 tolerated). Corrige la inconsistencia del motor: la misma conexión AP→lavamanos salía 432 tolerated / 96 real porque la decide la tolerancia genérica MEP×MEP (10 mm; 5 mm gravitacional) y la profundidad del conector dentro del artefacto (0–40 mm) es geometría de la familia. 256 real→false_positive justificados uno a uno (anexo de docs/domain/rule-proposals-2026-11.md): 239 tramos contenidos en la caja del artefacto/equipo y 17 que terminan dentro; 0 lo atraviesan. Reglas nuevas con confianza 0,65 y humanReview: nada se cierra solo. El ducto troncal de 1270 mm queda real. Escenarios 25/26 igual que hoy (EV-05 pendiente del patch M1), 0 cierres inseguros, rúbrica 97,3 sin cambio. Grupos 245→203; familias con real 26→24. Evidencia de un proyecto: alcance project. FP-016 queda libre para 'Instalación por pasada modelada' (ya reservado en labels.ts y rules-pending-2026-11.patch).",
+    "evaluation": { "baselineRubricScore": 97.3, "candidateRubricScore": 97.3, "unsafeClosureRate": 0, "criticalFalseNegatives": 0 }
+  },
+  {
+    "patchFile": "p2.patch",
+    "title": "FP-018: cubre-tubería (PIPE COVER) contra las tuberías que envuelve",
+    "scope": "project",
+    "rationale": "Medido en v11 real (T-3bde5861): 104 conflictos únicos (208 MC) pasan de real (MM-005) a false_positive: 72 tuberías CAL Ø41–54 y 32 AP contra el equipo mecánico 'PIPE COVER' en 401 ROOF (familias #10 y #12 del documento de familias). El envolvente se modela alrededor de las tuberías por diseño; MM-005 lo trataba como 'la red atraviesa un equipo'. Justificación uno a uno (anexo de docs/domain/rule-proposals-2026-11.md): 94 tramos terminan dentro del envolvente (montantes que entran a la caja) y 10 están contenidos; 0 lo atraviesan. Excluye INC y GAS (seguridad de las personas mantiene su revisión). Regla nueva con confianza 0,65 y humanReview: nada se cierra solo; el coordinador verifica una vez la holgura interior del cubre-tubería. Escenarios 25/26 igual que hoy (EV-05 pendiente del patch M1), 0 cierres inseguros, rúbrica 97,3 sin cambio. Grupos 245→230; familias con real 26→24. Convención de nombres de un proyecto: alcance project.",
+    "evaluation": { "baselineRubricScore": 97.3, "candidateRubricScore": 97.3, "unsafeClosureRate": 0, "criticalFalseNegatives": 0 }
+  },
+  {
+    "patchFile": "p3.patch",
+    "title": "DUP-007: modelos de estructura superpuestos (S3, S4, STRUCTURAL_VDC) como higiene del conjunto",
+    "scope": "project",
+    "rationale": "Medido en v11 real (T-3bde5861): 182 conflictos únicos (312 MC) estructura×estructura entre archivos distintos (MODELING TEST S3, MODELING TEST S4, STRUCTURAL_VDC y la copia vinculada de VDC dentro de MECHANICAL.rvt) caían en DEF-999 como 'real' con responsable @mover y 43 grupos en revisión. DUP-007 los mantiene real (no cierra nada: 0 cambios de validez) pero los reasigna a COORD como hygiene_issue, nature duplicate, severidad low: 43 grupos DEF-999 pasan a 6 grupos de higiene por archivo y las familias quedan PT12 por par de archivos. Grupos 245→208; grupos en revisión 140→103. Incluye los 16 conflictos VDC-copia vs VDC (mismo archivo de origen), que solo se pueden cerrar con FP-006 por archivo de origen, lo que requiere un hecho nuevo en el motor (sameOriginFile; ver documento). Riesgo: en proyectos con estructura repartida legítimamente en varios archivos (hormigón + acero) el coordinador debe reasignar a EST; por eso confianza 0,6 y humanReview. Escenarios 25/26 igual que hoy, 0 cierres inseguros, rúbrica 97,3. Alcance project.",
+    "evaluation": { "baselineRubricScore": 97.3, "candidateRubricScore": 97.3, "unsafeClosureRate": 0, "criticalFalseNegatives": 0 }
+  }
+]

@@ -1,0 +1,64 @@
+{
+  "note": "ACC assigned/closed groups intersected with this clash test (GET tests/{testId}/clashes/assigned|closed joined with modelsets/{m}/clashes/assigned|closed for issueId/reason). Synthetic.",
+  "assigned": [
+    {
+      "id": "7d1f0a3e-0001-4a00-9000-00000000a001",
+      "issueId": "0b6c1f00-0000-4000-8000-00000000i001",
+      "existing": [
+        "41299469584418",
+        "41299469592337",
+        "41299469600256",
+        "41299469608175",
+        "41299469703203"
+      ],
+      "resolved": []
+    },
+    {
+      "id": "7d1f0a3e-0003-4a00-9000-00000000a003",
+      "issueId": "0b6c1f00-0000-4000-8000-00000000i003",
+      "existing": [
+        "41299469774474",
+        "41299469821988"
+      ],
+      "resolved": []
+    },
+    {
+      "id": "7d1f0a3e-0004-4a00-9000-00000000a004",
+      "issueId": "0b6c1f00-0000-4000-8000-00000000i004",
+      "existing": [
+        "41299472126417"
+      ],
+      "resolved": []
+    },
+    {
+      "id": "7d1f0a3e-0005-4a00-9000-00000000a005",
+      "issueId": "0b6c1f00-0000-4000-8000-00000000i005",
+      "existing": [
+        "41299470661402",
+        "41299470677240"
+      ],
+      "resolved": []
+    },
+    {
+      "id": "7d1f0a3e-0006-4a00-9000-00000000a006",
+      "issueId": "0b6c1f00-0000-4000-8000-00000000i006",
+      "existing": [
+        "41299469806150",
+        "41299469798231"
+      ],
+      "resolved": []
+    }
+  ],
+  "closed": [
+    {
+      "id": "7d1f0a3e-0002-4a00-9000-00000000c001",
+      "reason": "MINIMAL_OVERLAP",
+      "existing": [
+        "41299471191975",
+        "41299471199894",
+        "41299471223651"
+      ],
+      "resolved": []
+    }
+  ]
+}

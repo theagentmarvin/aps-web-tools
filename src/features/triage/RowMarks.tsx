@@ -1,0 +1,77 @@
+/**
+ * Row vocabulary (docs/PLAN-core-features-simplified.md §1.4, UX analysis §5.1):
+ * per row at most 3 chips + counts + ONE state icon.
+ *
+ * Chip precedence (status slot, one chip): Reapareció > Cambió > Nuevo >
+ *   (grupo rows only) validez mixta > orientación por confirmar > Típico.
+ * State icon precedence (one icon): your decision in this version (✓ ✎ ✕ ⏸)
+ *   > open agent question ? > ACC (closed ⊘, assigned/mixed 🗎) > exception ⚑
+ *   > inherited needing confirmation ○ (amber, "Confirmar decisión heredada") > inherited ↺
+ *   > meeting note (M4) > pending ○.
+ * Everything else (confidence, spot-check, agent-updated, no-viewer) lives in
+ * the row tooltip or the panel; the spot-check guard still applies.
+ */
+import { useT, type TFunction } from "~/i18n";
+import type { AccState, AgentQuestion, ChangeKind, DecisionState, FamilyGroup, InheritedDecision } from "~/lib/api/types";
+import { inheritedTooltip } from "./questions";
+import { DecisionStateIcon } from "~/lib/components/badges";
+import { IconCircle, IconClosed, IconFlag, IconInherited, IconIssue, IconNote } from "~/lib/components/icons";
+
+const CHANGE_CLS: Record<Exclude<ChangeKind, "unchanged">, string> = {
+  reappeared: "bg-red-50 text-red-800 border-red-200",
+  changed: "bg-amber-50 text-amber-900 border-amber-200",
+  new: "bg-sky-50 text-sky-800 border-sky-200",
+};
+
+/** One change word: Nuevo · Cambió · Reapareció (nothing when unchanged). */
+export function ChangeChip({ change }: { change: ChangeKind | null | undefined }) {
+  const t = useT();
+  if (!change || change === "unchanged") return null;
+  return <span className={`shrink-0 rounded border px-1 text-[10px] font-medium leading-4 ${CHANGE_CLS[change]}`}>{t(`change.${change}`)}</span>;
+}
+
+export function accTooltip(t: TFunction, acc: AccState): string {
+  if (acc.status === "closed") return t("acc.closedTip", { reason: acc.closedReason ?? "—" });
+  return t("acc.assignedTip", { ids: acc.issueIds.join(", ") || "—", existing: acc.existing, resolved: acc.resolved });
+}
+
+/** The single right-side state icon of a row. */
+export function RowStateIcon({
+  state,
+  acc,
+  inheritance,
+  pendingException,
+  question,
+  inherited,
+  note,
+}: {
+  state: DecisionState;
+  acc?: AccState;
+  inheritance?: FamilyGroup["inheritance"];
+  pendingException?: boolean;
+  question?: AgentQuestion;
+  inherited?: InheritedDecision;
+  note?: string;
+}) {
+  const t = useT();
+  const own = state === "accepted" || state === "corrected" || state === "rejected" || state === "postponed";
+  if (own) return <DecisionStateIcon state={state} />;
+  if (question)
+    return (
+      <span role="img" aria-label={t("questions.tooltip", { text: question.question })} title={t("questions.tooltip", { text: question.question })} className="flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-full bg-violet-600 text-[10px] font-bold leading-none text-white">
+        ?
+      </span>
+    );
+  if (acc) {
+    const tip = accTooltip(t, acc);
+    return acc.status === "closed" ? <IconClosed size={13} label={tip} className="shrink-0 text-gray-500" /> : <IconIssue size={13} label={tip} className="shrink-0 text-brand" />;
+  }
+  if (inheritance?.state === "exception" || pendingException) return <IconFlag size={12} label={t("families.exception")} className="shrink-0 text-amber-700" />;
+  // Inherited but changed / reappeared / gated: PENDING (○ "Confirmar decisión heredada"), never shown as decided.
+  if (inherited?.needsConfirmation || inheritance?.state === "inherited_pending")
+    return <IconCircle size={13} label={inherited ? inheritedTooltip(t, inherited) : t("inherited.needsConfirmation")} className="shrink-0 text-amber-600" />;
+  if (inherited) return <IconInherited size={13} label={inheritedTooltip(t, inherited)} className="shrink-0 text-gray-500" />;
+  if (inheritance?.state === "inherited" || state === "inherited") return <IconInherited size={13} label={t("families.inherited")} className="shrink-0 text-gray-500" />;
+  if (note) return <IconNote size={13} label={t("meeting.noteIcon", { note: note.slice(0, 120) })} className="shrink-0 text-violet-700" />;
+  return <IconCircle size={13} label={t("decision.pending")} className="shrink-0 text-gray-400" />;
+}

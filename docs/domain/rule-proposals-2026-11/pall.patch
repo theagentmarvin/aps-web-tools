@@ -1,0 +1,68 @@
+--- a/rules/classification-rules.yaml
++++ b/rules/classification-rules.yaml
+@@ -219,4 +219,19 @@
+             rationale: "La losa de ARQ '{a.type}' duplica la losa estructural '{b.type}'. ARQ debe modelar solo pavimento/sobrelosa sobre la losa de EST vinculada." }
+ 
++  # DUP-007: structure × structure from DIFFERENT model files = two structural models superimposed
++  # (revisions loaded together, a foreign model, or a linked copy). NOT a closure: validity stays
++  # `real` (as DUP-003), but the owner is COORD and the action is hygiene_issue, so G2 batches it per
++  # file pair: one model-set decision instead of N design issues to the "mover".
++  # New rule: confidence < 0.70 + humanReview; in projects with a legitimately split structure
++  # (e.g. concrete + steel files) the coordinator re-routes the group to EST as a design issue.
++  - id: DUP-007
++    name: superimposed structural models (structure vs structure from different files)
++    nameEs: "Modelos de estructura superpuestos"
++    when:
++      clash: { sameModelFile: false, sameExternalId: false }
++      both: { anyOf: [ { elementClass: { inSet: STRUCTURE } }, { category: { matches: '^(slab edges?|bordes? de losa)$' } } ] }
++    then: { validity: real, nature: duplicate, rootCause: duplicate_model, responsibleDiscipline: COORD, secondaryDiscipline: EST, severity: low, confidence: 0.6, suggestedAction: hygiene_issue, humanReview: true,
++            rationale: "{a.category} '{a.type}' de {a.documentName} se superpone con {b.category} '{b.type}' de {b.documentName}: dos modelos de estructura distintos ocupan el mismo lugar (revisiones cargadas juntas, modelo ajeno o copia vinculada). COORD define qué archivo es el vigente y lo deja solo en el conjunto de modelos; si ambos archivos son partes legítimas de la estructura (p. ej. hormigón y acero), tratarlo como incidencia de diseño a EST." }
++
+ # ---------------------------------------------------------------------------
+ # FP — False positives: hosted, connected, nested, accepted-by-design.
+@@ -333,4 +348,16 @@
+             rationale: "Revestimiento/pavimento '{a.type}' sobre {b.category} estructural: superposición de capas por modelado, no interferencia." }
+ 
++  # FP-018: a pipe enclosure (pipe cover / shaft box) is modeled AROUND the pipes; the clash is the
++  # design intent. Fire and gas pipes are left out (life safety keeps its own review).
++  # New rule: confidence < 0.70 + humanReview until proven on a second project.
++  - id: FP-018
++    name: pipe enclosure (pipe cover / shaft box) vs the pipes it encloses
++    nameEs: "Cubre-tubería contra las tuberías que envuelve"
++    when:
++      a: { elementClass: [pipe, gravity_pipe, pipe_large], discipline: { notIn: [INC, GAS] } }
++      b: { category: [Mechanical Equipment, Plumbing Fixtures, Specialty Equipment, Generic Models], anyOf: [ { family: { matches: 'pipe ?(cover|chase|enclosure|box)|cubre ?tuberia|forro de tuberia|shaft ?box|cajon (de )?(tuberias?|shaft)' } }, { type: { matches: 'pipe ?(cover|chase|enclosure|box)|cubre ?tuberia|forro de tuberia|shaft ?box|cajon (de )?(tuberias?|shaft)' } } ] }
++    then: { validity: false_positive, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, secondaryDiscipline: "$a", severity: none, confidence: 0.65, suggestedAction: close_not_issue, humanReview: true,
++            rationale: "{a.category} {a.systemName} Ø{a.sizeMm} mm queda dentro del cubre-tubería '{b.family}' ({clash.penetrationMm} mm): el envolvente se modela alrededor de las tuberías por diseño. Verificar una vez la holgura interior (Ø + aislación + 25 mm) y el registro para mantención." }
++
+   - id: FP-015
+     name: topography or site
+@@ -340,4 +367,28 @@
+             rationale: "Elemento enterrado o apoyado en la topografía ({b.category}). Las excavaciones se coordinan aparte; excluir topografía de las pruebas." }
+ 
++  # FP-017/FP-019: the network's own connection to its fixture/equipment. Placed in FP (before TOL-003)
++  # so the verdict no longer depends on the generic MEP×MEP hard tolerance (10 mm; 5 mm gravity):
++  # the stub's depth inside the fixture body is family geometry, not a design conflict.
++  # New rules: confidence < 0.70 + humanReview until proven on a second project.
++  - id: FP-017
++    name: branch pipe connected to its own plumbing fixture
++    nameEs: "Tubería conectada a su artefacto sanitario"
++    when:
++      clash: { penetrationMm: { lte: 50 } }
++      a: { elementClass: [pipe, gravity_pipe], discipline: [AP, ALC, SAN], sizeMm: { lte: 65 } }
++      b: { category: Plumbing Fixtures }
++    then: { validity: false_positive, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, secondaryDiscipline: "$a", severity: none, confidence: 0.65, suggestedAction: close_not_issue, humanReview: true,
++            rationale: "{a.category} de {a.discipline} Ø{a.sizeMm} mm entra {clash.penetrationMm} mm en el artefacto '{b.family}': es la conexión de la red a su propio artefacto (desagüe o alimentación), no una interferencia. Revisar una instancia en el visor: si un tramo recto atraviesa el mueble en vez de terminar en él, reclasificar como real." }
++
++  - id: FP-019
++    name: duct connected to its own fan-coil / air-handling unit
++    nameEs: "Ducto conectado a su equipo de clima"
++    when:
++      clash: { penetrationMm: { lte: 150 } }
++      a: { elementClass: duct, discipline: CLI }
++      b: { category: Mechanical Equipment, discipline: CLI, family: { matches: 'fan ?coil|ventiloconvector|\bfcu\b|\bahu\b|\buma\b|manejadora|air ?handl|cassette' } }
++    then: { validity: false_positive, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, secondaryDiscipline: CLI, severity: none, confidence: 0.65, suggestedAction: close_not_issue, humanReview: true,
++            rationale: "Ducto de {a.sizeMm} mm entra {clash.penetrationMm} mm en el equipo '{b.family}': es la conexión de impulsión/retorno del propio equipo, no una interferencia. Revisar una instancia: si el ducto atraviesa el gabinete en vez de conectarse, reclasificar como real." }
++
+ # ---------------------------------------------------------------------------
+ # SEI — Seismic joints (always real, even inside tolerance).

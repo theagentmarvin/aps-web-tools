@@ -1,0 +1,22 @@
+--- a/rules/classification-rules.yaml
++++ b/rules/classification-rules.yaml
+@@ -219,4 +219,19 @@
+             rationale: "La losa de ARQ '{a.type}' duplica la losa estructural '{b.type}'. ARQ debe modelar solo pavimento/sobrelosa sobre la losa de EST vinculada." }
+ 
++  # DUP-007: structure × structure from DIFFERENT model files = two structural models superimposed
++  # (revisions loaded together, a foreign model, or a linked copy). NOT a closure: validity stays
++  # `real` (as DUP-003), but the owner is COORD and the action is hygiene_issue, so G2 batches it per
++  # file pair: one model-set decision instead of N design issues to the "mover".
++  # New rule: confidence < 0.70 + humanReview; in projects with a legitimately split structure
++  # (e.g. concrete + steel files) the coordinator re-routes the group to EST as a design issue.
++  - id: DUP-007
++    name: superimposed structural models (structure vs structure from different files)
++    nameEs: "Modelos de estructura superpuestos"
++    when:
++      clash: { sameModelFile: false, sameExternalId: false }
++      both: { anyOf: [ { elementClass: { inSet: STRUCTURE } }, { category: { matches: '^(slab edges?|bordes? de losa)$' } } ] }
++    then: { validity: real, nature: duplicate, rootCause: duplicate_model, responsibleDiscipline: COORD, secondaryDiscipline: EST, severity: low, confidence: 0.6, suggestedAction: hygiene_issue, humanReview: true,
++            rationale: "{a.category} '{a.type}' de {a.documentName} se superpone con {b.category} '{b.type}' de {b.documentName}: dos modelos de estructura distintos ocupan el mismo lugar (revisiones cargadas juntas, modelo ajeno o copia vinculada). COORD define qué archivo es el vigente y lo deja solo en el conjunto de modelos; si ambos archivos son partes legítimas de la estructura (p. ej. hormigón y acero), tratarlo como incidencia de diseño a EST." }
++
+ # ---------------------------------------------------------------------------
+ # FP — False positives: hosted, connected, nested, accepted-by-design.

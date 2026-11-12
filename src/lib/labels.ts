@@ -1,0 +1,90 @@
+/**
+ * Enum → i18n key maps, so components never hardcode user-facing labels.
+ */
+import type { TKey } from "~/i18n";
+import type { AccStatus, BatchOperation, BatchState, DecisionField, DecisionState, Delta, Nature, Priority, Severity, Validity } from "./api/types";
+
+export const VALIDITY_KEY: Record<Validity, TKey> = {
+  real: "validity.valid",
+  false_positive: "validity.falsePositive",
+  tolerated: "validity.tolerable",
+  needs_info: "validity.needsInfo",
+};
+
+/** One-line definition shown as the tooltip of every validity label. */
+export const VALIDITY_TIP: Record<Validity, TKey> = {
+  real: "validity.tip.valid",
+  false_positive: "validity.tip.falsePositive",
+  tolerated: "validity.tip.tolerable",
+  needs_info: "validity.tip.needsInfo",
+};
+
+/** Order of the `v` validity menu (digits 1..4). */
+export const VALIDITY_ORDER: Validity[] = ["real", "false_positive", "tolerated", "needs_info"];
+
+export const NATURE_KEY: Record<Nature, TKey> = {
+  hard: "nature.hard",
+  clearance: "nature.clearance",
+  duplicate: "nature.duplicate",
+  workflow: "nature.workflow",
+};
+
+export const SEVERITY_KEY: Record<Severity, TKey> = {
+  critical: "severity.critical",
+  high: "severity.high",
+  medium: "severity.medium",
+  low: "severity.low",
+  none: "severity.none",
+};
+
+export const STATUS_KEY: Record<AccStatus, TKey> = {
+  active: "accStatus.active",
+  reviewed: "accStatus.reviewed",
+  resolved: "accStatus.resolved",
+  closed: "accStatus.closed",
+};
+
+export const DECISION_KEY: Record<DecisionState, TKey> = {
+  pending: "decision.pending",
+  accepted: "decision.accepted",
+  corrected: "decision.corrected",
+  rejected: "decision.rejected",
+  postponed: "decision.postponed",
+  inherited: "decision.inherited",
+};
+
+export const DELTA_KEY: Record<Delta, TKey> = {
+  new: "delta.new",
+  persisting: "delta.persisting",
+  reappeared: "delta.reappeared",
+  modified: "delta.modified",
+  resolved: "delta.resolved",
+};
+
+export const PRIORITY_KEY: Record<Priority, TKey> = { 1: "priority.p1", 2: "priority.p2", 3: "priority.p3", 4: "priority.p4" };
+export const PRIORITY_SHORT_KEY: Record<Priority, TKey> = { 1: "priority.short1", 2: "priority.short2", 3: "priority.short3", 4: "priority.short4" };
+
+export const FIELD_KEY: Record<DecisionField, TKey> = {
+  validity: "detail.field.validity",
+  priority: "detail.field.priority",
+  owner: "detail.field.owner",
+  action: "detail.field.action",
+  group: "detail.field.group",
+  issueDraft: "detail.issueDraft",
+};
+
+export const BATCH_STATE_KEY: Record<BatchState, TKey> = {
+  draft: "approvals.state.draft",
+  ready: "approvals.state.ready",
+  approved: "approvals.state.approved",
+  applied: "approvals.state.applied",
+  partial: "approvals.state.partial",
+  discarded: "approvals.state.discarded",
+};
+
+export const OPERATION_KEY: Record<BatchOperation, TKey> = {
+  "clash.setStatus": "batch.op.clashSetStatus",
+  "issue.create": "batch.op.issueCreate",
+  "issue.update": "batch.op.issueUpdate",
+  "issue.comment": "batch.op.issueComment",
+};

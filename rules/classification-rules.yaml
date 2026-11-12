@@ -1,0 +1,842 @@
+# =============================================================================
+# classification-rules.yaml — Seed clash classification rules (v1)
+# Owner: BIM coordination. Coordinators may edit; the loader MUST validate
+# against the format below and refuse to load on any error (fail closed).
+# Domain background: docs/domain/clash-taxonomy.md
+# Depends on: rules/discipline-matrix.yaml (fields, flags, classes, sets,
+# tolerances, who-moves).
+# =============================================================================
+#
+# 1. EVALUATION MODEL
+# -----------------------------------------------------------------------------
+# * Input: one normalized clash = { clash: ClashFacts, left: ElementFacts,
+#   right: ElementFacts } (see section 4 for field names).
+# * `rules` are evaluated in FILE ORDER. FIRST MATCH WINS. File order is the
+#   precedence; there is no numeric priority field. Sections are:
+#     HYG (hygiene/exclusion) > DUP (duplicates) > FP (false positives) >
+#     SEI (seismic joints) > TOL (tolerances & accepted practice) >
+#     CLR (clearance zones) > NI (needs info) > real-clash rules
+#     (INC, ELV, EST, AE, MA, MM) > DEF-999 (fallback, always matches).
+# * After the winning rule, ALL `annotations` whose `when` matches are applied
+#   (they only add tags/notes; they never change the classification).
+# * Engine post-processing (not expressible in rules, mandatory):
+#     - humanReview = true if rule says so OR severity == critical OR
+#       confidence < 0.70 OR validity == needs_info.
+#     - severity is forced to `none` when validity in [false_positive, tolerated].
+#     - output includes ruleId, rule version (file `version`), and the a/b
+#       binding (which raw side was `a`), for auditability.
+#
+# 2. RULE SHAPE
+# -----------------------------------------------------------------------------
+#   - id: FP-001                 # unique, stable, [A-Z]{2,4}-\d{3}
+#     name: short English name    # for logs
+#     when:                       # ALL present blocks must match (AND)
+#       clash: <ClashMatcher>     # conditions on clash facts
+#       a:     <ElementMatcher>   # "this side"  (side binding, see 3)
+#       b:     <ElementMatcher>   # "other side"
+#       both:  <ElementMatcher>   # must match left AND right
+#     then:
+#       validity: real | false_positive | tolerated | needs_info
+#       nature: hard | clearance | duplicate | workflow
+#       rootCause: design_coordination | routing_conflict | missing_opening |
+#                  modeling_error | lod_mismatch | outdated_model |
+#                  duplicate_model | model_hygiene | not_applicable
+#       responsibleDiscipline: <DisciplineRef>
+#       secondaryDiscipline:  <DisciplineRef>       # optional (approver/consulted)
+#       severity: critical | high | medium | low | none
+#       confidence: 0.0..1.0
+#       suggestedAction: close_not_issue | mark_reviewed | create_issue |
+#                        hygiene_issue | request_info | escalate
+#       humanReview: true|false  # optional, default false (see post-processing)
+#       tags: [..]                # optional
+#       rationale: "Spanish text with {placeholders}"
+#
+#   DisciplineRef: a literal code from discipline-matrix (EST, CLI, COORD...)
+#     | "$a" / "$b"   -> discipline of the bound side
+#     | "@mover"      -> discipline of the side that moves per whoMoves
+#                        (tie -> COORD)
+#     | "@other"      -> discipline of the side that does NOT move
+#
+# 3. SIDE BINDING (symmetry)
+# -----------------------------------------------------------------------------
+# Clashes are unordered. If `a` and/or `b` are present the engine tries
+#   orientation 1: a=left,  b=right
+#   orientation 2: a=right, b=left
+# and binds the FIRST orientation in which every block (clash, a, b, both)
+# matches. Refs like 'b.sizeMm' and placeholders use the bound orientation.
+# If neither `a` nor `b` is present: a=left, b=right.
+#
+# 4. FIELDS
+# -----------------------------------------------------------------------------
+# ElementFacts (raw from Model Properties API / MC documents, normalized):
+#   externalId (Revit UniqueId), elementId, documentId (MC clash doc id),
+#   modelFile (lineage URN: same file across viewables/versions),
+#   documentName (file name), category (canonical, see categoryAliases),
+#   family, type, name, level, systemClassification (canonical),
+#   systemType, systemName, diameterMm, outsideDiameterMm, widthMm, heightMm,
+#   thicknessMm, insulationThicknessMm, material, workset, phaseCreated,
+#   phaseDemolished, fireRating, structural (bool, Revit "Structural"),
+#   orientation (vertical|horizontal|sloped; OPTIONAL, geometry-derived),
+#   modelAgeDays (days since that document version was published).
+# ElementFacts (derived by engine from discipline-matrix):
+#   modelDiscipline, discipline, disciplineGroup, categoryDiscipline, sizeMm,
+#   elementClass, moveRank, and every flag in derivedFlags (isGravity,
+#   isStructural, isFireRated, isInsulation, isSleeveOrOpening, isFirestop,
+#   isFireDamper, isPlaceholder, isClearanceZone, isTemporaryWorks,
+#   isFinishLayer, isPostTensioned, isFlexible, isElevator, isSeismicJoint,
+#   isDemolished, isAnalytical, isForeign).
+# ClashFacts:
+#   distanceMm      = dist * 1000 (signed; negative = penetration)
+#   penetrationMm   = max(0, -distanceMm)
+#   penetrationRatio= penetrationMm / min(left.sizeMm, right.sizeMm)
+#                     (missing if a size is missing or distanceMm >= 0)
+#   status          = MC numeric status (1 active, 2 reviewed, 3 resolved, 4 closed)
+#   toleranceHardMm, clearanceMm  = resolved from discipline-matrix.tolerances
+#   withinTolerance = distanceMm < 0 AND penetrationMm <= toleranceHardMm
+#   clearanceViolation = distanceMm >= 0 AND distanceMm < clearanceMm
+#   sameDocument, sameModelFile, sameExternalId, sameSystemName, sameFamily,
+#   sameType, sameCategory, sameDiscipline, sameLevel:
+#       true iff the field exists on BOTH sides and normalized values are equal.
+#   nestedRelation  = one element is an ancestor of the other, or both share
+#                     the same family-instance parent in the object tree.
+#                     (needs instance tree; missing -> false)
+#   disciplinePair  = special: value is [X, Y] or [[X, Y], ...]; unordered;
+#                     tokens = discipline code | '@GROUP' | '*'.
+#
+# 5. MATCHER SEMANTICS (ElementMatcher and ClashMatcher)
+# -----------------------------------------------------------------------------
+# A matcher is a map; ALL keys must hold (AND). For each key:
+#   field: scalar            -> equals (strings compared normalized:
+#                               lowercase, no accents, trimmed)
+#   field: [v1, v2]          -> in (equals any)
+#   field: { op: value, ...} -> all ops must hold. Ops:
+#       eq, ne, in, notIn, matches, notMatches (ECMAScript regex on the
+#       normalized string, written lowercase/no accents), gt, gte, lt, lte,
+#       between: [lo, hi] (inclusive), exists: true|false,
+#       inSet: NAME (category -> categorySets; elementClass -> classSets)
+#   Special keys inside a matcher:
+#       anyOf: [matcher, ...]    -> at least one sub-matcher holds
+#       not: matcher             -> sub-matcher does NOT hold
+# Missing fields: positive ops (eq, in, matches, gt.., between, inSet,
+#   exists:true, scalar, list) are FALSE; negative ops (ne, notIn,
+#   notMatches, exists:false) are TRUE. Derived flags are never missing.
+# Numeric comparison values may be refs: { ref: 'b.sizeMm', factor: 0.333 }
+#   (value = factor * referenced field; missing ref -> comparison FALSE).
+# Unknown field names, ops or set names = load error.
+#
+# 6. PLACEHOLDERS IN rationale
+# -----------------------------------------------------------------------------
+#   {a.<field>}, {b.<field>}, {clash.<field>}, {mover.discipline},
+#   {other.discipline}. Missing -> "—". Numbers rounded to integers.
+#   {x.category} renders the Spanish label from categoryLabelsEs (fallback:
+#   canonical name). Other fields render their raw (non-normalized) value.
+# =============================================================================
+version: 2
+
+rules:
+
+# ---------------------------------------------------------------------------
+# HYG — Hygiene / exclusions. Things that should not be in the test at all.
+# ---------------------------------------------------------------------------
+  - id: HYG-001
+    name: demolished element
+    when:
+      a: { isDemolished: true }
+    then: { validity: false_positive, nature: workflow, rootCause: model_hygiene, responsibleDiscipline: COORD, severity: none, confidence: 0.95, suggestedAction: close_not_issue,
+            rationale: "{a.category} '{a.type}' está demolido (fase {a.phaseDemolished}); no corresponde coordinarlo. Ajustar el set de búsqueda para excluir elementos demolidos." }
+
+  - id: HYG-002
+    name: non-physical or analytical object
+    when:
+      a: { elementClass: [non_physical, analytical] }
+    then: { validity: false_positive, nature: hard, rootCause: model_hygiene, responsibleDiscipline: COORD, severity: none, confidence: 0.97, suggestedAction: close_not_issue,
+            rationale: "{a.category} no es un objeto físico construible (habitación, espacio, masa o modelo analítico). Excluirlo de la prueba de interferencias." }
+
+  - id: HYG-003
+    name: temporary works (4D)
+    when:
+      a: { isTemporaryWorks: true }
+    then: { validity: needs_info, nature: workflow, rootCause: not_applicable, responsibleDiscipline: COORD, severity: low, confidence: 0.8, suggestedAction: request_info,
+            rationale: "Conflicto con obra provisoria ({a.family}). Es un conflicto de secuencia (4D): revisar contra programa y plan de faenas, no contra el diseño." }
+
+  - id: HYG-004
+    name: missing category
+    when:
+      a: { category: { exists: false } }
+    then: { validity: needs_info, nature: hard, rootCause: model_hygiene, responsibleDiscipline: COORD, severity: low, confidence: 0.5, suggestedAction: request_info,
+            rationale: "No se pudieron leer las propiedades de uno de los elementos (sin categoría). Verificar indexación de propiedades del modelo {a.documentName}." }
+
+# ---------------------------------------------------------------------------
+# DUP — Duplicates (same object twice, copied models, re-modeled structure).
+# ---------------------------------------------------------------------------
+  - id: DUP-001
+    name: same element in two different model files
+    when:
+      clash: { sameExternalId: true, sameModelFile: false }
+    then: { validity: false_positive, nature: duplicate, rootCause: duplicate_model, responsibleDiscipline: COORD, severity: none, confidence: 0.97, suggestedAction: hygiene_issue,
+            rationale: "El mismo elemento (UniqueId {a.externalId}) aparece en dos archivos ({a.documentName} y {b.documentName}): modelo copiado o vinculado dos veces en el conjunto de modelos. Corregir el model set, no el diseño." }
+
+  - id: DUP-002
+    name: same element twice in same file (two viewables)
+    when:
+      clash: { sameExternalId: true }
+    then: { validity: false_positive, nature: duplicate, rootCause: duplicate_model, responsibleDiscipline: COORD, severity: none, confidence: 0.98, suggestedAction: hygiene_issue,
+            rationale: "El elemento choca consigo mismo: el archivo {a.documentName} entra al conjunto con dos vistas 3D (p.ej. la vista 3D por defecto y la vista 'Navisworks'). Dejar una sola vista por modelo en la vista de coordinación." }
+
+  - id: DUP-003
+    name: identical non-MEP instances overlapping in same file
+    when:
+      clash: { sameModelFile: true, sameCategory: true, sameType: true, penetrationRatio: { gte: 0.9 } }
+      both: { not: { elementClass: { inSet: MEP_DIST } } }
+    then: { validity: real, nature: duplicate, rootCause: modeling_error, responsibleDiscipline: "$a", severity: low, confidence: 0.85, suggestedAction: hygiene_issue,
+            rationale: "Dos instancias idénticas de {a.category} '{a.type}' superpuestas en {a.documentName} (instancias duplicadas). Eliminar la sobrante; infla cubicaciones y genera falsas interferencias." }
+
+  - id: DUP-004
+    name: foreign copy of another discipline's element
+    when:
+      clash: { sameCategory: true, sameModelFile: false, penetrationRatio: { gte: 0.5 } }
+      a: { isForeign: true }
+      b: { isForeign: false }
+    then: { validity: false_positive, nature: duplicate, rootCause: duplicate_model, responsibleDiscipline: "$a", secondaryDiscipline: "$b", severity: none, confidence: 0.85, suggestedAction: hygiene_issue,
+            rationale: "{a.documentName} contiene una copia de {a.category} que pertenece a {b.discipline}. Debe vincular el modelo de {b.discipline} y eliminar su copia; la interferencia en sí no es un problema de diseño." }
+
+  - id: DUP-005
+    name: ARQ re-modeled structural wall
+    when:
+      clash: { penetrationRatio: { gte: 0.8 } }
+      a: { disciplineGroup: ARQ, category: Walls, isFinishLayer: false }
+      b: { discipline: EST, category: Walls }
+    then: { validity: false_positive, nature: duplicate, rootCause: duplicate_model, responsibleDiscipline: "$a", secondaryDiscipline: EST, severity: none, confidence: 0.8, suggestedAction: hygiene_issue,
+            rationale: "El muro de ARQ '{a.type}' duplica el muro estructural '{b.type}'. ARQ debe modelar solo revestimientos sobre el muro de EST vinculado. Se agrupa como un solo problema de higiene de modelo." }
+
+  - id: DUP-006
+    name: ARQ re-modeled structural slab
+    when:
+      clash: { penetrationRatio: { gte: 0.8 } }
+      a: { disciplineGroup: ARQ, category: Floors, isFinishLayer: false }
+      b: { discipline: EST, category: Floors }
+    then: { validity: false_positive, nature: duplicate, rootCause: duplicate_model, responsibleDiscipline: "$a", secondaryDiscipline: EST, severity: none, confidence: 0.8, suggestedAction: hygiene_issue,
+            rationale: "La losa de ARQ '{a.type}' duplica la losa estructural '{b.type}'. ARQ debe modelar solo pavimento/sobrelosa sobre la losa de EST vinculada." }
+
+# ---------------------------------------------------------------------------
+# FP — False positives: hosted, connected, nested, accepted-by-design.
+# ---------------------------------------------------------------------------
+  - id: FP-001
+    name: insulation vs its own host (same system)
+    when:
+      clash: { sameModelFile: true, sameSystemName: true }
+      a: { isInsulation: true }
+      b: { category: { inSet: MEP_CONNECTED_CATS } }
+    then: { validity: false_positive, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, severity: none, confidence: 0.97, suggestedAction: close_not_issue,
+            rationale: "La aislación ({a.category}) envuelve su propia tubería/ducto del sistema {a.systemName}. Excluir aislaciones contra su anfitrión en la prueba." }
+
+  - id: FP-002
+    name: insulation vs host (system unknown)
+    when:
+      clash: { sameModelFile: true }
+      a: { isInsulation: true, systemName: { exists: false } }
+      b: { category: { inSet: MEP_RUN_CATS } }
+    then: { validity: false_positive, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, severity: none, confidence: 0.8, suggestedAction: close_not_issue,
+            rationale: "Aislación sin sistema informado contra {b.category} del mismo archivo; casi siempre es su propio anfitrión." }
+
+  - id: FP-003
+    name: connected components of same system
+    when:
+      clash: { sameModelFile: true, sameSystemName: true }
+      both: { category: { inSet: MEP_CONNECTED_CATS } }
+    then: { validity: false_positive, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, severity: none, confidence: 0.9, suggestedAction: close_not_issue,
+            rationale: "{a.category} y {b.category} pertenecen al mismo sistema {a.systemName} del mismo modelo: es la unión/conexión entre componentes, no una interferencia." }
+
+  - id: FP-004
+    name: rebar vs concrete host
+    when:
+      a: { elementClass: rebar }
+      b: { anyOf: [ { isStructural: true }, { discipline: EST } ] }
+    then: { validity: false_positive, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, severity: none, confidence: 0.97, suggestedAction: close_not_issue,
+            rationale: "Armadura dentro de su elemento de hormigón. Excluir armaduras de las pruebas de coordinación." }
+
+  - id: FP-005
+    name: rebar vs anything else
+    when:
+      a: { elementClass: rebar }
+    then: { validity: tolerated, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, severity: none, confidence: 0.7, suggestedAction: mark_reviewed,
+            rationale: "Armadura contra {b.category}: en esta etapa la armadura no se coordina en el modelo federado (se resuelve en detalle de pasadas). Recomendación: excluir armaduras del set de búsqueda." }
+
+  - id: FP-006
+    name: structural self-joins in the structural model
+    when:
+      clash: { sameModelFile: true }
+      both: { discipline: EST }
+    then: { validity: false_positive, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, severity: none, confidence: 0.9, suggestedAction: close_not_issue,
+            rationale: "Uniones de geometría dentro del modelo estructural ({a.category} con {b.category}). Se resuelven con 'unir geometría', no son interferencias de coordinación." }
+
+  - id: FP-007
+    name: architectural self-joins in the same file
+    when:
+      clash: { sameModelFile: true }
+      both: { category: { inSet: ARQ_SELF_CATS } }
+    then: { validity: false_positive, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, severity: none, confidence: 0.85, suggestedAction: close_not_issue,
+            rationale: "Uniones arquitectónicas dentro del mismo archivo ({a.category} con {b.category}): elementos alojados, encuentros de muros, cielos contra muros. No se coordinan en la prueba entre disciplinas." }
+
+  - id: FP-008
+    name: ceiling-hosted device in ceiling
+    when:
+      a: { category: { inSet: CEILING_HOSTED_CATS } }
+      b: { category: Ceilings }
+    then: { validity: false_positive, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, severity: none, confidence: 0.92, suggestedAction: close_not_issue,
+            rationale: "{a.category} embutido en el cielo: la perforación del cielo es intencional. Verificar solo la coherencia con el plano de cielo (RCP), no como interferencia." }
+
+  - id: FP-009
+    name: wall-hosted device embedded in wall
+    when:
+      clash: { penetrationMm: { lte: 150 } }
+      a: { category: { inSet: WALL_HOSTED_CATS } }
+      b: { category: Walls }
+    then: { validity: false_positive, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, severity: none, confidence: 0.85, suggestedAction: close_not_issue,
+            rationale: "{a.category} embutido o adosado al muro ({clash.penetrationMm} mm). Cajas y artefactos embutidos son práctica normal, incluso en muros de hormigón armado." }
+
+  - id: FP-010
+    name: modeled sleeve or opening
+    when:
+      a: { isSleeveOrOpening: true }
+    then: { validity: false_positive, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, severity: none, confidence: 0.88, suggestedAction: close_not_issue,
+            rationale: "'{a.family}' es una pasada/camisa/hueco modelado como elemento independiente: la interferencia confirma la pasada, no es un problema. Si el hueco cortara al anfitrión no habría interferencia." }
+
+  - id: FP-011
+    name: firestop element
+    when:
+      a: { isFirestop: true }
+    then: { validity: false_positive, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, severity: none, confidence: 0.9, suggestedAction: close_not_issue,
+            rationale: "'{a.family}' es un sello cortafuego: por diseño está dentro del muro/losa y alrededor de la instalación." }
+
+  - id: FP-012
+    name: fire damper in wall or slab
+    when:
+      a: { isFireDamper: true }
+      b: { category: [Walls, Floors] }
+    then: { validity: false_positive, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, severity: none, confidence: 0.88, suggestedAction: close_not_issue,
+            rationale: "Compuerta cortafuego '{a.type}' instalada en {b.category} '{b.type}': ubicación intencional. Solo verificar que el elemento atravesado sea el sectorizador." }
+
+  - id: FP-013
+    name: nested family components
+    when:
+      clash: { nestedRelation: true }
+    then: { validity: false_positive, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, severity: none, confidence: 0.9, suggestedAction: close_not_issue,
+            rationale: "Subcomponentes de la misma familia anidada ({a.family} / {b.family}). No es una interferencia." }
+
+  - id: FP-014
+    name: finish layer over structure
+    when:
+      a: { isFinishLayer: true }
+      b: { elementClass: { inSet: STRUCTURE } }
+    then: { validity: false_positive, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, severity: none, confidence: 0.88, suggestedAction: close_not_issue,
+            rationale: "Revestimiento/pavimento '{a.type}' sobre {b.category} estructural: superposición de capas por modelado, no interferencia." }
+
+  - id: FP-015
+    name: topography or site
+    when:
+      a: { elementClass: site }
+    then: { validity: false_positive, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, severity: none, confidence: 0.85, suggestedAction: close_not_issue,
+            rationale: "Elemento enterrado o apoyado en la topografía ({b.category}). Las excavaciones se coordinan aparte; excluir topografía de las pruebas." }
+
+# ---------------------------------------------------------------------------
+# SEI — Seismic joints (always real, even inside tolerance).
+# ---------------------------------------------------------------------------
+  - id: SEI-001
+    name: MEP crossing a seismic joint
+    when:
+      a: { elementClass: { inSet: MEP_DIST } }
+      b: { isSeismicJoint: true }
+    then: { validity: real, nature: hard, rootCause: design_coordination, responsibleDiscipline: "$a", secondaryDiscipline: EST, severity: high, confidence: 0.8, suggestedAction: create_issue,
+            rationale: "{a.category} {a.systemName} cruza la junta sísmica '{b.type}'. Requiere unión flexible/loop sísmico y soportación según NCh 3357; definir detalle con EST." }
+
+# ---------------------------------------------------------------------------
+# TOL — Tolerances and accepted construction practice.
+# ---------------------------------------------------------------------------
+  - id: TOL-001
+    name: touching without penetration and no clearance requirement violated
+    when:
+      clash: { distanceMm: { gte: 0 }, clearanceViolation: false }
+    then: { validity: tolerated, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, severity: none, confidence: 0.9, suggestedAction: mark_reviewed,
+            rationale: "Sin penetración (separación de {clash.distanceMm} mm) y sin infringir la holgura mínima exigida para {a.discipline}/{b.discipline}." }
+
+  - id: TOL-002
+    name: clearance violation
+    when:
+      clash: { clearanceViolation: true }
+    then: { validity: real, nature: clearance, rootCause: design_coordination, responsibleDiscipline: "@mover", severity: low, confidence: 0.7, suggestedAction: create_issue,
+            rationale: "Separación de {clash.distanceMm} mm menor a la holgura exigida ({clash.clearanceMm} mm) entre {a.discipline} y {b.discipline}. Debe desplazarse {mover.discipline}." }
+
+  - id: TOL-003
+    name: penetration within pair tolerance
+    when:
+      clash: { withinTolerance: true }
+    then: { validity: tolerated, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, severity: none, confidence: 0.85, suggestedAction: mark_reviewed,
+            rationale: "Penetración de {clash.penetrationMm} mm dentro de la tolerancia de {clash.toleranceHardMm} mm para {a.discipline}/{b.discipline}: se absorbe en obra." }
+
+  - id: TOL-004
+    name: flexible duct/pipe vs non-structure
+    when:
+      clash: { penetrationMm: { lte: 100 } }
+      a: { elementClass: flexible }
+      b: { not: { elementClass: { inSet: STRUCTURE } } }
+    then: { validity: tolerated, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, severity: none, confidence: 0.8, suggestedAction: mark_reviewed,
+            rationale: "{a.category} flexible: su trazado se ajusta en terreno ({clash.penetrationMm} mm contra {b.category})." }
+
+  - id: TOL-005
+    name: conduit embedded in structural slab/wall within 1/3 thickness
+    when:
+      a: { elementClass: conduit, sizeMm: { lte: { ref: 'b.sizeMm', factor: 0.333 } } }
+      b: { elementClass: [structure_floor, structure_wall] }
+    then: { validity: tolerated, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, secondaryDiscipline: EST, severity: none, confidence: 0.8, suggestedAction: mark_reviewed,
+            rationale: "Canalización Ø{a.sizeMm} mm embutida en {b.category} de {b.sizeMm} mm: práctica habitual en Chile, bajo 1/3 del espesor (ACI 318 / NCh 430). Sujeto a criterios generales del calculista." }
+
+  - id: TOL-006
+    name: conduit embedded in structure above 1/3 thickness (or thickness unknown)
+    when:
+      a: { elementClass: conduit }
+      b: { elementClass: [structure_floor, structure_wall] }
+    then: { validity: real, nature: hard, rootCause: routing_conflict, responsibleDiscipline: "$a", secondaryDiscipline: EST, severity: medium, confidence: 0.7, suggestedAction: create_issue,
+            rationale: "Canalización Ø{a.sizeMm} mm embutida en {b.category} '{b.type}' supera 1/3 del espesor o el espesor no está informado. Redistribuir o pedir aprobación al calculista." }
+
+  - id: TOL-007
+    name: small conduit vs non-structure
+    when:
+      clash: { penetrationMm: { lte: 25 } }
+      a: { elementClass: conduit, sizeMm: { lte: 25 } }
+      b: { not: { elementClass: { inSet: STRUCTURE } }, discipline: { ne: GAS } }
+    then: { validity: tolerated, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, severity: none, confidence: 0.75, suggestedAction: mark_reviewed,
+            rationale: "Conduit Ø{a.sizeMm} mm con {clash.penetrationMm} mm de penetración contra {b.category}: se resuelve en obra al tender la canalización." }
+
+  - id: TOL-008
+    name: small MEP through non-rated partition
+    when:
+      a: { elementClass: { inSet: MEP_DIST }, sizeMm: { lte: 150 } }
+      b: { elementClass: arch_wall, isFireRated: false, fireRating: { exists: true } }
+    then: { validity: tolerated, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, severity: none, confidence: 0.7, suggestedAction: mark_reviewed,
+            rationale: "{a.category} de {a.sizeMm} mm atraviesa tabique no resistente al fuego '{b.type}': pasada estándar que se ejecuta en obra." }
+
+  - id: TOL-009
+    name: small water/heating pipe in non-structural floor build-up
+    when:
+      a: { elementClass: [pipe, fire_branch], discipline: [CAL, AP], sizeMm: { lte: 32 } }
+      b: { elementClass: arch_floor }
+    then: { validity: tolerated, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, severity: none, confidence: 0.75, suggestedAction: mark_reviewed,
+            rationale: "Tubería {a.discipline} Ø{a.sizeMm} mm en sobrelosa/piso '{b.type}' (losa radiante o distribución embutida): práctica aceptada." }
+
+# ---------------------------------------------------------------------------
+# CLR — Modeled clearance / maintenance zones.
+# ---------------------------------------------------------------------------
+  - id: CLR-001
+    name: clearance zone vs structure
+    when:
+      a: { elementClass: clearance_zone }
+      b: { elementClass: { inSet: STRUCTURE } }
+    then: { validity: real, nature: clearance, rootCause: design_coordination, responsibleDiscipline: "$a", secondaryDiscipline: EST, severity: medium, confidence: 0.8, suggestedAction: create_issue,
+            rationale: "La zona de mantención '{a.family}' queda invadida por {b.category}. La estructura no se mueve: reubicar el equipo de {a.discipline}." }
+
+  - id: CLR-002
+    name: clearance zone vs anything else
+    when:
+      a: { elementClass: clearance_zone }
+    then: { validity: real, nature: clearance, rootCause: design_coordination, responsibleDiscipline: "$b", secondaryDiscipline: "$a", severity: medium, confidence: 0.75, suggestedAction: create_issue,
+            rationale: "{b.category} de {b.discipline} invade la zona de mantención/operación '{a.family}' de {a.discipline}. Despejar la zona." }
+
+# ---------------------------------------------------------------------------
+# NI — Needs information (cannot judge without more data).
+# ---------------------------------------------------------------------------
+  - id: NI-001
+    name: generic model
+    when:
+      a: { elementClass: generic }
+    then: { validity: needs_info, nature: hard, rootCause: lod_mismatch, responsibleDiscipline: "$a", severity: low, confidence: 0.7, suggestedAction: request_info,
+            rationale: "'{a.family}' es un Modelo Genérico de {a.discipline}: no se puede evaluar sin saber qué representa. Solicitar recategorizar (categoría Revit correcta) o declarar su función." }
+
+  - id: NI-002
+    name: placeholder element
+    when:
+      a: { isPlaceholder: true }
+    then: { validity: needs_info, nature: hard, rootCause: lod_mismatch, responsibleDiscipline: "$a", severity: low, confidence: 0.7, suggestedAction: request_info,
+            rationale: "'{a.family} / {a.type}' es un elemento referencial o de reserva de espacio (LOD insuficiente). Confirmar si representa espacio real reservado antes de coordinar." }
+
+# ---------------------------------------------------------------------------
+# INC / ELV — Life safety first.
+# ---------------------------------------------------------------------------
+  - id: INC-001
+    name: sprinkler head obstructed
+    when:
+      a: { elementClass: sprinkler }
+      b: { anyOf: [ { elementClass: { inSet: MEP_DIST } }, { elementClass: { inSet: STRUCTURE } }, { elementClass: [mep_terminal, mep_equipment] } ] }
+    then: { validity: real, nature: hard, rootCause: design_coordination, responsibleDiscipline: "$a", secondaryDiscipline: "$b", severity: high, confidence: 0.85, suggestedAction: create_issue,
+            rationale: "Rociador obstruido por {b.category} de {b.discipline}. Reubicar el rociador o agregar uno bajo la obstrucción (criterio NFPA 13). Seguridad de las personas." }
+
+  - id: ELV-001
+    name: anything in elevator shaft
+    when:
+      a: { not: { isElevator: true } }
+      b: { elementClass: elevator }
+    then: { validity: real, nature: hard, rootCause: routing_conflict, responsibleDiscipline: "$a", secondaryDiscipline: ASC, severity: critical, confidence: 0.9, suggestedAction: create_issue,
+            rationale: "{a.category} de {a.discipline} invade el ascensor/shaft '{b.family}'. El shaft de ascensor es de uso exclusivo: ninguna instalación ajena puede pasar por él." }
+
+# ---------------------------------------------------------------------------
+# EST — MEP vs structure. Structure does not move.
+# ---------------------------------------------------------------------------
+  - id: EST-001
+    name: MEP through structural column
+    when:
+      a: { elementClass: { inSet: MEP_ANY } }
+      b: { elementClass: structure_column }
+    then: { validity: real, nature: hard, rootCause: routing_conflict, responsibleDiscipline: "$a", secondaryDiscipline: EST, severity: critical, confidence: 0.92, suggestedAction: create_issue,
+            rationale: "{a.category} {a.systemName} ({a.sizeMm} mm) atraviesa el pilar '{b.type}'. Los pilares no admiten pasadas: {a.discipline} debe desviar el trazado." }
+
+  - id: EST-002
+    name: gravity drainage vs structure (not vertical stacks)
+    when:
+      a: { elementClass: gravity_pipe, not: { orientation: vertical } }
+      b: { elementClass: { inSet: STRUCTURE } }
+    then: { validity: real, nature: hard, rootCause: design_coordination, responsibleDiscipline: "$a", secondaryDiscipline: EST, severity: critical, confidence: 0.88, suggestedAction: create_issue,
+            rationale: "Tubería gravitacional {a.systemType} Ø{a.sizeMm} mm interfiere {b.category} '{b.type}' ({clash.penetrationMm} mm). La pendiente limita el desvío: resolver con pasada aprobada por calculista o rediseño del trazado." }
+
+  - id: EST-003
+    name: MEP vs post-tensioned slab
+    when:
+      a: { elementClass: { inSet: MEP_ANY } }
+      b: { isPostTensioned: true }
+    then: { validity: real, nature: hard, rootCause: missing_opening, responsibleDiscipline: "$a", secondaryDiscipline: EST, severity: critical, confidence: 0.85, suggestedAction: create_issue,
+            rationale: "{a.category} atraviesa losa postensada '{b.type}' sin pasada modelada. Las pasadas en losas postensadas deben coordinarse con el trazado de cables antes de hormigonar." }
+
+  - id: EST-004
+    name: large duct vs beam
+    when:
+      a: { elementClass: duct_large }
+      b: { elementClass: structure_framing }
+    then: { validity: real, nature: hard, rootCause: design_coordination, responsibleDiscipline: "$a", secondaryDiscipline: EST, severity: critical, confidence: 0.88, suggestedAction: create_issue,
+            rationale: "Ducto de {a.sizeMm} mm ({a.systemType}) interfiere la viga '{b.type}' (h={b.sizeMm} mm). Una pasada de este tamaño en viga rara vez es aceptable: revisar trazado, altura de entretecho o cajón." }
+
+  - id: EST-005
+    name: MEP >= 100 mm vs beam
+    when:
+      a: { elementClass: { inSet: MEP_DIST }, sizeMm: { gte: 100 } }
+      b: { elementClass: structure_framing }
+    then: { validity: real, nature: hard, rootCause: design_coordination, responsibleDiscipline: "$a", secondaryDiscipline: EST, severity: high, confidence: 0.85, suggestedAction: create_issue,
+            rationale: "{a.category} de {a.sizeMm} mm atraviesa la viga '{b.type}'. Desviar bajo la viga o solicitar pasada al calculista (en general tercio central de la luz y diámetro ≤ h/3)." }
+
+  - id: EST-006
+    name: other MEP vs beam
+    when:
+      a: { elementClass: { inSet: MEP_ANY } }
+      b: { elementClass: structure_framing }
+    then: { validity: real, nature: hard, rootCause: design_coordination, responsibleDiscipline: "$a", secondaryDiscipline: EST, severity: medium, confidence: 0.8, suggestedAction: create_issue,
+            rationale: "{a.category} ({a.sizeMm} mm) interfiere la viga '{b.type}' ({clash.penetrationMm} mm). Desviar o solicitar pasada aprobada por el calculista." }
+
+  - id: EST-007
+    name: MEP through structural (RC) wall
+    when:
+      a: { elementClass: { inSet: MEP_ANY } }
+      b: { elementClass: structure_wall }
+    then: { validity: real, nature: hard, rootCause: missing_opening, responsibleDiscipline: "$a", secondaryDiscipline: EST, severity: high, confidence: 0.8, suggestedAction: create_issue,
+            rationale: "{a.category} Ø/ancho {a.sizeMm} mm atraviesa muro estructural '{b.type}' sin pasada modelada. Los muros de hormigón armado resisten el sismo: toda pasada requiere aprobación del calculista y debe quedar modelada por EST." }
+
+  - id: EST-008
+    name: MEP vs foundation
+    when:
+      a: { elementClass: { inSet: MEP_ANY } }
+      b: { elementClass: structure_foundation }
+    then: { validity: real, nature: hard, rootCause: missing_opening, responsibleDiscipline: "$a", secondaryDiscipline: EST, severity: high, confidence: 0.85, suggestedAction: create_issue,
+            rationale: "{a.category} interfiere la fundación '{b.type}'. Las pasadas en fundaciones y vigas de fundación deben definirse antes de excavar; revisar cotas de redes enterradas." }
+
+  - id: EST-009
+    name: vertical MEP through structural slab (missing opening)
+    when:
+      a: { elementClass: { inSet: MEP_DIST }, orientation: vertical }
+      b: { elementClass: structure_floor }
+    then: { validity: real, nature: hard, rootCause: missing_opening, responsibleDiscipline: EST, secondaryDiscipline: "$a", severity: medium, confidence: 0.8, suggestedAction: create_issue,
+            rationale: "Montante de {a.discipline} Ø/ancho {a.sizeMm} mm cruza la losa '{b.type}' sin pasada modelada. Falta la pasada en el modelo EST (si el hueco cortara la losa no habría interferencia): {a.discipline} confirma medida/ubicación y EST la modela." }
+
+  - id: EST-010
+    name: horizontal MEP embedded in structural slab
+    when:
+      a: { elementClass: { inSet: MEP_DIST }, orientation: [horizontal, sloped] }
+      b: { elementClass: structure_floor }
+    then: { validity: real, nature: hard, rootCause: routing_conflict, responsibleDiscipline: "$a", secondaryDiscipline: EST, severity: high, confidence: 0.85, suggestedAction: create_issue,
+            rationale: "{a.category} horizontal de {a.sizeMm} mm queda embebido en la losa '{b.type}' ({clash.penetrationMm} mm). Probable error de cota o nivel de referencia: bajar al entretecho." }
+
+  - id: EST-011
+    name: MEP vs structural slab, orientation unknown
+    when:
+      a: { elementClass: { inSet: MEP_ANY } }
+      b: { elementClass: structure_floor }
+    then: { validity: real, nature: hard, rootCause: missing_opening, responsibleDiscipline: "$a", secondaryDiscipline: EST, severity: medium, confidence: 0.6, suggestedAction: create_issue, humanReview: true,
+            rationale: "{a.category} ({a.sizeMm} mm) interfiere la losa '{b.type}' ({clash.penetrationMm} mm). Sin orientación disponible: revisar en visor si es un cruce vertical (falta pasada) o un tramo embebido (error de cota)." }
+
+# ---------------------------------------------------------------------------
+# AE — Architecture vs structure.
+# ---------------------------------------------------------------------------
+  - id: AE-001
+    name: door/window vs structure
+    when:
+      a: { elementClass: door_window }
+      b: { elementClass: { inSet: STRUCTURE } }
+    then: { validity: real, nature: hard, rootCause: design_coordination, responsibleDiscipline: "$a", secondaryDiscipline: EST, severity: high, confidence: 0.85, suggestedAction: create_issue,
+            rationale: "{a.category} '{a.type}' no coincide con el vano de {b.category} '{b.type}' ({clash.penetrationMm} mm). Coordinar vano entre ARQ y EST: ajustar puerta/ventana o solicitar modificación del vano al calculista." }
+
+  - id: AE-002
+    name: beam below ceiling
+    when:
+      a: { elementClass: ceiling }
+      b: { elementClass: structure_framing }
+    then: { validity: real, nature: hard, rootCause: design_coordination, responsibleDiscipline: "$a", secondaryDiscipline: EST, severity: high, confidence: 0.85, suggestedAction: create_issue,
+            rationale: "La viga '{b.type}' (h={b.sizeMm} mm) queda bajo la cota del cielo '{a.type}' ({clash.penetrationMm} mm). ARQ debe bajar el cielo, generar cajón/plafón o revisar altura libre." }
+
+  - id: AE-003
+    name: partition/floor modeled into structure (modeling noise)
+    when:
+      clash: { penetrationMm: { lte: 100 } }
+      a: { elementClass: [arch_wall, arch_floor] }
+      b: { elementClass: { inSet: STRUCTURE } }
+    then: { validity: tolerated, nature: hard, rootCause: modeling_error, responsibleDiscipline: "$a", severity: none, confidence: 0.7, suggestedAction: mark_reviewed,
+            rationale: "{a.category} '{a.type}' modelado hasta dentro de {b.category} ({clash.penetrationMm} mm): encuentro de modelado sin impacto constructivo." }
+
+  - id: AE-004
+    name: partition significantly overlapping structure
+    when:
+      a: { elementClass: [arch_wall, arch_floor] }
+      b: { elementClass: { inSet: STRUCTURE } }
+    then: { validity: real, nature: hard, rootCause: modeling_error, responsibleDiscipline: "$a", secondaryDiscipline: EST, severity: low, confidence: 0.65, suggestedAction: create_issue,
+            rationale: "{a.category} '{a.type}' se superpone {clash.penetrationMm} mm con {b.category} '{b.type}'. Revisar ejes/espesores: posible desfase entre ARQ y EST." }
+
+  - id: AE-005
+    name: curtain wall vs structure
+    when:
+      a: { elementClass: curtain_wall }
+      b: { elementClass: { inSet: STRUCTURE } }
+    then: { validity: real, nature: hard, rootCause: design_coordination, responsibleDiscipline: "$a", secondaryDiscipline: EST, severity: medium, confidence: 0.7, suggestedAction: create_issue,
+            rationale: "Fachada/muro cortina '{a.type}' interfiere {b.category} '{b.type}'. Revisar canto de losa, anclajes y holgura de montaje." }
+
+  - id: AE-006
+    name: architectural stair vs structure
+    when:
+      a: { elementClass: stairs, disciplineGroup: ARQ }
+      b: { elementClass: { inSet: STRUCTURE } }
+    then: { validity: real, nature: hard, rootCause: modeling_error, responsibleDiscipline: "$a", secondaryDiscipline: EST, severity: medium, confidence: 0.6, suggestedAction: create_issue,
+            rationale: "Escalera de ARQ '{a.type}' interfiere {b.category}. Verificar si duplica la escalera estructural o si hay incompatibilidad de cotas/huella." }
+
+# ---------------------------------------------------------------------------
+# MA — MEP vs architecture.
+# ---------------------------------------------------------------------------
+  - id: MA-001
+    name: MEP vs stairs (headroom / egress)
+    when:
+      a: { elementClass: { inSet: MEP_ANY } }
+      b: { elementClass: stairs }
+    then: { validity: real, nature: hard, rootCause: routing_conflict, responsibleDiscipline: "$a", severity: high, confidence: 0.85, suggestedAction: create_issue,
+            rationale: "{a.category} invade la escalera '{b.type}': compromete altura libre de la vía de evacuación. Desviar fuera de la caja de escalera." }
+
+  - id: MA-002
+    name: MEP vs door/window opening
+    when:
+      a: { elementClass: { inSet: MEP_ANY } }
+      b: { elementClass: door_window }
+    then: { validity: real, nature: hard, rootCause: routing_conflict, responsibleDiscipline: "$a", severity: high, confidence: 0.85, suggestedAction: create_issue,
+            rationale: "{a.category} de {a.discipline} cruza el vano de {b.category} '{b.type}'. Los vanos no se mueven por instalaciones: desviar sobre dintel o rodear." }
+
+  - id: MA-003
+    name: MEP vs curtain wall / facade
+    when:
+      a: { elementClass: { inSet: MEP_ANY } }
+      b: { elementClass: curtain_wall }
+    then: { validity: real, nature: hard, rootCause: routing_conflict, responsibleDiscipline: "$a", secondaryDiscipline: "$b", severity: high, confidence: 0.8, suggestedAction: create_issue,
+            rationale: "{a.category} interfiere la fachada '{b.type}'. Cualquier pasada por fachada afecta estanqueidad y garantía del sistema: desviar o definir detalle con fachadista." }
+
+  - id: MA-004
+    name: vertical MEP drop through ceiling
+    when:
+      a: { elementClass: { inSet: MEP_DIST }, orientation: vertical }
+      b: { elementClass: ceiling }
+    then: { validity: tolerated, nature: hard, rootCause: not_applicable, responsibleDiscipline: COORD, severity: none, confidence: 0.8, suggestedAction: mark_reviewed,
+            rationale: "Bajada vertical de {a.category} atraviesa el cielo hacia su terminal o artefacto: perforación esperada." }
+
+  - id: MA-005
+    name: MEP below ceiling level
+    when:
+      a: { elementClass: { inSet: MEP_ANY } }
+      b: { elementClass: ceiling }
+    then: { validity: real, nature: hard, rootCause: routing_conflict, responsibleDiscipline: "$a", secondaryDiscipline: ARQ, severity: medium, confidence: 0.7, suggestedAction: create_issue,
+            rationale: "{a.category} de {a.discipline} ({a.sizeMm} mm) queda bajo la cota de cielo '{b.type}' ({clash.penetrationMm} mm). Subir en el entretecho; si no hay altura, ARQ evalúa bajar cielo o cajón." }
+
+  - id: MA-006
+    name: MEP through fire-rated wall
+    when:
+      a: { elementClass: { inSet: MEP_ANY } }
+      b: { elementClass: arch_wall, isFireRated: true }
+    then: { validity: real, nature: hard, rootCause: missing_opening, responsibleDiscipline: "$a", secondaryDiscipline: ARQ, severity: medium, confidence: 0.8, suggestedAction: create_issue,
+            rationale: "{a.category} atraviesa muro resistente al fuego '{b.type}'. Definir pasada con sello cortafuego certificado de igual resistencia (o compuerta en ductos) y modelarla." }
+
+  - id: MA-007
+    name: large MEP through partition
+    when:
+      a: { elementClass: { inSet: MEP_DIST }, sizeMm: { gt: 150 } }
+      b: { elementClass: arch_wall }
+    then: { validity: real, nature: hard, rootCause: missing_opening, responsibleDiscipline: "$a", secondaryDiscipline: ARQ, severity: low, confidence: 0.7, suggestedAction: create_issue,
+            rationale: "{a.category} de {a.sizeMm} mm atraviesa tabique '{b.type}': requiere vano con refuerzo de perfilería. ARQ debe incorporarlo." }
+
+  - id: MA-013
+    name: small MEP through wall with unknown fire rating
+    when:
+      a: { elementClass: { inSet: MEP_DIST }, sizeMm: { lte: 150 } }
+      b: { elementClass: arch_wall, isFireRated: false, fireRating: { exists: false } }
+    then: { validity: real, nature: hard, rootCause: model_hygiene, responsibleDiscipline: "$b", secondaryDiscipline: "$a", severity: low, confidence: 0.75, suggestedAction: hygiene_issue,
+            rationale: "{a.category} de {a.sizeMm} mm atraviesa el muro '{b.type}', que no tiene resistencia al fuego informada. ARQ debe informar la RF: si el muro sectoriza (OGUC Título 4) la pasada requiere sello cortafuego certificado; si no, es pasada estándar de obra." }
+
+  - id: MA-008
+    name: MEP equipment/terminal vs wall
+    when:
+      a: { elementClass: { inSet: MEP_ANY } }
+      b: { elementClass: arch_wall }
+    then: { validity: real, nature: hard, rootCause: design_coordination, responsibleDiscipline: "$a", secondaryDiscipline: ARQ, severity: low, confidence: 0.65, suggestedAction: create_issue,
+            rationale: "{a.category} '{a.family}' se incrusta en el muro '{b.type}' ({clash.penetrationMm} mm). Reubicar o confirmar que va embutido con nicho." }
+
+  - id: MA-009
+    name: MEP vs roof
+    when:
+      a: { elementClass: { inSet: MEP_ANY } }
+      b: { elementClass: roof }
+    then: { validity: real, nature: hard, rootCause: missing_opening, responsibleDiscipline: "$a", secondaryDiscipline: ARQ, severity: low, confidence: 0.65, suggestedAction: create_issue,
+            rationale: "{a.category} atraviesa la cubierta '{b.type}'. Si es ventilación o salida prevista, ARQ debe incorporar el detalle de impermeabilización; si no, desviar." }
+
+  - id: MA-010
+    name: MEP vs non-structural floor
+    when:
+      a: { elementClass: { inSet: MEP_ANY } }
+      b: { elementClass: arch_floor }
+    then: { validity: real, nature: hard, rootCause: missing_opening, responsibleDiscipline: "$a", secondaryDiscipline: "$b", severity: medium, confidence: 0.6, suggestedAction: create_issue, humanReview: true,
+            rationale: "{a.category} interfiere el piso '{b.type}' de {b.discipline}. Verificar si es la losa real modelada por ARQ (falta pasada) o una capa de terminación." }
+
+  - id: MA-011
+    name: MEP vs furniture/casework
+    when:
+      a: { elementClass: { inSet: MEP_ANY } }
+      b: { elementClass: furniture }
+    then: { validity: real, nature: hard, rootCause: design_coordination, responsibleDiscipline: "@mover", severity: low, confidence: 0.6, suggestedAction: create_issue,
+            rationale: "{a.category} interfiere mobiliario '{b.family}'. Confirmar si el mobiliario es fijo (cocina, closet) antes de mover la instalación." }
+
+  - id: MA-012
+    name: MEP vs railing
+    when:
+      a: { elementClass: { inSet: MEP_ANY } }
+      b: { elementClass: railing }
+    then: { validity: real, nature: hard, rootCause: routing_conflict, responsibleDiscipline: "$a", severity: low, confidence: 0.7, suggestedAction: create_issue,
+            rationale: "{a.category} interfiere la baranda '{b.type}'. Desviar la instalación." }
+
+# ---------------------------------------------------------------------------
+# MM — MEP vs MEP.
+# ---------------------------------------------------------------------------
+  - id: MM-001
+    name: gravity vs gravity
+    when:
+      both: { elementClass: gravity_pipe }
+    then: { validity: real, nature: hard, rootCause: design_coordination, responsibleDiscipline: COORD, severity: high, confidence: 0.7, suggestedAction: escalate,
+            rationale: "Cruce entre dos redes gravitacionales ({a.systemType} y {b.systemType}). Requiere estudio de cotas y pendientes en conjunto; lo decide coordinación con ambas especialidades." }
+
+  - id: MM-002
+    name: gravity vs other MEP
+    when:
+      a: { elementClass: gravity_pipe }
+      b: { elementClass: { inSet: MEP_ANY } }
+    then: { validity: real, nature: hard, rootCause: routing_conflict, responsibleDiscipline: "$b", secondaryDiscipline: "$a", severity: high, confidence: 0.85, suggestedAction: create_issue,
+            rationale: "{b.category} de {b.discipline} cruza la red gravitacional {a.systemType} Ø{a.sizeMm} mm. La gravedad no se mueve: {b.discipline} desvía." }
+
+  - id: MM-003
+    name: gas vs electrical / low voltage
+    when:
+      a: { discipline: GAS }
+      b: { discipline: [ELE, CORR] }
+    then: { validity: real, nature: hard, rootCause: routing_conflict, responsibleDiscipline: "@mover", secondaryDiscipline: GAS, severity: high, confidence: 0.8, suggestedAction: create_issue,
+            rationale: "Red de gas interfiere {b.category} de {b.discipline}. Debe mantenerse la separación reglamentaria gas-electricidad (DS 66 SEC / RIC); desplaza {mover.discipline}." }
+
+  - id: MM-004
+    name: fire main vs MEP
+    when:
+      a: { elementClass: fire_main }
+      b: { elementClass: { inSet: MEP_ANY } }
+    then: { validity: real, nature: hard, rootCause: routing_conflict, responsibleDiscipline: "@mover", secondaryDiscipline: INC, severity: high, confidence: 0.8, suggestedAction: create_issue,
+            rationale: "Red troncal de incendio Ø{a.sizeMm} mm interfiere {b.category} de {b.discipline}. Sistema de seguridad: resolver con prioridad; desplaza {mover.discipline}." }
+
+  - id: MM-005
+    name: MEP equipment vs distribution
+    when:
+      a: { elementClass: mep_equipment }
+      b: { elementClass: { inSet: MEP_DIST } }
+    then: { validity: real, nature: hard, rootCause: design_coordination, responsibleDiscipline: "$b", secondaryDiscipline: "$a", severity: medium, confidence: 0.75, suggestedAction: create_issue,
+            rationale: "{b.category} de {b.discipline} atraviesa el equipo '{a.family}' de {a.discipline}. Los equipos se ubican por layout; la red se desvía." }
+
+  - id: MM-006
+    name: equipment vs equipment
+    when:
+      both: { elementClass: mep_equipment }
+    then: { validity: real, nature: hard, rootCause: design_coordination, responsibleDiscipline: COORD, severity: medium, confidence: 0.7, suggestedAction: escalate,
+            rationale: "Dos equipos ('{a.family}' de {a.discipline} y '{b.family}' de {b.discipline}) ocupan el mismo espacio. Requiere revisión de layout de sala técnica." }
+
+  - id: MM-007
+    name: insulation vs other system
+    when:
+      a: { elementClass: insulation }
+      b: { elementClass: { inSet: MEP_ANY } }
+    then: { validity: real, nature: clearance, rootCause: design_coordination, responsibleDiscipline: "@mover", severity: low, confidence: 0.75, suggestedAction: create_issue,
+            rationale: "La aislación de {a.systemName} invade {b.category} de {b.discipline} ({clash.penetrationMm} mm): falta holgura para aislación. Desplaza {mover.discipline}." }
+
+  - id: MM-008
+    name: conduit vs MEP beyond tolerance
+    when:
+      a: { elementClass: conduit }
+      b: { elementClass: { inSet: MEP_ANY } }
+    then: { validity: real, nature: hard, rootCause: routing_conflict, responsibleDiscipline: "$a", severity: low, confidence: 0.85, suggestedAction: create_issue,
+            rationale: "Conduit Ø{a.sizeMm} mm de {a.discipline} interfiere {b.category} de {b.discipline} ({clash.penetrationMm} mm). El conduit es lo más flexible: se desvía." }
+
+  - id: MM-009
+    name: terminal vs distribution
+    when:
+      a: { elementClass: mep_terminal }
+      b: { elementClass: { inSet: MEP_DIST } }
+    then: { validity: real, nature: hard, rootCause: routing_conflict, responsibleDiscipline: "$b", secondaryDiscipline: ARQ, severity: medium, confidence: 0.75, suggestedAction: create_issue,
+            rationale: "{b.category} de {b.discipline} pasa por el espacio de '{a.family}' ({a.discipline}). Los terminales siguen el plano de cielo aprobado: la red se desvía." }
+
+  - id: MM-010
+    name: distribution vs distribution (different systems)
+    when:
+      both: { elementClass: { inSet: MEP_DIST } }
+    then: { validity: real, nature: hard, rootCause: routing_conflict, responsibleDiscipline: "@mover", secondaryDiscipline: "@other", severity: medium, confidence: 0.75, suggestedAction: create_issue,
+            rationale: "{a.category} {a.systemName} ({a.sizeMm} mm) cruza {b.category} {b.systemName} ({b.sizeMm} mm). Según jerarquía de desplazamiento mueve {mover.discipline}." }
+
+# ---------------------------------------------------------------------------
+# DEF — Fallback (always matches; keep last).
+# ---------------------------------------------------------------------------
+  - id: DEF-999
+    name: unclassified
+    when: {}
+    then: { validity: real, nature: hard, rootCause: design_coordination, responsibleDiscipline: "@mover", severity: medium, confidence: 0.4, suggestedAction: create_issue, humanReview: true,
+            rationale: "Interferencia entre {a.category} ({a.discipline}) y {b.category} ({b.discipline}) sin regla específica. Requiere revisión del coordinador." }
+
+# =============================================================================
+# ANNOTATIONS — all matching apply after classification. Output: tags + note.
+# Same `when` syntax as rules. They never change validity/severity.
+# =============================================================================
+annotations:
+  - id: ANN-001
+    when: { a: { modelAgeDays: { gt: 21 } } }
+    then: { tags: [modelo_desactualizado], note: "El modelo {a.documentName} tiene más de 21 días sin publicarse: confirmar que la interferencia sigue vigente antes de emitir incidencia." }
+  - id: ANN-002
+    when: { a: { anyOf: [ { discipline: [INC, GAS] }, { isFireRated: true }, { isFireDamper: true }, { elementClass: [stairs, elevator] } ] } }
+    then: { tags: [seguridad_personas], note: "Involucra un sistema o recinto de seguridad de las personas (incendio, gas, evacuación)." }
+  - id: ANN-003
+    when: { clash: { penetrationMm: { gt: 300 } } }
+    then: { tags: [penetracion_mayor], note: "Penetración mayor a 300 mm: sospechar nivel de referencia u offset incorrecto; revisar el elemento completo, no el punto." }
+  - id: ANN-004
+    when: { a: { isForeign: true } }
+    then: { tags: [elemento_ajeno], note: "{a.category} modelado en un archivo de otra disciplina ({a.documentName})." }
+  - id: ANN-005
+    when: { a: { orientation: { exists: false }, elementClass: { inSet: MEP_DIST } } }
+    then: { tags: [sin_orientacion], note: "Orientación no disponible; la regla aplicada puede ser genérica." }
+  - id: ANN-006
+    when: { a: { elementClass: { inSet: STRUCTURE } }, b: { elementClass: { inSet: MEP_ANY } } }
+    then: { tags: [requiere_calculista], note: "Toda pasada en estructura requiere aprobación del ingeniero calculista." }
